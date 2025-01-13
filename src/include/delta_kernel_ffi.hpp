@@ -3,55 +3,55 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
-#include <ostream>
 #include <new>
+#include <ostream>
 
 namespace ffi {
 
 enum class KernelError {
-  UnknownError,
-  FFIError,
+	UnknownError,
+	FFIError,
 #if (defined(DEFINE_DEFAULT_ENGINE) || defined(DEFINE_SYNC_ENGINE))
-  ArrowError,
+	ArrowError,
 #endif
-  EngineDataTypeError,
-  ExtractError,
-  GenericError,
-  IOErrorError,
+	EngineDataTypeError,
+	ExtractError,
+	GenericError,
+	IOErrorError,
 #if (defined(DEFINE_DEFAULT_ENGINE) || defined(DEFINE_SYNC_ENGINE))
-  ParquetError,
+	ParquetError,
 #endif
 #if defined(DEFINE_DEFAULT_ENGINE)
-  ObjectStoreError,
+	ObjectStoreError,
 #endif
 #if defined(DEFINE_DEFAULT_ENGINE)
-  ObjectStorePathError,
+	ObjectStorePathError,
 #endif
 #if defined(DEFINE_DEFAULT_ENGINE)
-  ReqwestError,
+	ReqwestError,
 #endif
-  FileNotFoundError,
-  MissingColumnError,
-  UnexpectedColumnTypeError,
-  MissingDataError,
-  MissingVersionError,
-  DeletionVectorError,
-  InvalidUrlError,
-  MalformedJsonError,
-  MissingMetadataError,
-  MissingProtocolError,
-  MissingMetadataAndProtocolError,
-  ParseError,
-  JoinFailureError,
-  Utf8Error,
-  ParseIntError,
-  InvalidColumnMappingModeError,
-  InvalidTableLocationError,
-  InvalidDecimalError,
-  InvalidStructDataError,
-  InternalError,
-  InvalidExpression,
-  InvalidLogPath,
+	FileNotFoundError,
+	MissingColumnError,
+	UnexpectedColumnTypeError,
+	MissingDataError,
+	MissingVersionError,
+	DeletionVectorError,
+	InvalidUrlError,
+	MalformedJsonError,
+	MissingMetadataError,
+	MissingProtocolError,
+	MissingMetadataAndProtocolError,
+	ParseError,
+	JoinFailureError,
+	Utf8Error,
+	ParseIntError,
+	InvalidColumnMappingModeError,
+	InvalidTableLocationError,
+	InvalidDecimalError,
+	InvalidStructDataError,
+	InternalError,
+	InvalidExpression,
+	InvalidLogPath,
 };
 
 struct CStringMap;
@@ -91,15 +91,15 @@ struct StringSliceIterator;
 /// receives a `KernelBoolSlice` as a return value from a kernel method, engine is responsible
 /// to free that slice, by calling [super::free_bool_slice] exactly once.
 struct KernelBoolSlice {
-  bool *ptr;
-  uintptr_t len;
+	bool *ptr;
+	uintptr_t len;
 };
 
 /// An owned slice of u64 row indexes allocated by the kernel. The engine is responsible for
 /// freeing this slice by calling [super::free_row_indexes] once.
 struct KernelRowIndexArray {
-  uint64_t *ptr;
-  uintptr_t len;
+	uint64_t *ptr;
+	uintptr_t len;
 };
 
 /// Represents an object that crosses the FFI boundary and which outlives the scope that created
@@ -134,8 +134,8 @@ struct KernelRowIndexArray {
 /// NOTE: Because the underlying type is always [`Sync`], multi-threaded external code can
 /// freely access shared (non-mutable) handles.
 ///
-template<typename H>
-using Handle = H*;
+template <typename H>
+using Handle = H *;
 
 /// An error that can be returned to the engine. Engines that wish to associate additional
 /// information can define and use any type that is [pointer
@@ -144,31 +144,31 @@ using Handle = H*;
 /// of a [standard layout](https://en.cppreference.com/w/cpp/language/data_members#Standard-layout)
 /// class.
 struct EngineError {
-  KernelError etype;
+	KernelError etype;
 };
 
 /// Semantics: Kernel will always immediately return the leaked engine error to the engine (if it
 /// allocated one at all), and engine is responsible for freeing it.
-template<typename T>
+template <typename T>
 struct ExternResult {
-  enum class Tag {
-    Ok,
-    Err,
-  };
+	enum class Tag {
+		Ok,
+		Err,
+	};
 
-  struct Ok_Body {
-    T _0;
-  };
+	struct Ok_Body {
+		T _0;
+	};
 
-  struct Err_Body {
-    EngineError *_0;
-  };
+	struct Err_Body {
+		EngineError *_0;
+	};
 
-  Tag tag;
-  union {
-    Ok_Body ok;
-    Err_Body err;
-  };
+	Tag tag;
+	union {
+		Ok_Body ok;
+		Err_Body err;
+	};
 };
 
 /// A non-owned slice of a UTF8 string, intended for arg-passing between kernel and engine. The
@@ -193,32 +193,32 @@ struct ExternResult {
 /// wants_slice(msg.into());
 /// ```
 struct KernelStringSlice {
-  const char *ptr;
-  uintptr_t len;
+	const char *ptr;
+	uintptr_t len;
 };
 
-using AllocateErrorFn = EngineError*(*)(KernelError etype, KernelStringSlice msg);
+using AllocateErrorFn = EngineError *(*)(KernelError etype, KernelStringSlice msg);
 
-using NullableCvoid = void*;
+using NullableCvoid = void *;
 
 /// Allow engines to allocate strings of their own type. the contract of calling a passed allocate
 /// function is that `kernel_str` is _only_ valid until the return from this function
-using AllocateStringFn = NullableCvoid(*)(KernelStringSlice kernel_str);
+using AllocateStringFn = NullableCvoid (*)(KernelStringSlice kernel_str);
 
 struct FileMeta {
-  KernelStringSlice path;
-  int64_t last_modified;
-  uintptr_t size;
+	KernelStringSlice path;
+	int64_t last_modified;
+	uintptr_t size;
 };
 
 /// Model iterators. This allows an engine to specify iteration however it likes, and we simply wrap
 /// the engine functions. The engine retains ownership of the iterator.
 struct EngineIterator {
-  void *data;
-  /// A function that should advance the iterator and return the next time from the data
-  /// If the iterator is complete, it should return null. It should be safe to
-  /// call `get_next()` multiple times if it returns null.
-  const void *(*get_next)(void *data);
+	void *data;
+	/// A function that should advance the iterator and return the next time from the data
+	/// If the iterator is complete, it should return null. It should be safe to
+	/// call `get_next()` multiple times if it returns null.
+	const void *(*get_next)(void *data);
 };
 
 /// ABI-compatible struct for ArrowArray from C Data Interface
@@ -232,16 +232,16 @@ struct EngineIterator {
 /// }
 /// ```
 struct FFI_ArrowArray {
-  int64_t length;
-  int64_t null_count;
-  int64_t offset;
-  int64_t n_buffers;
-  int64_t n_children;
-  const void **buffers;
-  FFI_ArrowArray **children;
-  FFI_ArrowArray *dictionary;
-  void (*release)(FFI_ArrowArray *arg1);
-  void *private_data;
+	int64_t length;
+	int64_t null_count;
+	int64_t offset;
+	int64_t n_buffers;
+	int64_t n_children;
+	const void **buffers;
+	FFI_ArrowArray **children;
+	FFI_ArrowArray *dictionary;
+	void (*release)(FFI_ArrowArray *arg1);
+	void *private_data;
 };
 
 /// ABI-compatible struct for `ArrowSchema` from C Data Interface
@@ -256,16 +256,16 @@ struct FFI_ArrowArray {
 /// ```
 ///
 struct FFI_ArrowSchema {
-  const char *format;
-  const char *name;
-  const char *metadata;
-  /// Refer to [Arrow Flags](https://arrow.apache.org/docs/format/CDataInterface.html#c.ArrowSchema.flags)
-  int64_t flags;
-  int64_t n_children;
-  FFI_ArrowSchema **children;
-  FFI_ArrowSchema *dictionary;
-  void (*release)(FFI_ArrowSchema *arg1);
-  void *private_data;
+	const char *format;
+	const char *name;
+	const char *metadata;
+	/// Refer to [Arrow Flags](https://arrow.apache.org/docs/format/CDataInterface.html#c.ArrowSchema.flags)
+	int64_t flags;
+	int64_t n_children;
+	FFI_ArrowSchema **children;
+	FFI_ArrowSchema *dictionary;
+	void (*release)(FFI_ArrowSchema *arg1);
+	void *private_data;
 };
 
 #if defined(DEFINE_DEFAULT_ENGINE)
@@ -273,8 +273,8 @@ struct FFI_ArrowSchema {
 /// Interface](https://arrow.apache.org/docs/format/CDataInterface.html). This includes the data and
 /// the schema.
 struct ArrowFFIData {
-  FFI_ArrowArray array;
-  FFI_ArrowSchema schema;
+	FFI_ArrowArray array;
+	FFI_ArrowSchema schema;
 };
 #endif
 
@@ -289,39 +289,35 @@ struct ArrowFFIData {
 /// kernel each retain ownership of their respective objects, with no need to coordinate memory
 /// lifetimes with the other.
 struct EnginePredicate {
-  void *predicate;
-  uintptr_t (*visitor)(void *predicate, KernelExpressionVisitorState *state);
+	void *predicate;
+	uintptr_t (*visitor)(void *predicate, KernelExpressionVisitorState *state);
 };
 
 /// Give engines an easy way to consume stats
 struct Stats {
-  /// For any file where the deletion vector is not present (see [`DvInfo::has_vector`]), the
-  /// `num_records` statistic must be present and accurate, and must equal the number of records
-  /// in the data file. In the presence of Deletion Vectors the statistics may be somewhat
-  /// outdated, i.e. not reflecting deleted rows yet.
-  uint64_t num_records;
+	/// For any file where the deletion vector is not present (see [`DvInfo::has_vector`]), the
+	/// `num_records` statistic must be present and accurate, and must equal the number of records
+	/// in the data file. In the presence of Deletion Vectors the statistics may be somewhat
+	/// outdated, i.e. not reflecting deleted rows yet.
+	uint64_t num_records;
 };
 
-using CScanCallback = void(*)(NullableCvoid engine_context,
-                              KernelStringSlice path,
-                              int64_t size,
-                              const Stats *stats,
-                              const DvInfo *dv_info,
-                              const CStringMap *partition_map);
+using CScanCallback = void (*)(NullableCvoid engine_context, KernelStringSlice path, int64_t size, const Stats *stats,
+                               const DvInfo *dv_info, const CStringMap *partition_map);
 
 // This trickery is from https://github.com/mozilla/cbindgen/issues/402#issuecomment-578680163
 struct im_an_unused_struct_that_tricks_msvc_into_compilation {
-    ExternResult<KernelBoolSlice> field;
-    ExternResult<bool> field2;
-    ExternResult<EngineBuilder*> field3;
-    ExternResult<Handle<SharedExternEngine>> field4;
-    ExternResult<Handle<SharedSnapshot>> field5;
-    ExternResult<uintptr_t> field6;
-    ExternResult<ArrowFFIData*> field7;
-    ExternResult<Handle<SharedScanDataIterator>> field8;
-    ExternResult<Handle<SharedScan>> field9;
-    ExternResult<Handle<ExclusiveFileReadResultIterator>> field10;
-    ExternResult<KernelRowIndexArray> field11;
+	ExternResult<KernelBoolSlice> field;
+	ExternResult<bool> field2;
+	ExternResult<EngineBuilder *> field3;
+	ExternResult<Handle<SharedExternEngine>> field4;
+	ExternResult<Handle<SharedSnapshot>> field5;
+	ExternResult<uintptr_t> field6;
+	ExternResult<ArrowFFIData *> field7;
+	ExternResult<Handle<SharedScanDataIterator>> field8;
+	ExternResult<Handle<SharedScan>> field9;
+	ExternResult<Handle<ExclusiveFileReadResultIterator>> field10;
+	ExternResult<KernelRowIndexArray> field11;
 };
 
 /// The `EngineSchemaVisitor` defines a visitor system to allow engines to build their own
@@ -350,61 +346,49 @@ struct im_an_unused_struct_that_tricks_msvc_into_compilation {
 ///     that element's (already-visited) children.
 ///  4. The [`visit_schema`] method returns the id of the list of top-level columns
 struct EngineSchemaVisitor {
-  /// opaque state pointer
-  void *data;
-  /// Creates a new field list, optionally reserving capacity up front
-  uintptr_t (*make_field_list)(void *data, uintptr_t reserve);
-  /// Indicate that the schema contains a `Struct` type. The top level of a Schema is always a
-  /// `Struct`. The fields of the `Struct` are in the list identified by `child_list_id`.
-  void (*visit_struct)(void *data,
-                       uintptr_t sibling_list_id,
-                       KernelStringSlice name,
-                       uintptr_t child_list_id);
-  /// Indicate that the schema contains an Array type. `child_list_id` will be a _one_ item list
-  /// with the array's element type
-  void (*visit_array)(void *data,
-                      uintptr_t sibling_list_id,
-                      KernelStringSlice name,
-                      bool contains_null,
-                      uintptr_t child_list_id);
-  /// Indicate that the schema contains an Map type. `child_list_id` will be a _two_ item list
-  /// where the first element is the map's key type and the second element is the
-  /// map's value type
-  void (*visit_map)(void *data,
-                    uintptr_t sibling_list_id,
-                    KernelStringSlice name,
-                    bool value_contains_null,
-                    uintptr_t child_list_id);
-  /// visit a `decimal` with the specified `precision` and `scale`
-  void (*visit_decimal)(void *data,
-                        uintptr_t sibling_list_id,
-                        KernelStringSlice name,
-                        uint8_t precision,
-                        uint8_t scale);
-  /// Visit a `string` belonging to the list identified by `sibling_list_id`.
-  void (*visit_string)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `long` belonging to the list identified by `sibling_list_id`.
-  void (*visit_long)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit an `integer` belonging to the list identified by `sibling_list_id`.
-  void (*visit_integer)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `short` belonging to the list identified by `sibling_list_id`.
-  void (*visit_short)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `byte` belonging to the list identified by `sibling_list_id`.
-  void (*visit_byte)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `float` belonging to the list identified by `sibling_list_id`.
-  void (*visit_float)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `double` belonging to the list identified by `sibling_list_id`.
-  void (*visit_double)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `boolean` belonging to the list identified by `sibling_list_id`.
-  void (*visit_boolean)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit `binary` belonging to the list identified by `sibling_list_id`.
-  void (*visit_binary)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `date` belonging to the list identified by `sibling_list_id`.
-  void (*visit_date)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `timestamp` belonging to the list identified by `sibling_list_id`.
-  void (*visit_timestamp)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
-  /// Visit a `timestamp` with no timezone belonging to the list identified by `sibling_list_id`.
-  void (*visit_timestamp_ntz)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// opaque state pointer
+	void *data;
+	/// Creates a new field list, optionally reserving capacity up front
+	uintptr_t (*make_field_list)(void *data, uintptr_t reserve);
+	/// Indicate that the schema contains a `Struct` type. The top level of a Schema is always a
+	/// `Struct`. The fields of the `Struct` are in the list identified by `child_list_id`.
+	void (*visit_struct)(void *data, uintptr_t sibling_list_id, KernelStringSlice name, uintptr_t child_list_id);
+	/// Indicate that the schema contains an Array type. `child_list_id` will be a _one_ item list
+	/// with the array's element type
+	void (*visit_array)(void *data, uintptr_t sibling_list_id, KernelStringSlice name, bool contains_null,
+	                    uintptr_t child_list_id);
+	/// Indicate that the schema contains an Map type. `child_list_id` will be a _two_ item list
+	/// where the first element is the map's key type and the second element is the
+	/// map's value type
+	void (*visit_map)(void *data, uintptr_t sibling_list_id, KernelStringSlice name, bool value_contains_null,
+	                  uintptr_t child_list_id);
+	/// visit a `decimal` with the specified `precision` and `scale`
+	void (*visit_decimal)(void *data, uintptr_t sibling_list_id, KernelStringSlice name, uint8_t precision,
+	                      uint8_t scale);
+	/// Visit a `string` belonging to the list identified by `sibling_list_id`.
+	void (*visit_string)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `long` belonging to the list identified by `sibling_list_id`.
+	void (*visit_long)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit an `integer` belonging to the list identified by `sibling_list_id`.
+	void (*visit_integer)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `short` belonging to the list identified by `sibling_list_id`.
+	void (*visit_short)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `byte` belonging to the list identified by `sibling_list_id`.
+	void (*visit_byte)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `float` belonging to the list identified by `sibling_list_id`.
+	void (*visit_float)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `double` belonging to the list identified by `sibling_list_id`.
+	void (*visit_double)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `boolean` belonging to the list identified by `sibling_list_id`.
+	void (*visit_boolean)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit `binary` belonging to the list identified by `sibling_list_id`.
+	void (*visit_binary)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `date` belonging to the list identified by `sibling_list_id`.
+	void (*visit_date)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `timestamp` belonging to the list identified by `sibling_list_id`.
+	void (*visit_timestamp)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
+	/// Visit a `timestamp` with no timezone belonging to the list identified by `sibling_list_id`.
+	void (*visit_timestamp_ntz)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
 };
 
 extern "C" {
@@ -433,8 +417,7 @@ void free_engine_data(Handle<ExclusiveEngineData> engine_data);
 ///
 /// # Safety
 /// Caller is responsible for passing a valid path pointer.
-ExternResult<EngineBuilder*> get_engine_builder(KernelStringSlice path,
-                                                AllocateErrorFn allocate_error);
+ExternResult<EngineBuilder *> get_engine_builder(KernelStringSlice path, AllocateErrorFn allocate_error);
 #endif
 
 #if defined(DEFINE_DEFAULT_ENGINE)
@@ -461,8 +444,7 @@ ExternResult<Handle<SharedExternEngine>> builder_build(EngineBuilder *builder);
 /// # Safety
 ///
 /// Caller is responsible for passing a valid path pointer.
-ExternResult<Handle<SharedExternEngine>> get_default_engine(KernelStringSlice path,
-                                                            AllocateErrorFn allocate_error);
+ExternResult<Handle<SharedExternEngine>> get_default_engine(KernelStringSlice path, AllocateErrorFn allocate_error);
 #endif
 
 #if defined(DEFINE_SYNC_ENGINE)
@@ -482,8 +464,7 @@ void free_engine(Handle<SharedExternEngine> engine);
 /// # Safety
 ///
 /// Caller is responsible for passing valid handles and path pointer.
-ExternResult<Handle<SharedSnapshot>> snapshot(KernelStringSlice path,
-                                              Handle<SharedExternEngine> engine);
+ExternResult<Handle<SharedSnapshot>> snapshot(KernelStringSlice path, Handle<SharedExternEngine> engine);
 
 /// # Safety
 ///
@@ -509,8 +490,7 @@ NullableCvoid snapshot_table_root(Handle<SharedSnapshot> snapshot, AllocateStrin
 ///
 /// The iterator must be valid (returned by [kernel_scan_data_init]) and not yet freed by
 /// [kernel_scan_data_free]. The visitor function pointer must be non-null.
-bool string_slice_next(Handle<StringSliceIterator> data,
-                       NullableCvoid engine_context,
+bool string_slice_next(Handle<StringSliceIterator> data, NullableCvoid engine_context,
                        void (*engine_visitor)(NullableCvoid engine_context, KernelStringSlice slice));
 
 /// # Safety
@@ -527,8 +507,7 @@ void free_string_slice_data(Handle<StringSliceIterator> data);
 ///
 /// The iterator must be valid (returned by [`read_parquet_file`]) and not yet freed by
 /// [`free_read_result_iter`]. The visitor function pointer must be non-null.
-ExternResult<bool> read_result_next(Handle<ExclusiveFileReadResultIterator> data,
-                                    NullableCvoid engine_context,
+ExternResult<bool> read_result_next(Handle<ExclusiveFileReadResultIterator> data, NullableCvoid engine_context,
                                     void (*engine_visitor)(NullableCvoid engine_context,
                                                            Handle<ExclusiveEngineData> engine_data));
 
@@ -543,9 +522,8 @@ void free_read_result_iter(Handle<ExclusiveFileReadResultIterator> data);
 ///
 /// # Safety
 /// Caller is responsible for calling with a valid `ExternEngineHandle` and `FileMeta`
-ExternResult<Handle<ExclusiveFileReadResultIterator>> read_parquet_file(Handle<SharedExternEngine> engine,
-                                                                        const FileMeta *file,
-                                                                        Handle<SharedSchema> physical_schema);
+ExternResult<Handle<ExclusiveFileReadResultIterator>>
+read_parquet_file(Handle<SharedExternEngine> engine, const FileMeta *file, Handle<SharedSchema> physical_schema);
 
 uintptr_t visit_expression_and(KernelExpressionVisitorState *state, EngineIterator *children);
 
@@ -561,8 +539,7 @@ uintptr_t visit_expression_eq(KernelExpressionVisitorState *state, uintptr_t a, 
 
 /// # Safety
 /// The string slice must be valid
-ExternResult<uintptr_t> visit_expression_column(KernelExpressionVisitorState *state,
-                                                KernelStringSlice name,
+ExternResult<uintptr_t> visit_expression_column(KernelExpressionVisitorState *state, KernelStringSlice name,
                                                 AllocateErrorFn allocate_error);
 
 uintptr_t visit_expression_not(KernelExpressionVisitorState *state, uintptr_t inner_expr);
@@ -571,8 +548,7 @@ uintptr_t visit_expression_is_null(KernelExpressionVisitorState *state, uintptr_
 
 /// # Safety
 /// The string slice must be valid
-ExternResult<uintptr_t> visit_expression_literal_string(KernelExpressionVisitorState *state,
-                                                        KernelStringSlice value,
+ExternResult<uintptr_t> visit_expression_literal_string(KernelExpressionVisitorState *state, KernelStringSlice value,
                                                         AllocateErrorFn allocate_error);
 
 uintptr_t visit_expression_literal_int(KernelExpressionVisitorState *state, int32_t value);
@@ -612,8 +588,7 @@ void *get_raw_engine_data(Handle<ExclusiveEngineData> data);
 /// # Safety
 /// data_handle must be a valid ExclusiveEngineData as read by the
 /// [`delta_kernel::engine::default::DefaultEngine`] obtained from `get_default_engine`.
-ExternResult<ArrowFFIData*> get_raw_arrow_data(Handle<ExclusiveEngineData> data,
-                                               Handle<SharedExternEngine> engine);
+ExternResult<ArrowFFIData *> get_raw_arrow_data(Handle<ExclusiveEngineData> data, Handle<SharedExternEngine> engine);
 #endif
 
 /// Drops a scan.
@@ -625,8 +600,7 @@ void free_scan(Handle<SharedScan> scan);
 /// # Safety
 ///
 /// Caller is responsible for passing a valid snapshot pointer, and engine pointer
-ExternResult<Handle<SharedScan>> scan(Handle<SharedSnapshot> snapshot,
-                                      Handle<SharedExternEngine> engine,
+ExternResult<Handle<SharedScan>> scan(Handle<SharedSnapshot> snapshot, Handle<SharedExternEngine> engine,
                                       EnginePredicate *predicate);
 
 /// Get the global state for a scan. See the docs for [`delta_kernel::scan::state::GlobalScanState`]
@@ -680,8 +654,7 @@ ExternResult<Handle<SharedScanDataIterator>> kernel_scan_data_init(Handle<Shared
 ///
 /// The iterator must be valid (returned by [kernel_scan_data_init]) and not yet freed by
 /// [`free_kernel_scan_data`]. The visitor function pointer must be non-null.
-ExternResult<bool> kernel_scan_data_next(Handle<SharedScanDataIterator> data,
-                                         NullableCvoid engine_context,
+ExternResult<bool> kernel_scan_data_next(Handle<SharedScanDataIterator> data, NullableCvoid engine_context,
                                          void (*engine_visitor)(NullableCvoid engine_context,
                                                                 Handle<ExclusiveEngineData> engine_data,
                                                                 KernelBoolSlice selection_vector));
@@ -699,24 +672,20 @@ void free_kernel_scan_data(Handle<SharedScanDataIterator> data);
 /// # Safety
 ///
 /// The engine is responsible for providing a valid [`CStringMap`] pointer and [`KernelStringSlice`]
-NullableCvoid get_from_map(const CStringMap *map,
-                           KernelStringSlice key,
-                           AllocateStringFn allocate_fn);
+NullableCvoid get_from_map(const CStringMap *map, KernelStringSlice key, AllocateStringFn allocate_fn);
 
 /// Get a selection vector out of a [`DvInfo`] struct
 ///
 /// # Safety
 /// Engine is responsible for providing valid pointers for each argument
-ExternResult<KernelBoolSlice> selection_vector_from_dv(const DvInfo *dv_info,
-                                                       Handle<SharedExternEngine> engine,
+ExternResult<KernelBoolSlice> selection_vector_from_dv(const DvInfo *dv_info, Handle<SharedExternEngine> engine,
                                                        Handle<SharedGlobalScanState> state);
 
 /// Get a vector of row indexes out of a [`DvInfo`] struct
 ///
 /// # Safety
 /// Engine is responsible for providing valid pointers for each argument
-ExternResult<KernelRowIndexArray> row_indexes_from_dv(const DvInfo *dv_info,
-                                                      Handle<SharedExternEngine> engine,
+ExternResult<KernelRowIndexArray> row_indexes_from_dv(const DvInfo *dv_info, Handle<SharedExternEngine> engine,
                                                       Handle<SharedGlobalScanState> state);
 
 /// Shim for ffi to call visit_scan_data. This will generally be called when iterating through scan
@@ -724,9 +693,7 @@ ExternResult<KernelRowIndexArray> row_indexes_from_dv(const DvInfo *dv_info,
 ///
 /// # Safety
 /// engine is responsbile for passing a valid [`ExclusiveEngineData`] and selection vector.
-void visit_scan_data(Handle<ExclusiveEngineData> data,
-                     KernelBoolSlice selection_vec,
-                     NullableCvoid engine_context,
+void visit_scan_data(Handle<ExclusiveEngineData> data, KernelBoolSlice selection_vec, NullableCvoid engine_context,
                      CScanCallback callback);
 
 /// Visit the schema of the passed `SnapshotHandle`, using the provided `visitor`. See the
@@ -739,6 +706,6 @@ void visit_scan_data(Handle<ExclusiveEngineData> data,
 /// Caller is responsible for passing a valid snapshot handle and schema visitor.
 uintptr_t visit_schema(Handle<SharedSnapshot> snapshot, EngineSchemaVisitor *visitor);
 
-}  // extern "C"
+} // extern "C"
 
-}  // namespace ffi
+} // namespace ffi

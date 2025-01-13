@@ -2,16 +2,17 @@
 
 #include "duckdb.hpp"
 #include "duckdb/main/extension_util.hpp"
+
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 
 namespace duckdb {
 
 vector<TableFunctionSet> DeltaFunctions::GetTableFunctions(DatabaseInstance &instance) {
-    vector<TableFunctionSet> functions;
+	vector<TableFunctionSet> functions;
 
-    functions.push_back(GetDeltaScanFunction(instance));
+	functions.push_back(GetDeltaScanFunction(instance));
 
-    return functions;
+	return functions;
 }
 
-};
+}; // namespace duckdb
