@@ -484,7 +484,6 @@ void DeltaSnapshot::InitializeFiles() {
 	initialized = true;
 }
 
-<<<<<<< HEAD
 unique_ptr<MultiFileList> DeltaSnapshot::ComplexFilterPushdown(ClientContext &context,
                                                                const MultiFileReaderOptions &options,
                                                                MultiFilePushdownInfo &info,
@@ -498,17 +497,6 @@ unique_ptr<MultiFileList> DeltaSnapshot::ComplexFilterPushdown(ClientContext &co
 		column_indexes.emplace_back(column_id);
 	}
 	auto filterstmp = combiner.GenerateTableScanFilters(column_indexes);
-=======
-unique_ptr<MultiFileList> DeltaSnapshot::ComplexFilterPushdown(ClientContext &context,
-                                                               const MultiFileReaderOptions &options,
-                                                               MultiFilePushdownInfo &info,
-                                                               vector<unique_ptr<Expression>> &filters) {
-	FilterCombiner combiner(context);
-	for (const auto &filter : filters) {
-		combiner.AddFilter(filter->Copy());
-	}
-	auto filterstmp = combiner.GenerateTableScanFilters(info.column_ids);
->>>>>>> upstream/main
 
 	// TODO: can/should we figure out if this filtered anything?
 	auto filtered_list = make_uniq<DeltaSnapshot>(context, paths[0]);
@@ -573,13 +561,8 @@ unique_ptr<NodeStatistics> DeltaSnapshot::GetCardinality(ClientContext &context)
 	return nullptr;
 }
 
-<<<<<<< HEAD
 unique_ptr<MultiFileReader> DeltaMultiFileReader::CreateInstance(const TableFunction &table_function) {
 	return std::move(make_uniq<DeltaMultiFileReader>());
-=======
-unique_ptr<MultiFileReader> DeltaMultiFileReader::CreateInstance() {
-	return std::move(make_uniq<DeltaMultiFileReader>());
->>>>>>> upstream/main
 }
 
 bool DeltaMultiFileReader::Bind(MultiFileReaderOptions &options, MultiFileList &files,
@@ -623,7 +606,6 @@ void DeltaMultiFileReader::BindOptions(MultiFileReaderOptions &options, MultiFil
 	}
 }
 
-<<<<<<< HEAD
 void DeltaMultiFileReader::FinalizeBind(const MultiFileReaderOptions &file_options,
                                         const MultiFileReaderBindData &options, const string &filename,
                                         const vector<string> &local_names, const vector<LogicalType> &global_types,
@@ -632,16 +614,6 @@ void DeltaMultiFileReader::FinalizeBind(const MultiFileReaderOptions &file_optio
                                         ClientContext &context, optional_ptr<MultiFileReaderGlobalState> global_state) {
 	MultiFileReader::FinalizeBind(file_options, options, filename, local_names, global_types, global_names,
 	                              global_column_ids, reader_data, context, global_state);
-=======
-void DeltaMultiFileReader::FinalizeBind(const MultiFileReaderOptions &file_options,
-                                        const MultiFileReaderBindData &options, const string &filename,
-                                        const vector<string> &local_names, const vector<LogicalType> &global_types,
-                                        const vector<string> &global_names, const vector<column_t> &global_column_ids,
-                                        MultiFileReaderData &reader_data, ClientContext &context,
-                                        optional_ptr<MultiFileReaderGlobalState> global_state) {
-	MultiFileReader::FinalizeBind(file_options, options, filename, local_names, global_types, global_names,
-	                              global_column_ids, reader_data, context, global_state);
->>>>>>> upstream/main
 
 	// Handle custom delta option set in MultiFileReaderOptions::custom_options
 	auto file_number_opt = file_options.custom_options.find("delta_file_number");
@@ -663,7 +635,6 @@ void DeltaMultiFileReader::FinalizeBind(const MultiFileReaderOptions &file_optio
 	const auto &snapshot = dynamic_cast<const DeltaSnapshot &>(*global_state->file_list);
 	auto &file_metadata = snapshot.metadata[reader_data.file_list_idx.GetIndex()];
 
-<<<<<<< HEAD
 	if (!file_metadata->partition_map.empty()) {
 		for (idx_t i = 0; i < global_column_ids.size(); i++) {
 			column_t col_id = global_column_ids[i].GetPrimaryIndex();
@@ -691,35 +662,6 @@ shared_ptr<MultiFileList> DeltaMultiFileReader::CreateFileList(ClientContext &co
 	}
 
 	return make_shared_ptr<DeltaSnapshot>(context, paths[0]);
-=======
-	if (!file_metadata->partition_map.empty()) {
-		for (idx_t i = 0; i < global_column_ids.size(); i++) {
-			column_t col_id = global_column_ids[i];
-			if (IsRowIdColumnId(col_id)) {
-				continue;
-			}
-			auto col_partition_entry = file_metadata->partition_map.find(global_names[col_id]);
-			if (col_partition_entry != file_metadata->partition_map.end()) {
-				auto &current_type = global_types[col_id];
-				if (current_type == LogicalType::BLOB) {
-					reader_data.constant_map.emplace_back(i, Value::BLOB_RAW(col_partition_entry->second));
-				} else {
-					auto maybe_value = Value(col_partition_entry->second).DefaultCastAs(current_type);
-					reader_data.constant_map.emplace_back(i, maybe_value);
-				}
-			}
-		}
-	}
-}
-
-unique_ptr<MultiFileList> DeltaMultiFileReader::CreateFileList(ClientContext &context, const vector<string> &paths,
-                                                               FileGlobOptions options) {
-	if (paths.size() != 1) {
-		throw BinderException("'delta_scan' only supports single path as input");
-	}
-
-	return make_uniq<DeltaSnapshot>(context, paths[0]);
->>>>>>> upstream/main
 }
 
 // Generate the correct Selection Vector Based on the Raw delta KernelBoolSlice dv and the row_id_column
@@ -830,19 +772,11 @@ unique_ptr<MultiFileReaderGlobalState> DeltaMultiFileReader::InitializeGlobalSta
 // This code is duplicated from MultiFileReader::CreateNameMapping the difference is that for columns that are not found
 // in the parquet files, we just add null constant columns
 static void CustomMulfiFileNameMapping(const string &file_name, const vector<LogicalType> &local_types,
-<<<<<<< HEAD
                                        const vector<string> &local_names, const vector<LogicalType> &global_types,
                                        const vector<string> &global_names, const vector<ColumnIndex> &global_column_ids,
                                        MultiFileReaderData &reader_data, const string &initial_file,
                                        optional_ptr<MultiFileReaderGlobalState> global_state) {
 	D_ASSERT(global_types.size() == global_names.size());
-=======
-                                       const vector<string> &local_names, const vector<LogicalType> &global_types,
-                                       const vector<string> &global_names, const vector<column_t> &global_column_ids,
-                                       MultiFileReaderData &reader_data, const string &initial_file,
-                                       optional_ptr<MultiFileReaderGlobalState> global_state) {
-	D_ASSERT(global_types.size() == global_names.size());
->>>>>>> upstream/main
 	D_ASSERT(local_types.size() == local_names.size());
 	// we have expected types: create a map of name -> column index
 	case_insensitive_map_t<idx_t> name_map;
@@ -902,7 +836,6 @@ static void CustomMulfiFileNameMapping(const string &file_name, const vector<Log
 }
 
 void DeltaMultiFileReader::CreateNameMapping(const string &file_name, const vector<LogicalType> &local_types,
-<<<<<<< HEAD
                                              const vector<string> &local_names, const vector<LogicalType> &global_types,
                                              const vector<string> &global_names,
                                              const vector<ColumnIndex> &global_column_ids,
@@ -911,16 +844,6 @@ void DeltaMultiFileReader::CreateNameMapping(const string &file_name, const vect
 	// First call the base implementation to do most mapping
 	CustomMulfiFileNameMapping(file_name, local_types, local_names, global_types, global_names, global_column_ids,
 	                           reader_data, initial_file, global_state);
-=======
-                                             const vector<string> &local_names, const vector<LogicalType> &global_types,
-                                             const vector<string> &global_names,
-                                             const vector<column_t> &global_column_ids,
-                                             MultiFileReaderData &reader_data, const string &initial_file,
-                                             optional_ptr<MultiFileReaderGlobalState> global_state) {
-	// First call the base implementation to do most mapping
-	CustomMulfiFileNameMapping(file_name, local_types, local_names, global_types, global_names, global_column_ids,
-	                           reader_data, initial_file, global_state);
->>>>>>> upstream/main
 
 	// Then we handle delta specific mapping
 	D_ASSERT(global_state);
