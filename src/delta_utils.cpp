@@ -1,6 +1,9 @@
 #include "delta_utils.hpp"
 
+#include "duckdb/common/operator/decimal_cast_operators.hpp"
+
 #include "duckdb.hpp"
+#include "../duckdb/third_party/catch/catch.hpp"
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/main/database.hpp"
@@ -28,9 +31,7 @@ void ExpressionVisitor::VisitComparisonExpression(void *state, uintptr_t sibling
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
-unique_ptr<vector<unique_ptr<ParsedExpression>>>
-ExpressionVisitor::VisitKernelExpression(const ffi::Handle<ffi::SharedExpression> *expression) {
-	ExpressionVisitor state;
+ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor &state) {
 	ffi::EngineExpressionVisitor visitor;
 
 	visitor.data = &state;
@@ -85,6 +86,28 @@ ExpressionVisitor::VisitKernelExpression(const ffi::Handle<ffi::SharedExpression
 
 	visitor.visit_not = &VisitNotExpression;
 	visitor.visit_is_null = &VisitIsNullExpression;
+
+	return visitor;
+}
+
+unique_ptr<vector<unique_ptr<ParsedExpression>>>
+ExpressionVisitor::VisitKernelExpression(const ffi::Expression *expression) {
+	ExpressionVisitor state;
+	auto visitor = CreateVisitor(state);
+
+	uintptr_t result = ffi::visit_expression_ref(expression, &visitor);
+
+	if (state.error.HasError()) {
+		state.error.Throw();
+	}
+
+	return state.TakeFieldList(result);
+}
+
+unique_ptr<vector<unique_ptr<ParsedExpression>>>
+ExpressionVisitor::VisitKernelExpression(const ffi::Handle<ffi::SharedExpression> *expression) {
+	ExpressionVisitor state;
+	auto visitor = CreateVisitor(state);
 
 	uintptr_t result = ffi::visit_expression(expression, &visitor);
 
@@ -254,14 +277,40 @@ void ExpressionVisitor::VisitIsNullExpression(void *state, uintptr_t sibling_lis
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
-// FIXME: this is not 100% correct yet: value_ms is ignored
-void ExpressionVisitor::VisitDecimalLiteral(void *state, uintptr_t sibling_list_id, uint64_t value_ms,
-                                            uint64_t value_ls, uint8_t precision, uint8_t scale) {
+// Note: hack to get the DECIMAL thing goin
+template <class hugeint_t>
+hugeint_t &Value::GetReferenceUnsafe() {
+	D_ASSERT(type_.InternalType() == PhysicalType::INT128);
+	return value_.hugeint;
+}
+
+// This function is a workaround for the fact that duckdb disallows using hugeints to store decimals with precision < 18
+// whereas kernel does allow this.
+static int64_t GetTruncatedDecimalValue(int64_t value_ms, uint64_t value_ls) {
+	// First trim msb from lower half
+	auto new_value_ls = value_ls << 1;
+	new_value_ls = new_value_ls >> 1;
+
+	// Now cast the lower half to signed
+	auto lower_cast = UnsafeNumericCast<int64_t>(value_ls);
+
+	// If value_ms was negative, we need to invert
+	if (value_ms < 0) {
+		lower_cast = -lower_cast;
+	}
+	return lower_cast;
+}
+
+void ExpressionVisitor::VisitDecimalLiteral(void *state, uintptr_t sibling_list_id, int64_t value_ms, uint64_t value_ls,
+                                            uint8_t precision, uint8_t scale) {
 	try {
-		if (precision >= Decimal::MAX_WIDTH_INT64 || value_ls > (uint64_t)NumericLimits<int64_t>::Maximum()) {
-			throw NotImplementedException("ExpressionVisitor::VisitDecimalLiteral HugeInt decimals");
+		Value decimal_value;
+		if (precision < Decimal::MAX_WIDTH_INT64) {
+			decimal_value = Value::DECIMAL(GetTruncatedDecimalValue(value_ms, value_ls), precision, scale);
+		} else {
+			decimal_value = Value::DECIMAL({value_ms, value_ls}, precision, scale);
 		}
-		auto expression = make_uniq<ConstantExpression>(Value::DECIMAL(42, 18, 10));
+		auto expression = make_uniq<ConstantExpression>(decimal_value);
 		static_cast<ExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 	} catch (Exception &e) {
 		static_cast<ExpressionVisitor *>(state)->error = ErrorData(e);
@@ -272,9 +321,17 @@ void ExpressionVisitor::VisitColumnExpression(void *state, uintptr_t sibling_lis
 	auto expression = make_uniq<ColumnRefExpression>(string(name.ptr, name.len));
 	static_cast<ExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
+
 void ExpressionVisitor::VisitStructExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
-	static_cast<ExpressionVisitor *>(state)->AppendToList(sibling_list_id,
-	                                                      std::move(make_uniq<ConstantExpression>(Value(42))));
+	auto state_cast = static_cast<ExpressionVisitor *>(state);
+
+	auto children_values = state_cast->TakeFieldList(child_list_id);
+	if (!children_values) {
+		return;
+	}
+
+	unique_ptr<ParsedExpression> expression = make_uniq<FunctionExpression>("struct_pack", std::move(*children_values));
+	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
 uintptr_t ExpressionVisitor::MakeFieldList(ExpressionVisitor *state, uintptr_t capacity_hint) {

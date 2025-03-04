@@ -430,7 +430,7 @@ struct EngineExpressionVisitor {
 	/// Visit a 128bit `decimal` value with the given precision and scale. The 128bit integer
 	/// is split into the most significant 64 bits in `value_ms`, and the least significant 64
 	/// bits in `value_ls`. The `decimal` belongs to the list identified by `sibling_list_id`.
-	void (*visit_literal_decimal)(void *data, uintptr_t sibling_list_id, uint64_t value_ms, uint64_t value_ls,
+	void (*visit_literal_decimal)(void *data, uintptr_t sibling_list_id, int64_t value_ms, uint64_t value_ls,
 	                              uint8_t precision, uint8_t scale);
 	/// Visit a struct literal belonging to the list identified by `sibling_list_id`.
 	/// The field names of the struct are in a list identified by `child_field_list_id`.
@@ -762,8 +762,20 @@ void free_schema(Handle<SharedSchema> schema);
 ///
 /// # Safety
 ///
-/// Caller is responsible for passing a valid handle.
+/// Caller is responsible for passing a valid snapshot handle.
 NullableCvoid snapshot_table_root(Handle<SharedSnapshot> snapshot, AllocateStringFn allocate_fn);
+
+/// Get a count of the number of partition columns for this snapshot
+///
+/// # Safety
+/// Caller is responsible for passing a valid snapshot handle
+uintptr_t get_partition_column_count(Handle<SharedSnapshot> snapshot);
+
+/// Get an iterator of the list of partition columns for this snapshot.
+///
+/// # Safety
+/// Caller is responsible for passing a valid snapshot handle.
+Handle<StringSliceIterator> get_partition_columns(Handle<SharedSnapshot> snapshot);
 
 /// # Safety
 ///
@@ -1022,18 +1034,6 @@ Handle<SharedSchema> get_global_read_schema(Handle<SharedGlobalScanState> state)
 /// # Safety
 /// Engine is responsible for providing a valid GlobalScanState pointer
 Handle<SharedSchema> get_global_logical_schema(Handle<SharedGlobalScanState> state);
-
-/// Get a count of the number of partition columns for this scan
-///
-/// # Safety
-/// Caller is responsible for passing a valid global scan pointer.
-uintptr_t get_partition_column_count(Handle<SharedGlobalScanState> state);
-
-/// Get an iterator of the list of partition columns for this scan.
-///
-/// # Safety
-/// Caller is responsible for passing a valid global scan pointer.
-Handle<StringSliceIterator> get_partition_columns(Handle<SharedGlobalScanState> state);
 
 /// # Safety
 ///

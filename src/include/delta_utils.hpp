@@ -23,6 +23,8 @@ class ExpressionVisitor : public ffi::EngineExpressionVisitor {
 public:
 	unique_ptr<vector<unique_ptr<ParsedExpression>>>
 	VisitKernelExpression(const ffi::Handle<ffi::SharedExpression> *expression);
+	unique_ptr<vector<unique_ptr<ParsedExpression>>> VisitKernelExpression(const ffi::Expression *expression);
+	ffi::EngineExpressionVisitor CreateVisitor(ExpressionVisitor &state);
 
 private:
 	unordered_map<uintptr_t, unique_ptr<FieldList>> inflight_lists;
@@ -60,7 +62,7 @@ private:
 	static void VisitArrayLiteral(void *state, uintptr_t sibling_list_id, uintptr_t child_id);
 	static void VisitStructLiteral(void *data, uintptr_t sibling_list_id, uintptr_t child_field_list_value,
 	                               uintptr_t child_value_list_id);
-	static void VisitDecimalLiteral(void *state, uintptr_t sibling_list_id, uint64_t value_ms, uint64_t value_ls,
+	static void VisitDecimalLiteral(void *state, uintptr_t sibling_list_id, int64_t value_ms, uint64_t value_ls,
 	                                uint8_t precision, uint8_t scale);
 	static void VisitColumnExpression(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name);
 	static void VisitStructExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);

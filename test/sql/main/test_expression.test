@@ -6,9 +6,6 @@ require parquet
 
 require delta
 
-# TODO still broken:
-# - Decimal
-# - StructExpression
 query I
 SELECT unnest(get_delta_test_expression())
 ----
@@ -29,11 +26,11 @@ false
 '1970-01-01 00:00:00.0001'::TIMESTAMP
 '1970-02-02'::DATE
 '\x00\x00\xDE\xAD\xBE\xEF\xCA\xFE'::BLOB
-0.0000000042
+0.001
 NULL
 struct_pack("'top'" := struct_pack("'a'" := 500, "'b'" := list_value(5, 0)))
 list_value(5, 0)
-42
+struct_pack((5 OR 20))
 not((col is NULL))
 (0 IN (0))
 (0 + 0)
