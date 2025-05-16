@@ -29,7 +29,7 @@ constant
 dynamic
 
 statement ok
-set enable_logging=false;set logging_storage='stdout';set logging_storage='memory';set enable_logging=true;
+pragma truncate_duckdb_logs;
 
 # delta_scan: constant only filters
 query IIII
@@ -45,7 +45,7 @@ SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
 constant
 
 statement ok
-set enable_logging=false;set logging_storage='stdout';set logging_storage='memory';set enable_logging=true;
+pragma truncate_duckdb_logs;
 
 # delta_scan: dynamic only filters
 query IIII
@@ -61,7 +61,7 @@ SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
 dynamic
 
 statement ok
-set enable_logging=false;set logging_storage='stdout';set logging_storage='memory';set enable_logging=true;
+pragma truncate_duckdb_logs;
 
 # delta_scan: no filters
 query IIII
@@ -76,7 +76,7 @@ SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
 ----
 
 statement ok
-set enable_logging=false;set logging_storage='stdout';set logging_storage='memory';set enable_logging=true;
+pragma truncate_duckdb_logs;
 
 # attach: default = all filters
 statement ok
@@ -96,7 +96,7 @@ constant
 dynamic
 
 statement ok
-set enable_logging=false;set logging_storage='stdout';set logging_storage='memory';set enable_logging=true;
+pragma truncate_duckdb_logs;
 
 # attach: pushdown mode can be configured
 statement ok
@@ -115,4 +115,4 @@ SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
 dynamic
 
 statement ok
-set enable_logging=false;set logging_storage='stdout';set logging_storage='memory';set enable_logging=true;
+pragma truncate_duckdb_logs;

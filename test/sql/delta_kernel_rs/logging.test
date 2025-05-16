@@ -16,7 +16,7 @@ SELECT * FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
 
 # No kernel logging available yet: we need to set delta_kernel_logging=true
 query I
-SELECT count(*) FROM duckdb_logs WHERE starts_with(type, 'delta.Kernel')
+SELECT count(*) FROM duckdb_logs WHERE type='DeltaKernel'
 ----
 0
 
@@ -31,9 +31,13 @@ SELECT * FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
 
 # Now we have log!
 query I
-SELECT count(*) > 50 FROM duckdb_logs WHERE starts_with(type, 'delta.Kernel')
+SELECT count(*) > 50 FROM duckdb_logs WHERE type='DeltaKernel'
 ----
 true
+
+# The log can be automatically parsed into structured data
+statement ok
+select log_level, target, file, line from duckdb_logs_parsed('DeltaKernel')
 
 statement ok
 set delta_kernel_logging=true;

@@ -9,6 +9,7 @@
 
 namespace duckdb {
 
+// TODO: use Structured logging for this
 // Macro to fetch the pushed down filters for the most recent query
 static constexpr auto DELTA_FILTER_PUSHDOWN_MACRO = R"(
 SELECT
@@ -24,7 +25,7 @@ JOIN duckdb_logs as l2 ON
     l1.transaction_id = l2.transaction_id
 WHERE
     l2.type='delta.FilterPushdown' AND
-    l1.type = 'duckdb.ClientContext.BeginQuery'
+    l1.type = 'QueryLog'
 ORDER BY l1.transaction_id
 )";
 

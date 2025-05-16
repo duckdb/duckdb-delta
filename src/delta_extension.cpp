@@ -4,6 +4,7 @@
 
 #include "delta_utils.hpp"
 #include "delta_functions.hpp"
+#include "delta_log_types.hpp"
 #include "delta_macros.hpp"
 #include "storage/delta_catalog.hpp"
 #include "storage/delta_transaction_manager.hpp"
@@ -82,6 +83,8 @@ static void LoadInternal(DatabaseInstance &instance) {
 	    LogicalType::BOOLEAN, Value(false), LoggerCallback::DuckDBSettingCallBack);
 
 	DeltaMacros::RegisterMacros(instance);
+
+	DeltaLogTypes::RegisterLogTypes(instance);
 
 	LoggerCallback::Initialize(instance);
 }

@@ -1,5 +1,6 @@
 #include "delta_utils.hpp"
 
+#include "delta_log_types.hpp"
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 
 #include "duckdb.hpp"
@@ -775,25 +776,15 @@ void LoggerCallback::Initialize(DatabaseInstance &db_p) {
 	}
 }
 
-static string ConvertLogMessage(ffi::Event event) {
-	auto log_type = KernelUtils::FromDeltaString(event.target);
-	auto message = KernelUtils::FromDeltaString(event.message);
-	auto file = KernelUtils::FromDeltaString(event.file);
-	string constructed_log_message;
-	if (!file.empty()) {
-		constructed_log_message = StringUtil::Format("[%s] %s@%u : %s ", log_type, file, event.line, message);
-	} else {
-		constructed_log_message = message;
-	}
-
-	return constructed_log_message;
-}
 void LoggerCallback::CallbackEvent(ffi::Event event) {
 	auto &instance = GetInstance();
 	auto db_locked = instance.db.lock();
 	if (db_locked) {
-		auto transformed_log_level = GetDuckDBLogLevel(event.level);
-		DUCKDB_LOG(*db_locked, "delta.Kernel", transformed_log_level, ConvertLogMessage(event));
+		// Note: this slightly offbeat invocation of logging API is because we are passing through the log level instead
+		// of using the same
+		//       log level for every message of this log type. We may
+		DUCKDB_LOG_INTERNAL(*db_locked, DeltaKernelLogType::NAME, GetDuckDBLogLevel(event.level),
+		                    DeltaKernelLogType::ConstructLogMessage(event));
 	}
 }
 
