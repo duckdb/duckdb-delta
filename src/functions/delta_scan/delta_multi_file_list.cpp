@@ -443,7 +443,8 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
 	}
 }
 
-void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context, ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
+void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context,
+                                 ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
 	ffi::visit_scan_metadata(scan_metadata, engine_context, VisitCallback);
 }
 

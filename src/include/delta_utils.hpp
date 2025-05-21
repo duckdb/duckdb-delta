@@ -239,7 +239,8 @@ typedef TemplatedUniqueKernelPointer<ffi::SharedSnapshot, ffi::free_snapshot> Ke
 typedef TemplatedUniqueKernelPointer<ffi::SharedExternEngine, ffi::free_engine> KernelExternEngine;
 typedef TemplatedUniqueKernelPointer<ffi::SharedScan, ffi::free_scan> KernelScan;
 typedef TemplatedUniqueKernelPointer<ffi::SharedGlobalScanState, ffi::free_global_scan_state> KernelGlobalScanState;
-typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadataIterator, ffi::free_scan_metadata_iter> KernelScanDataIterator;
+typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadataIterator, ffi::free_scan_metadata_iter>
+    KernelScanDataIterator;
 
 template <typename KernelType, void (*DeleteFunction)(KernelType *)>
 struct SharedKernelPointer;
