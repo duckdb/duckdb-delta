@@ -61,6 +61,7 @@ enum class KernelError {
 	ChangeDataFeedUnsupported,
 	ChangeDataFeedIncompatibleSchema,
 	InvalidCheckpoint,
+	LiteralExpressionTransformError,
 };
 
 /// Definitions of level verbosity. Verbose Levels are "greater than" less verbose ones. So
@@ -107,14 +108,14 @@ enum class LogLineFormat {
 
 struct CStringMap;
 
-/// Transformation expressions that need to be applied to each row `i` in ScanData. You can use
+/// Transformation expressions that need to be applied to each row `i` in ScanMetadata. You can use
 /// [`get_transform_for_row`] to get the transform for a particular row. If that returns an
 /// associated expression, it _must_ be applied to the data read from the file specified by the
 /// row. The resultant schema for this expression is guaranteed to be `Scan.schema()`. If
 /// `get_transform_for_row` returns `NULL` no expression need be applied and the data read from disk
 /// is already in the correct logical state.
 ///
-/// NB: If you are using `visit_scan_data` you don't need to worry about dealing with probing
+/// NB: If you are using `visit_scan_metadata` you don't need to worry about dealing with probing
 /// `CTransforms`. The callback will be invoked with the correct transform for you.
 struct CTransforms;
 
@@ -129,6 +130,8 @@ struct EngineBuilder;
 /// an opaque struct that encapsulates data read by an engine. this handle can be passed back into
 /// some kernel calls to operate on the data, or can be converted into the raw data as read by the
 /// [`delta_kernel::Engine`] by calling [`get_raw_engine_data`]
+///
+/// [`get_raw_engine_data`]: crate::engine_data::get_raw_engine_data
 struct ExclusiveEngineData;
 
 struct ExclusiveFileReadResultIterator;
@@ -155,7 +158,9 @@ struct SharedGlobalScanState;
 
 struct SharedScan;
 
-struct SharedScanDataIterator;
+struct SharedScanMetadata;
+
+struct SharedScanMetadataIterator;
 
 struct SharedSchema;
 
@@ -202,14 +207,14 @@ struct KernelRowIndexArray {
 /// Additionally, in keeping with the [`Send`] contract, multi-threaded external code must
 /// enforce mutual exclusion -- no mutable handle should ever be passed to more than one kernel
 /// API call at a time. If thread races are possible, the handle should be protected with a
-/// mutex. Due to Rust [reference
-/// rules](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html#the-rules-of-references),
-/// this requirement applies even for API calls that appear to be read-only (because Rust code
-/// always receives the handle as mutable).
+/// mutex. Due to Rust [reference rules], this requirement applies even for API calls that
+/// appear to be read-only (because Rust code always receives the handle as mutable).
 ///
 /// NOTE: Because the underlying type is always [`Sync`], multi-threaded external code can
 /// freely access shared (non-mutable) handles.
 ///
+/// [reference rules]:
+/// https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html#the-rules-of-references
 template <typename H>
 using Handle = H *;
 
@@ -256,7 +261,7 @@ struct ExternResult {
 ///
 /// Whoever instantiates the struct must ensure it does not outlive the data it points to. The
 /// compiler cannot help us here, because raw pointers don't have lifetimes. A good rule of thumb is
-/// to always use the [`kernel_string_slice`] macro to create string slices, and to avoid returning
+/// to always use the `kernel_string_slice` macro to create string slices, and to avoid returning
 /// a string slice from a code block or function (since the move risks over-extending its lifetime):
 ///
 /// ```ignore
@@ -348,6 +353,8 @@ struct FileMeta {
 /// Model iterators. This allows an engine to specify iteration however it likes, and we simply wrap
 /// the engine functions. The engine retains ownership of the iterator.
 struct EngineIterator {
+	/// Opaque data that will be iterated over. This data will be passed to the get_next function
+	/// each time a next item is requested from the iterator
 	void *data;
 	/// A function that should advance the iterator and return the next time from the data
 	/// If the iterator is complete, it should return null. It should be safe to
@@ -358,11 +365,11 @@ struct EngineIterator {
 template <typename T>
 using VisitLiteralFn = void (*)(void *data, uintptr_t sibling_list_id, T value);
 
-using VisitVariadicFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_t child_list_id);
+using VisitJunctionFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_t child_list_id);
 
 using VisitUnaryFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_t child_list_id);
 
-using VisitBinaryOpFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_t child_list_id);
+using VisitBinaryFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_t child_list_id);
 
 /// The [`EngineExpressionVisitor`] defines a visitor system to allow engines to build their own
 /// representation of a kernel expression.
@@ -373,7 +380,7 @@ using VisitBinaryOpFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_
 /// future.
 ///
 /// Every expression the kernel visits belongs to some list of "sibling" elements. The schema
-/// itself is a list of schema elements, and every complex type (struct expression, array, variadic, etc)
+/// itself is a list of schema elements, and every complex type (struct expression, array, junction, etc)
 /// contains a list of "child" elements.
 ///  1. Before visiting any complex expression type, the kernel asks the engine to allocate a list to
 ///     hold its children
@@ -382,7 +389,7 @@ using VisitBinaryOpFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_
 ///      - For a struct literal, first visit each struct field and visit each value
 ///      - For a struct expression, visit each sub expression.
 ///      - For an array literal, visit each of the elements.
-///      - For a variadic `and` or `or` expression, visit each sub-expression.
+///      - For a junction `and` or `or` expression, visit each sub-expression.
 ///      - For a binary operator expression, visit the left and right operands.
 ///      - For a unary `is null` or `not` expression, visit the sub-expression.
 ///  3. When visiting a complex expression, the kernel also passes the "child list" containing
@@ -392,8 +399,8 @@ using VisitBinaryOpFn = void (*)(void *data, uintptr_t sibling_list_id, uintptr_
 /// WARNING: The visitor MUST NOT retain internal references to string slices or binary data passed
 /// to visitor methods
 /// TODO: Visit type information in struct field and null. This will likely involve using the schema
-/// visitor. Note that struct literals are currently in flux, and may change significantly. Here is the relevant
-/// issue: https://github.com/delta-io/delta-kernel-rs/issues/412
+/// visitor. Note that struct literals are currently in flux, and may change significantly. Here is
+/// the relevant issue: <https://github.com/delta-io/delta-kernel-rs/issues/412>
 struct EngineExpressionVisitor {
 	/// An opaque engine state pointer
 	void *data;
@@ -444,10 +451,10 @@ struct EngineExpressionVisitor {
 	void (*visit_literal_null)(void *data, uintptr_t sibling_list_id);
 	/// Visits an `and` expression belonging to the list identified by `sibling_list_id`.
 	/// The sub-expressions of the array are in a list identified by `child_list_id`
-	VisitVariadicFn visit_and;
+	VisitJunctionFn visit_and;
 	/// Visits an `or` expression belonging to the list identified by `sibling_list_id`.
 	/// The sub-expressions of the array are in a list identified by `child_list_id`
-	VisitVariadicFn visit_or;
+	VisitJunctionFn visit_or;
 	/// Visits a `not` expression belonging to the list identified by `sibling_list_id`.
 	/// The sub-expression will be in a _one_ item list identified by `child_list_id`
 	VisitUnaryFn visit_not;
@@ -456,43 +463,43 @@ struct EngineExpressionVisitor {
 	VisitUnaryFn visit_is_null;
 	/// Visits the `LessThan` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_lt;
+	VisitBinaryFn visit_lt;
 	/// Visits the `LessThanOrEqual` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_le;
+	VisitBinaryFn visit_le;
 	/// Visits the `GreaterThan` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_gt;
+	VisitBinaryFn visit_gt;
 	/// Visits the `GreaterThanOrEqual` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_ge;
+	VisitBinaryFn visit_ge;
 	/// Visits the `Equal` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_eq;
+	VisitBinaryFn visit_eq;
 	/// Visits the `NotEqual` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_ne;
+	VisitBinaryFn visit_ne;
 	/// Visits the `Distinct` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_distinct;
+	VisitBinaryFn visit_distinct;
 	/// Visits the `In` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_in;
+	VisitBinaryFn visit_in;
 	/// Visits the `NotIn` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_not_in;
+	VisitBinaryFn visit_not_in;
 	/// Visits the `Add` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_add;
+	VisitBinaryFn visit_add;
 	/// Visits the `Minus` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_minus;
+	VisitBinaryFn visit_minus;
 	/// Visits the `Multiply` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_multiply;
+	VisitBinaryFn visit_multiply;
 	/// Visits the `Divide` binary operator belonging to the list identified by `sibling_list_id`.
 	/// The operands will be in a _two_ item list identified by `child_list_id`
-	VisitBinaryOpFn visit_divide;
+	VisitBinaryFn visit_divide;
 	/// Visits the `column` belonging to the list identified by `sibling_list_id`.
 	void (*visit_column)(void *data, uintptr_t sibling_list_id, KernelStringSlice name);
 	/// Visits a `StructExpression` belonging to the list identified by `sibling_list_id`.
@@ -509,7 +516,7 @@ struct im_an_unused_struct_that_tricks_msvc_into_compilation {
 	ExternResult<Handle<SharedSnapshot>> field5;
 	ExternResult<uintptr_t> field6;
 	ExternResult<ArrowFFIData *> field7;
-	ExternResult<Handle<SharedScanDataIterator>> field8;
+	ExternResult<Handle<SharedScanMetadataIterator>> field8;
 	ExternResult<Handle<SharedScan>> field9;
 	ExternResult<Handle<ExclusiveFileReadResultIterator>> field10;
 	ExternResult<KernelRowIndexArray> field11;
@@ -539,12 +546,14 @@ using TracingLogLineFn = void (*)(KernelStringSlice line);
 ///
 /// When invoking [`scan::scan`], The engine provides a pointer to the (engine's native) predicate,
 /// along with a visitor function that can be invoked to recursively visit the predicate. This
-/// engine state must be valid until the call to `scan::scan` returns. Inside that method, the
+/// engine state must be valid until the call to [`scan::scan`] returns. Inside that method, the
 /// kernel allocates visitor state, which becomes the second argument to the predicate visitor
 /// invocation along with the engine-provided predicate pointer. The visitor state is valid for the
 /// lifetime of the predicate visitor invocation. Thanks to this double indirection, engine and
 /// kernel each retain ownership of their respective objects, with no need to coordinate memory
 /// lifetimes with the other.
+///
+/// [`scan::scan`]: crate::scan::scan
 struct EnginePredicate {
 	void *predicate;
 	uintptr_t (*visitor)(void *predicate, KernelExpressionVisitorState *state);
@@ -567,7 +576,7 @@ struct Stats {
 /// * `size`: an `i64` which is the size of the file
 /// * `dv_info`: a [`DvInfo`] struct, which allows getting the selection vector for this file
 /// * `transform`: An optional expression that, if not `NULL`, _must_ be applied to physical data to
-///                convert it to the correct logical format. If this is `NULL`, no transform is needed.
+///   convert it to the correct logical format. If this is `NULL`, no transform is needed.
 /// * `partition_values`: [DEPRECATED] a `HashMap<String, String>` which are partition values
 using CScanCallback = void (*)(NullableCvoid engine_context, KernelStringSlice path, int64_t size, const Stats *stats,
                                const DvInfo *dv_info, const Expression *transform, const CStringMap *partition_map);
@@ -779,8 +788,11 @@ Handle<StringSliceIterator> get_partition_columns(Handle<SharedSnapshot> snapsho
 
 /// # Safety
 ///
-/// The iterator must be valid (returned by [kernel_scan_data_init]) and not yet freed by
-/// [kernel_scan_data_free]. The visitor function pointer must be non-null.
+/// The iterator must be valid (returned by [`scan_metadata_iter_init`]) and not yet freed by
+/// [`free_scan_metadata_iter`]. The visitor function pointer must be non-null.
+///
+/// [`scan_metadata_iter_init`]: crate::scan::scan_metadata_iter_init
+/// [`free_scan_metadata_iter`]: crate::scan::free_scan_metadata_iter
 bool string_slice_next(Handle<StringSliceIterator> data, NullableCvoid engine_context,
                        void (*engine_visitor)(NullableCvoid engine_context, KernelStringSlice slice));
 
@@ -824,6 +836,8 @@ ExternResult<ArrowFFIData *> get_raw_arrow_data(Handle<ExclusiveEngineData> data
 ///
 /// The iterator must be valid (returned by [`read_parquet_file`]) and not yet freed by
 /// [`free_read_result_iter`]. The visitor function pointer must be non-null.
+///
+/// [`free_engine_data`]: crate::free_engine_data
 ExternResult<bool> read_result_next(Handle<ExclusiveFileReadResultIterator> data, NullableCvoid engine_context,
                                     void (*engine_visitor)(NullableCvoid engine_context,
                                                            Handle<ExclusiveEngineData> engine_data));
@@ -842,18 +856,20 @@ void free_read_result_iter(Handle<ExclusiveFileReadResultIterator> data);
 ExternResult<Handle<ExclusiveFileReadResultIterator>>
 read_parquet_file(Handle<SharedExternEngine> engine, const FileMeta *file, Handle<SharedSchema> physical_schema);
 
-/// Get the evaluator as provided by the passed engines `ExpressionHandler`.
+/// Creates a new expression evaluator as provided by the passed engines `EvaluationHandler`.
 ///
 /// # Safety
 /// Caller is responsible for calling with a valid `Engine`, `Expression`, and `SharedSchema`s
-Handle<SharedExpressionEvaluator> get_evaluator(Handle<SharedExternEngine> engine, Handle<SharedSchema> input_schema,
-                                                const Expression *expression, Handle<SharedSchema> output_type);
+Handle<SharedExpressionEvaluator> new_expression_evaluator(Handle<SharedExternEngine> engine,
+                                                           Handle<SharedSchema> input_schema,
+                                                           const Expression *expression,
+                                                           Handle<SharedSchema> output_type);
 
-/// Free an evaluator
+/// Free an expression evaluator
 /// # Safety
 ///
 /// Caller is responsible for passing a valid handle.
-void free_evaluator(Handle<SharedExpressionEvaluator> evaluator);
+void free_expression_evaluator(Handle<SharedExpressionEvaluator> evaluator);
 
 /// Use the passed `evaluator` to evaluate its expression against the passed `batch` data.
 ///
@@ -1000,9 +1016,24 @@ bool enable_log_line_tracing(TracingLogLineFn callback, Level max_level);
 bool enable_formatted_log_line_tracing(TracingLogLineFn callback, Level max_level, LogLineFormat format, bool ansi,
                                        bool with_time, bool with_level, bool with_target);
 
-/// Drops a scan.
+/// Drop a `SharedScanMetadata`.
+///
 /// # Safety
-/// Caller is responsible for passing a [valid][Handle#Validity] scan handle.
+///
+/// Caller is responsible for passing a valid scan data handle.
+void free_scan_metadata(Handle<SharedScanMetadata> scan_metadata);
+
+/// Get a selection vector out of a [`SharedScanMetadata`] struct
+///
+/// # Safety
+/// Engine is responsible for providing valid pointers for each argument
+ExternResult<KernelBoolSlice> selection_vector_from_scan_metadata(Handle<SharedScanMetadata> scan_metadata,
+                                                                  Handle<SharedExternEngine> engine);
+
+/// Drops a scan.
+///
+/// # Safety
+/// Caller is responsible for passing a valid scan handle.
 void free_scan(Handle<SharedScan> scan);
 
 /// Get a [`Scan`] over the table specified by the passed snapshot. It is the responsibility of the
@@ -1041,33 +1072,36 @@ Handle<SharedSchema> get_global_logical_schema(Handle<SharedGlobalScanState> sta
 void free_global_scan_state(Handle<SharedGlobalScanState> state);
 
 /// Get an iterator over the data needed to perform a scan. This will return a
-/// [`KernelScanDataIterator`] which can be passed to [`kernel_scan_data_next`] to get the actual
-/// data in the iterator.
+/// [`ScanMetadataIterator`] which can be passed to [`scan_metadata_next`] to get the
+/// actual data in the iterator.
 ///
 /// # Safety
 ///
 /// Engine is responsible for passing a valid [`SharedExternEngine`] and [`SharedScan`]
-ExternResult<Handle<SharedScanDataIterator>> kernel_scan_data_init(Handle<SharedExternEngine> engine,
-                                                                   Handle<SharedScan> scan);
+ExternResult<Handle<SharedScanMetadataIterator>> scan_metadata_iter_init(Handle<SharedExternEngine> engine,
+                                                                         Handle<SharedScan> scan);
 
-/// Call the provided `engine_visitor` on the next scan data item. The visitor will be provided with
-/// a selection vector and engine data. It is the responsibility of the _engine_ to free these when
-/// it is finished by calling [`free_bool_slice`] and [`free_engine_data`] respectively.
+/// Call the provided `engine_visitor` on the next scan metadata item. The visitor will be provided with
+/// a [`SharedScanMetadata`], which contains the actual scan files and the associated selection vector. It is the
+/// responsibility of the _engine_ to free the associated resources after use by calling
+/// [`free_engine_data`] and [`free_bool_slice`] respectively.
 ///
 /// # Safety
 ///
-/// The iterator must be valid (returned by [kernel_scan_data_init]) and not yet freed by
-/// [`free_kernel_scan_data`]. The visitor function pointer must be non-null.
-ExternResult<bool>
-kernel_scan_data_next(Handle<SharedScanDataIterator> data, NullableCvoid engine_context,
-                      void (*engine_visitor)(NullableCvoid engine_context, Handle<ExclusiveEngineData> engine_data,
-                                             KernelBoolSlice selection_vector, const CTransforms *transforms));
+/// The iterator must be valid (returned by [scan_metadata_iter_init]) and not yet freed by
+/// [`free_scan_metadata_iter`]. The visitor function pointer must be non-null.
+///
+/// [`free_bool_slice`]: crate::free_bool_slice
+/// [`free_engine_data`]: crate::free_engine_data
+ExternResult<bool> scan_metadata_next(Handle<SharedScanMetadataIterator> data, NullableCvoid engine_context,
+                                      void (*engine_visitor)(NullableCvoid engine_context,
+                                                             Handle<SharedScanMetadata> scan_metadata));
 
 /// # Safety
 ///
 /// Caller is responsible for (at most once) passing a valid pointer returned by a call to
-/// [`kernel_scan_data_init`].
-void free_kernel_scan_data(Handle<SharedScanDataIterator> data);
+/// [`scan_metadata_iter_init`].
+void free_scan_metadata_iter(Handle<SharedScanMetadataIterator> data);
 
 /// allow probing into a CStringMap. If the specified key is in the map, kernel will call
 /// allocate_fn with the value associated with the key and return the value returned from that
@@ -1086,8 +1120,6 @@ NullableCvoid get_from_string_map(const CStringMap *map, KernelStringSlice key, 
 ///
 /// The engine is responsible for providing a valid [`CTransforms`] pointer, and for checking if the
 /// return value is `NULL` or not.
-/// TODO: this Option is problematic because its an incomplete type which prevents us from using the
-/// im_an_unused_struct_that_tricks_msvc_into_compilation trick
 // Option<Handle<SharedExpression>> get_transform_for_row(uintptr_t row, const CTransforms *transforms);
 
 /// Get a selection vector out of a [`DvInfo`] struct
@@ -1104,13 +1136,13 @@ ExternResult<KernelBoolSlice> selection_vector_from_dv(const DvInfo *dv_info, Ha
 ExternResult<KernelRowIndexArray> row_indexes_from_dv(const DvInfo *dv_info, Handle<SharedExternEngine> engine,
                                                       Handle<SharedGlobalScanState> state);
 
-/// Shim for ffi to call visit_scan_data. This will generally be called when iterating through scan
-/// data which provides the data handle and selection vector as each element in the iterator.
+/// Shim for ffi to call visit_scan_metadata. This will generally be called when iterating through scan
+/// data which provides the [`SharedScanMetadata`] as each element in the iterator.
 ///
 /// # Safety
-/// engine is responsible for passing a valid [`ExclusiveEngineData`] and selection vector.
-void visit_scan_data(Handle<ExclusiveEngineData> data, KernelBoolSlice selection_vec, const CTransforms *transforms,
-                     NullableCvoid engine_context, CScanCallback callback);
+/// engine is responsible for passing a valid [`SharedScanMetadata`].
+void visit_scan_metadata(Handle<SharedScanMetadata> scan_metadata, NullableCvoid engine_context,
+                         CScanCallback callback);
 
 /// Visit the given `schema` using the provided `visitor`. See the documentation of
 /// [`EngineSchemaVisitor`] for a description of how this visitor works.

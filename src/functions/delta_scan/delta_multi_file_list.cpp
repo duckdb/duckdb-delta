@@ -443,9 +443,8 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
 	}
 }
 
-void ScanDataCallBack::VisitData(void *engine_context, ffi::ExclusiveEngineData *engine_data,
-                                 const struct ffi::KernelBoolSlice selection_vec, const ffi::CTransforms *transforms) {
-	ffi::visit_scan_data(engine_data, selection_vec, transforms, engine_context, VisitCallback);
+void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context, ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
+	ffi::visit_scan_metadata(scan_metadata, engine_context, VisitCallback);
 }
 
 DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path)
@@ -524,7 +523,7 @@ OpenFileInfo DeltaMultiFileList::GetFileInternal(idx_t i) const {
 
 	while (i >= resolved_files.size()) {
 		auto have_scan_data_res =
-		    ffi::kernel_scan_data_next(scan_data_iterator.get(), &callback_context, ScanDataCallBack::VisitData);
+		    ffi::scan_metadata_next(scan_data_iterator.get(), &callback_context, ScanDataCallBack::VisitData);
 
 		if (callback_context.error.HasError()) {
 			callback_context.error.Throw();
@@ -687,7 +686,7 @@ void DeltaMultiFileList::InitializeScan() const {
 	global_state = ffi::get_global_scan_state(scan.get());
 
 	// Create scan data iterator
-	scan_data_iterator = TryUnpackKernelResult(ffi::kernel_scan_data_init(extern_engine.get(), scan.get()));
+	scan_data_iterator = TryUnpackKernelResult(ffi::scan_metadata_iter_init(extern_engine.get(), scan.get()));
 
 	// Load partitions
 	auto partition_count = ffi::get_partition_column_count(snapshot_ref.GetPtr());

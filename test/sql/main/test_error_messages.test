@@ -33,7 +33,7 @@ CREATE SECRET s1 (
 statement error
 FROM delta_scan('s3://bucket/doesnt/exist/either');
 ----
-IO Error: DeltKernel ObjectStoreError (8): Error interacting with object store: Generic S3 error: Error after
+IO Error: DeltKernel ObjectStoreError (8): Error interacting with object store: Generic S3 error: Error performing GET
 
 statement error
 FROM delta_scan('duck://bucket/doesnt/exist/either');
@@ -46,4 +46,4 @@ ATTACH 's3://bucket/doesnt/exist/either' AS s1 (TYPE delta);
 statement error
 SHOW ALL TABLES;
 ----
-IO Error: DeltKernel ObjectStoreError (8): Error interacting with object store: Generic S3 error: Error after
+IO Error: DeltKernel ObjectStoreError (8): Error interacting with object store: Generic S3 error: Error performing GET

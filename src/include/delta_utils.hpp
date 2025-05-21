@@ -70,15 +70,15 @@ private:
 	static void VisitIsNullExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 
 	template <ExpressionType EXPRESSION_TYPE, typename EXPRESSION_TYPENAME>
-	static ffi::VisitVariadicFn VisitUnaryExpression() {
+	static ffi::VisitJunctionFn VisitUnaryExpression() {
 		return &VisitVariadicExpression<EXPRESSION_TYPE, EXPRESSION_TYPENAME>;
 	}
 	template <ExpressionType EXPRESSION_TYPE, typename EXPRESSION_TYPENAME>
-	static ffi::VisitVariadicFn VisitBinaryExpression() {
+	static ffi::VisitJunctionFn VisitBinaryExpression() {
 		return &VisitBinaryExpression<EXPRESSION_TYPE, EXPRESSION_TYPENAME>;
 	}
 	template <ExpressionType EXPRESSION_TYPE, typename EXPRESSION_TYPENAME>
-	static ffi::VisitVariadicFn VisitVariadicExpression() {
+	static ffi::VisitJunctionFn VisitVariadicExpression() {
 		return &VisitVariadicExpression<EXPRESSION_TYPE, EXPRESSION_TYPENAME>;
 	}
 
@@ -239,7 +239,7 @@ typedef TemplatedUniqueKernelPointer<ffi::SharedSnapshot, ffi::free_snapshot> Ke
 typedef TemplatedUniqueKernelPointer<ffi::SharedExternEngine, ffi::free_engine> KernelExternEngine;
 typedef TemplatedUniqueKernelPointer<ffi::SharedScan, ffi::free_scan> KernelScan;
 typedef TemplatedUniqueKernelPointer<ffi::SharedGlobalScanState, ffi::free_global_scan_state> KernelGlobalScanState;
-typedef TemplatedUniqueKernelPointer<ffi::SharedScanDataIterator, ffi::free_kernel_scan_data> KernelScanDataIterator;
+typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadataIterator, ffi::free_scan_metadata_iter> KernelScanDataIterator;
 
 template <typename KernelType, void (*DeleteFunction)(KernelType *)>
 struct SharedKernelPointer;

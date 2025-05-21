@@ -94,12 +94,11 @@ WHERE part = (SELECT 2)
 ----
 12	1002	102	2
 
-# FIXME: the above query does not yet support pushdown because kernel can't do pushdown on partition columns
 query IIIII
 SELECT filter_type, filters_before, filters_after, files_before, files_after
 FROM delta_filter_pushdown_log()
 ----
-dynamic	[]	['part=2']	5	5
+dynamic	[]	['part=2']	5	1
 
 # Clear logging storage
 statement ok
