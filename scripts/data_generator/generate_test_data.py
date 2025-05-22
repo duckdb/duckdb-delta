@@ -19,12 +19,15 @@ from pyspark_generator import *
 ### TPC-H
 ################################################
 
-### TPC-H SF1 DELTA-RS
-init = "call dbgen(sf=0.01);"
-tables = ["customer","lineitem","nation","orders","part","partsupp","region","supplier"]
-queries = [f"from {x}" for x in tables]
-tables = [{'name': x[0], 'query':x[1]} for x in zip(tables,queries)]
-generate_test_data_delta_rs_multi(BASE_PATH, "delta_rs_tpch_sf0_01", init, tables)
+## TPC-H SF0.01 PYSPARK
+if (not os.path.isdir(BASE_PATH + '/tpch_sf0_01')):
+    con = duckdb.connect()
+    con.query(f"call dbgen(sf=1); EXPORT DATABASE '{TMP_PATH}/tpch_sf0_01_export' (FORMAT parquet)")
+    for table in ["customer","lineitem","nation","orders","part","partsupp","region","supplier"]:
+        generate_test_data_pyspark(BASE_PATH,f"tpch_sf0_01_{table}", f'tpch_sf0_01/{table}', f'{TMP_PATH}/tpch_sf0_01_export/{table}.parquet')
+    con.query(f"attach '{BASE_PATH + '/tpch_sf0_01/duckdb.db'}' as duckdb_out")
+    for table in ["customer","lineitem","nation","orders","part","partsupp","region","supplier"]:
+        con.query(f"create table duckdb_out.{table} as from {table}")
 
 ## TPC-H SF1 PYSPARK
 if (not os.path.isdir(BASE_PATH + '/tpch_sf1')):

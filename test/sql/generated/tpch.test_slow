@@ -65,7 +65,7 @@ endloop
 foreach table customer lineitem nation orders part partsupp region supplier
 
 statement ok
-create view ${table} as from delta_scan('./data/generated/delta_rs_tpch_sf0_01/${table}/delta_lake');
+create view ${table} as from delta_scan('./data/generated/tpch_sf0_01/${table}/delta_lake');
 
 endloop
 

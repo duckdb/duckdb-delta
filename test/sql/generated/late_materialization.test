@@ -11,13 +11,13 @@ statement ok
 pragma enable_verification
 
 statement ok
-CREATE VIEW lineitem AS FROM delta_scan('data/generated/delta_rs_tpch_sf0_01/lineitem/delta_lake');
+CREATE VIEW lineitem AS FROM delta_scan('data/generated/tpch_sf0_01/lineitem/delta_lake');
 
 statement ok
 FROM lineitem ORDER BY l_orderkey DESC LIMIT 5;
 
 statement ok
-ATTACH 'data/generated/delta_rs_tpch_sf0_01/lineitem/delta_lake' as dt (TYPE delta);
+ATTACH 'data/generated/tpch_sf0_01/lineitem/delta_lake' as dt (TYPE delta);
 
 # TODO: figure out why the serialization verification breaks here
 statement ok
