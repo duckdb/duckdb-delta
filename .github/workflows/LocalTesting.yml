@@ -15,7 +15,7 @@ jobs:
     name: Azurite (local azure test server) tests (Linux)
     runs-on: ubuntu-latest
     env:
-      VCPKG_TARGET_TRIPLET: 'x64-linux'
+      VCPKG_TARGET_TRIPLET: 'x64-linux-release'
       GEN: Ninja
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       AZURE_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;'
@@ -90,7 +90,7 @@ jobs:
     env:
       S3_TEST_SERVER_AVAILABLE: 1
       GEN: ninja
-      VCPKG_TARGET_TRIPLET: x64-linux
+      VCPKG_TARGET_TRIPLET: x64-linux-release
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
     steps:
@@ -180,6 +180,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GEN: ninja
+      VCPKG_TARGET_TRIPLET: x64-linux-release
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
     steps:
