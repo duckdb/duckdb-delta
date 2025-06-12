@@ -750,6 +750,14 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, const Co
 		}
 		break;
 	}
+	// TODO: implement these types
+	case LogicalTypeId::STRUCT:
+	case LogicalTypeId::MAP:
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::DECIMAL:
 	default:
 		break; // unsupported type
 	}
@@ -766,7 +774,15 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, const Co
 		return visit_predicate_ge(state, left, right);
 	case ExpressionType::COMPARE_EQUAL:
 		return visit_predicate_eq(state, left, right);
-
+    case ExpressionType::COMPARE_NOTEQUAL:
+	    return ffi::visit_predicate_ne(state, left, right);
+	// TODO: evaluate for implementation
+	case ExpressionType::COMPARE_BETWEEN:
+	case ExpressionType::COMPARE_NOT_BETWEEN:
+	case ExpressionType::COMPARE_NOT_IN:
+	case ExpressionType::COMPARE_IN:
+	case ExpressionType::COMPARE_DISTINCT_FROM:
+	case ExpressionType::COMPARE_NOT_DISTINCT_FROM:
 	default:
 		// TODO: add more types
 		return ~0; // Unsupported operation
@@ -817,6 +833,17 @@ uintptr_t PredicateVisitor::VisitFilter(const string &col_name, const TableFilte
 		return VisitIsNull(col_name, state);
 	case TableFilterType::IS_NOT_NULL:
 		return VisitIsNotNull(col_name, state);
+	// TODO: implement once kernel can do arbitrary expressions
+	case TableFilterType::EXPRESSION_FILTER:
+    // TODO: implement once kernel adds support for IN filters / arbitrary expressions
+	case TableFilterType::IN_FILTER:
+    // TODO: implement once kernel can do struct extract pushdown / arbitrary expressions
+    case TableFilterType::STRUCT_EXTRACT:
+    // TODO: figure out if this is ever useful
+	case TableFilterType::DYNAMIC_FILTER:
+	// TODO: can we even push these down?
+	case TableFilterType::CONJUNCTION_OR:
+	case TableFilterType::OPTIONAL_FILTER:
 	default:
 		return ~0;
 	}

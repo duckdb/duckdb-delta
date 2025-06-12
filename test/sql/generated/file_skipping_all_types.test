@@ -115,6 +115,126 @@ WHERE part = '0'
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
 
+# TODO test remaining types:
+# - STRUCT
+# - MAP
+# - LIST
+# - TIMESTAMP
+# - TIMESTAMP_TZ
+# - DATE
+# - DECIMAL
+
+### Now test all Comparators are fileskipping
+
+# test: '>'
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part > 2
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
+
+# test: '<'
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part < 2
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
+
+# test: '<='
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part <= 2
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
+
+# test: '>='
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part >= 2
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
+
+# test: '='
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part = 2
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
+
+# test: '!='
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part != 2
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 4/5.*
+
+# test: 'BETWEEN'
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part between 2 and 4
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
+
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part = 2 OR part = 4
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
+
+# TODO: fix unsupported comparators
+mode skip
+
+# test: 'NOT BETWEEN' 
+# NOTE: requires 
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part not between 2 and 4
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
+
+# test: 'IN'
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part in [2, 3]
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
+
+# test: 'NOT IN'
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part not in [2, 3]
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
+
+# IS DISTINCT FROM 
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part is distinct from null
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 0/5.*
+
+# IS NOT DISTINCT FROM 
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+WHERE part is not distinct from null
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 5/5.*
+
+mode unskip
+
 # We can remove this from output if precise operator timing is crucial
 statement ok
 set delta_scan_explain_files_filtered = false;
