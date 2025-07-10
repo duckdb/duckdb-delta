@@ -1,30 +1,10 @@
 {
-	"dependencies": [
-		"vcpkg-cmake",
-		"azure-identity-cpp",
-		"azure-storage-blobs-cpp",
-		"azure-storage-files-datalake-cpp",
-		"openssl",
-		"zlib",
-		{
-			"name": "aws-sdk-cpp",
-			"features": [
-				"sts",
-				"sso",
-				"identity-management"
-			]
-		}
-	],
-    "vcpkg-configuration": {
-      "overlay-ports": [
-        "./extension-ci-tools/vcpkg_ports"
-      ]
-    },
-	"builtin-baseline": "5e5d0e1cd7785623065e77eff011afdeec1a3574",
-	"overrides": [
-		{
-			"name": "openssl",
-			"version": "3.0.8"
-		}
-	]
+  "dependencies": [
+    "vcpkg-cmake"
+  ],
+  "vcpkg-configuration": {
+    "overlay-ports": [
+      "./extension-ci-tools/vcpkg_ports"
+    ]
+  }
 }

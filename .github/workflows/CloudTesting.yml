@@ -16,6 +16,7 @@ jobs:
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       GEN: Ninja
       DUCKDB_PLATFORM: linux_amd64
+      BUILD_EXTENSION_TEST_DEPS: full
 
     steps:
       - name: Install required ubuntu packages
@@ -39,7 +40,7 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
         with:
-          vcpkgGitCommitId: 5e5d0e1cd7785623065e77eff011afdeec1a3574
+          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
 
       - name: Configure OpenSSL for Rust
         run: |
