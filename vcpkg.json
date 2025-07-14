@@ -15,12 +15,17 @@
 			]
 		}
 	],
-    "vcpkg-configuration": {
-      "overlay-ports": [
-        "./extension-ci-tools/vcpkg_ports"
-      ]
-    },
-	"builtin-baseline": "5e5d0e1cd7785623065e77eff011afdeec1a3574",
+	"vcpkg-configuration": {
+		"registries": [
+			{
+				"kind": "git",
+				"repository": "https://github.com/duckdb/vcpkg-duckdb-ports",
+				"baseline": "eac17a423bbcf1a557771d25384548013f57f5b1",
+				"packages": ["vcpkg-cmake"]
+			}
+		]
+	},
+	"builtin-baseline": "ce613c41372b23b1f51333815feb3edd87ef8a8b",
 	"overrides": [
 		{
 			"name": "openssl",
