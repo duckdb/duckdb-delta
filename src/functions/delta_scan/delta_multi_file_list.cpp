@@ -690,7 +690,7 @@ void DeltaMultiFileList::InitializeScan() const {
 	    return test;
 	});
     root_path = *static_cast<string*>(ptr);
-    delete ptr;
+    delete static_cast<string*>(ptr);
 
 	// Create scan data iterator
 	scan_data_iterator = TryUnpackKernelResult(ffi::scan_metadata_iter_init(extern_engine.get(), scan.get()));
