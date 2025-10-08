@@ -237,7 +237,12 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_endpoint"),
 			                        KernelUtils::ToDeltaString("https://storage.googleapis.com"));
 		}
-
+		if (secret_type == "s3"){
+			if (!url_style.empty() && url_style == "vhost"){
+				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_virtual_hosted_style_request"),
+				                        KernelUtils::ToDeltaString("true"));
+			}
+		}
 		ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_region"), KernelUtils::ToDeltaString(region));
 
 	} else if (secret_type == "azure") {
