@@ -71,6 +71,11 @@ virtual_column_map_t DeltaVirtualColumns(ClientContext &, optional_ptr<FunctionD
 	return result;
 }
 
+static void DeltaScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
+                                 const TableFunction &function) {
+	throw NotImplementedException("DeltaScan serialization not implemented");
+}
+
 TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 	// Parquet extension needs to be loaded for this to make sense
     auto &instance = loader.GetDatabaseInstance();
@@ -87,7 +92,7 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 
 		// Unset all of these: they are either broken, very inefficient.
 		// TODO: implement/fix these
-		function.serialize = nullptr;
+		function.serialize = DeltaScanSerialize;
 		function.deserialize = nullptr;
 		function.statistics = nullptr;
 		function.table_scan_progress = nullptr;
