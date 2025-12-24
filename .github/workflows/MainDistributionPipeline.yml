@@ -6,11 +6,9 @@ on:
   push:
   pull_request:
   workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true
-
 jobs:
   duckdb-stable-build:
     name: Build extension binaries
@@ -24,15 +22,12 @@ jobs:
       enable_rust: true
       rust_logs: true
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl'
-
       # Config to write vcpkg binary cache
       extra_toolchains: ${{ github.event_name != 'pull_request' && ';downgraded_aws_cli;python3;' || 'python3' }}
       save_cache: ${{ github.event_name != 'pull_request' }}
       vcpkg_binary_sources: ${{ github.event_name != 'pull_request' && vars.VCPKG_BINARY_SOURCES || '' }}
-
       reduced_ci_mode: ${{ github.event_name == 'pull_request' && 'enabled' || 'disabled'}}
-
-
+    if: (github.event_name != 'push' || !contains(lower(join(github.event.commits.*.message, ' ')), 'bump to')) && (github.event_name != 'pull_request' || !contains(lower(github.event.pull_request.title), 'bump to'))
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build
@@ -46,3 +41,4 @@ jobs:
       # deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
       deploy_versioned: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
       reduced_ci_mode: ${{ github.event_name == 'pull_request' && 'enabled' || 'disabled'}}
+    if: (github.event_name != 'push' || !contains(lower(join(github.event.commits.*.message, ' ')), 'bump to')) && (github.event_name != 'pull_request' || !contains(lower(github.event.pull_request.title), 'bump to'))
