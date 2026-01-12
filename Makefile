@@ -46,7 +46,7 @@ include benchmark/benchmark.Makefile
 #	. ./venv/bin/activate
 #   export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/11.0.27/libexec/openjdk.jdk/Contents/Home
 generate-data:
-	python3 -m pip install delta-spark duckdb pandas deltalake pyspark typing-extensions pyarrow
+	python3 -m pip install 'delta-spark==4.0.0' duckdb pandas deltalake 'pyspark==4.0.0' typing-extensions pyarrow
 	python3 scripts/data_generator/generate_test_data.py
 
 unpack-golden-tables-release:
