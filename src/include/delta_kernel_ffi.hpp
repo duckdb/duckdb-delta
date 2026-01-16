@@ -68,7 +68,7 @@ enum class KernelError {
 /// Level::ERROR is the lowest, and Level::TRACE the highest.
 enum class Level {
   ERROR = 0,
-  WARN = 1,
+  WARNING = 1,
   INFO = 2,
 	DEBUGGING = 3,
   TRACE = 4,

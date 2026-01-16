@@ -1060,8 +1060,8 @@ LogLevel LoggerCallback::GetDuckDBLogLevel(ffi::Level level) {
 		return LogLevel::LOG_DEBUG;
 	case ffi::Level::INFO:
 		return LogLevel::LOG_INFO;
-	case ffi::Level::WARN:
-		return LogLevel::LOG_WARN;
+	case ffi::Level::WARNING:
+		return LogLevel::LOG_WARNING;
 	case ffi::Level::ERROR:
 		return LogLevel::LOG_ERROR;
 	default:
