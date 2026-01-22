@@ -500,7 +500,6 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 	}
 }
 
-// TODO: mod_time unused
 void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::KernelStringSlice path, int64_t size,
                                      int64_t mod_time, const ffi::Stats *stats, const ffi::CDvInfo *dv_info,
                                      const ffi::Expression *transform, const ffi::CStringMap *partition_values) {
@@ -705,7 +704,6 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 			auto old_snapshot_ref = old_snapshot->GetLockingRef();
 			auto ptr = old_snapshot_ref.GetPtr();
 			old_snapshot_val = KernelUtils::OptionalSome<ffi::Handle<ffi::SharedSnapshot>>(ptr);
-			// TODO: unset path_val? let kernel check match?
 		}
 
 	    if (version == DConstants::INVALID_INDEX) {

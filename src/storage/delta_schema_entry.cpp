@@ -104,8 +104,6 @@ static bool CatalogTypeIsSupported(CatalogType type) {
 
 unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version, optional_ptr<const DeltaMultiFileList> old_snapshot) {
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
-
-
 	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version, old_snapshot);
 
 	// Get the names and types from the delta snapshot
@@ -176,22 +174,6 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		if (transaction_table_entry) {
 			return *transaction_table_entry;
 		}
-
-		// Snapshots are cached:
-		// - in transaction
-		// - in schema (in the catalog) i.e. shared between transactions
-
-		// Problem: currently we do either cache it and fully reuse it OR we do the transaction thing.
-		//
-		// Now what we want is both:
-		// - if caching is enabled, use old path
-		// - if not:
-		//    - ensure we store A snapshot in the cached_talbe
-		//    - U
-		// w
-
-		// If not used cached:
-		// - If cached snapshot is not set, we set it and
 
 		if (delta_catalog.UseCachedSnapshot()) {
 			unique_lock<mutex> l(lock);
