@@ -32,7 +32,8 @@ def generate_test_data_delta_rs_multi(base_path, path, init, tables, splits = 1)
 
         # Then we write the parquet files
         for table in tables:
-            total_count = con.sql(f"select count(*) from ({table['query']})").fetchall()[0][0]
+            query = table['query']
+            total_count = con.sql(f"select count(*) from ({query})").fetchall()[0][0]
             # At least 1 tuple per file
             if total_count < splits:
                 splits = total_count
