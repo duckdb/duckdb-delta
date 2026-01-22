@@ -55,7 +55,7 @@ class DeltaMultiFileList : public MultiFileList {
 	friend struct ScanDataCallBack;
 
 public:
-	DeltaMultiFileList(ClientContext &context, const string &path, idx_t version);
+	DeltaMultiFileList(ClientContext &context, const string &path, idx_t version, optional_ptr<const DeltaMultiFileList> previous = nullptr);
 	string GetPath() const;
 	static string ToDuckDBPath(const string &raw_path);
 	static string ToDeltaPath(const string &raw_path);
@@ -129,6 +129,7 @@ protected:
 
 	//! Delta Kernel Structures
 	mutable shared_ptr<SharedKernelSnapshot> snapshot;
+	mutable shared_ptr<SharedKernelSnapshot> old_snapshot;
 
 	mutable KernelScan scan;
 	mutable KernelScanDataIterator scan_data_iterator;
@@ -174,7 +175,7 @@ struct ScanDataCallBack {
 	}
 	static void VisitData(ffi::NullableCvoid engine_context, ffi::Handle<ffi::SharedScanMetadata> scan_metadata);
 	static void VisitCallback(ffi::NullableCvoid engine_context, struct ffi::KernelStringSlice path, int64_t size,
-	                          const ffi::Stats *stats, const ffi::CDvInfo *dv_info, const ffi::Expression *transform,
+	                          int64_t mod_time, const ffi::Stats *stats, const ffi::CDvInfo *dv_info, const ffi::Expression *transform,
 	                          const struct ffi::CStringMap *partition_values);
 	static void VisitCallbackInternal(ffi::NullableCvoid engine_context, struct ffi::KernelStringSlice path,
 	                                  int64_t size, const ffi::Stats *stats, const ffi::CDvInfo *dv_info,

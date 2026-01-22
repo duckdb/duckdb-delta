@@ -564,8 +564,8 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	return visitor;
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::SharedSnapshot *snapshot, bool enable_variant) {
-	SchemaVisitor state;
+vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::SharedSnapshot *snapshot, ffi::Handle<ffi::SharedExternEngine> engine, bool enable_variant) {
+	SchemaVisitor state(engine);
 	auto visitor = CreateSchemaVisitor(state, enable_variant);
 
 	auto schema = logical_schema(snapshot);
@@ -579,9 +579,9 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::S
 	return state.TakeFieldList(result);
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedScan *scan,
+vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedScan *scan, ffi::Handle<ffi::SharedExternEngine> engine,
                                                                                   bool logical, bool enable_variant) {
-	SchemaVisitor visitor_state;
+	SchemaVisitor visitor_state(engine);
 	auto visitor = CreateSchemaVisitor(visitor_state, enable_variant);
 
 	ffi::Handle<ffi::SharedSchema> schema;
@@ -601,8 +601,8 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotGlobalReadSch
 	return visitor_state.TakeFieldList(result);
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitWriteContextSchema(ffi::SharedWriteContext *write_context, bool enable_variant) {
-	SchemaVisitor visitor_state;
+vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitWriteContextSchema(ffi::SharedWriteContext *write_context, ffi::Handle<ffi::SharedExternEngine> engine, bool enable_variant) {
+	SchemaVisitor visitor_state(engine);
 	auto visitor = CreateSchemaVisitor(visitor_state, enable_variant);
     auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);
@@ -621,7 +621,7 @@ void SchemaVisitor::VisitDecimal(SchemaVisitor *state, uintptr_t sibling_list_id
     DeltaMultiFileColumnDefinition decimal_def(KernelUtils::FromDeltaString(name), decimal_type, is_nullable);
     decimal_def.default_expression = make_uniq<ConstantExpression>(Value().DefaultCastAs(decimal_type));
 
-    ApplyDeltaColumnMapping(metadata, decimal_def);
+    ApplyDeltaColumnMapping(metadata, decimal_def, state->engine);
 
 	state->AppendToList(sibling_list_id, name, std::move(decimal_def));
 }
@@ -644,7 +644,7 @@ void SchemaVisitor::VisitStruct(SchemaVisitor *state, uintptr_t sibling_list_id,
     struct_def.children = std::move(children);
     struct_def.default_expression = make_uniq<ConstantExpression>(Value(struct_type));
 
-    ApplyDeltaColumnMapping(metadata, struct_def);
+    ApplyDeltaColumnMapping(metadata, struct_def, state->engine);
 
 	state->AppendToList(sibling_list_id, name, std::move(struct_def));
 }
@@ -664,7 +664,7 @@ void SchemaVisitor::VisitArray(SchemaVisitor *state, uintptr_t sibling_list_id, 
     // TODO: kinda wonky, but column mapper uses this
     list_def.children.front().name = "list";
 
-    ApplyDeltaColumnMapping(metadata, list_def);
+    ApplyDeltaColumnMapping(metadata, list_def, state->engine);
 
 	state->AppendToList(sibling_list_id, name, std::move(list_def));
 }
@@ -687,7 +687,7 @@ void SchemaVisitor::VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ff
 
     map_def.default_expression = make_uniq<ConstantExpression>(Value(map_type));
 
-    ApplyDeltaColumnMapping(metadata, map_def);
+    ApplyDeltaColumnMapping(metadata, map_def, state->engine);
 
 	state->AppendToList(sibling_list_id, name, std::move(map_def));
 }
@@ -810,12 +810,14 @@ vector<bool> KernelUtils::FromDeltaBoolSlice(const struct ffi::KernelBoolSlice s
 	return result;
 }
 
-string KernelUtils::FetchFromStringMap(const ffi::CStringMap *str_map, const string &key) {
-    auto res = ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew);
+string KernelUtils::FetchFromStringMap(const ffi::CStringMap *str_map, const string &key, ffi::Handle<ffi::SharedExternEngine> engine) {
+	void *out;
+	auto res = KernelUtils::TryUnpackResult(ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew, engine), out);
+
     string val;
-    if (res) {
-        val = *(string*)res;
-        delete static_cast<string*>(res);
+    if (!res.HasError() && out) {
+        val = *(string*)out;
+        delete static_cast<string*>(out);
     }
     return val;
 }

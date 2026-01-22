@@ -102,9 +102,11 @@ static bool CatalogTypeIsSupported(CatalogType type) {
 	}
 }
 
-unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version) {
+unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version, optional_ptr<const DeltaMultiFileList> old_snapshot) {
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
-	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version);
+
+
+	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version, old_snapshot);
 
 	// Get the names and types from the delta snapshot
 	vector<LogicalType> return_types;
@@ -175,21 +177,46 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 			return *transaction_table_entry;
 		}
 
+		// Snapshots are cached:
+		// - in transaction
+		// - in schema (in the catalog) i.e. shared between transactions
+
+		// Problem: currently we do either cache it and fully reuse it OR we do the transaction thing.
+		//
+		// Now what we want is both:
+		// - if caching is enabled, use old path
+		// - if not:
+		//    - ensure we store A snapshot in the cached_talbe
+		//    - U
+		// w
+
+		// If not used cached:
+		// - If cached snapshot is not set, we set it and
+
 		if (delta_catalog.UseCachedSnapshot()) {
 			unique_lock<mutex> l(lock);
 
 		    // If the version being requested is different from the one we have cached, we
 		    if (delta_catalog.use_specific_version != version) {
-		        return delta_transaction.InitializeTableEntry(context, *this, version);
+		        return delta_transaction.InitializeTableEntry(context, *this, version, nullptr);
 		    }
 
 			if (!cached_table) {
-				cached_table = CreateTableEntry(context, version);
+				cached_table = CreateTableEntry(context, version, nullptr);
 			}
 			return *cached_table;
-		}
+		} else {
+			unique_lock<mutex> l(lock);
 
-		return delta_transaction.InitializeTableEntry(context, *this, version);
+			// Important Gotcha: if UseCachedSnapshot is false, we still store and return the cached snapshot for the first time
+			if (!cached_table) {
+				cached_table = CreateTableEntry(context, version, nullptr);
+				return *cached_table;
+			}
+
+			// The second time though we use the cached snapshot to initialize the new one, which will be significantly faster
+			return delta_transaction.InitializeTableEntry(context, *this, version, *cached_table->snapshot);
+		}
 	}
 	return nullptr;
 }

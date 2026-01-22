@@ -22,7 +22,7 @@ test_debug: export DAT_PATH=./build/debug/rust/src/delta_kernel/acceptance/tests
 # Core extensions that we need for crucial testing
 DEFAULT_TEST_EXTENSION_DEPS=tpcds;tpch;json;
 # For cloud testing we also need these extensions
-FULL_TEST_EXTENSION_DEPS=azure;httpfs
+FULL_TEST_EXTENSION_DEPS=httpfs
 
 # Aws and Azure have vcpkg dependencies and therefore need vcpkg merging
 ifeq (${BUILD_EXTENSION_TEST_DEPS}, full)

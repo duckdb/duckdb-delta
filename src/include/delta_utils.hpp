@@ -39,7 +39,7 @@ struct KernelUtils {
     static ffi::KernelStringSlice ToDeltaString(const string &str);
     static string FromDeltaString(const struct ffi::KernelStringSlice slice);
     static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
-    static string FetchFromStringMap(const ffi::CStringMap *map, const string &key);
+    static string FetchFromStringMap(const ffi::CStringMap *map, const string &key, ffi::Handle<ffi::SharedExternEngine> engine);
 
     static void *StringAllocationNew(const struct ffi::KernelStringSlice slice) {
         return new string(slice.ptr, slice.len);
@@ -61,6 +61,21 @@ struct KernelUtils {
         }
         return ErrorData(ExceptionType::IO, "Invalid Delta kernel ExternResult");
     }
+
+	template <class T>
+	static ffi::OptionalValue<T> OptionalSome(T &val) {
+    	ffi::OptionalValue<T> some = {};
+    	some.tag = ffi::OptionalValue<T>::Tag::Some;
+    	some.some = {val};
+    	return some;
+    }
+
+	template <class T>
+	static ffi::OptionalValue<T> OptionalNone() {
+    	ffi::OptionalValue<T> none = {};
+    	none.tag = ffi::OptionalValue<T>::Tag::None;
+    	return none;
+	}
 
     static vector<unique_ptr<ParsedExpression>> &
     UnpackTransformExpression(const vector<unique_ptr<ParsedExpression>> &parsed_expression);
@@ -244,9 +259,12 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 // SchemaVisitor is used to parse the schema of a Delta table from the Kernel
 class SchemaVisitor {
 public:
-	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::SharedSnapshot *snapshot, bool enable_variant);
-	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotGlobalReadSchema(ffi::SharedScan *state, bool logical, bool enable_variant);
-	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::SharedWriteContext *write_context, bool enable_variant);
+	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::SharedSnapshot *snapshot, ffi::Handle<ffi::SharedExternEngine> engine, bool enable_variant);
+	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotGlobalReadSchema(ffi::SharedScan *state, ffi::Handle<ffi::SharedExternEngine> engine, bool logical, bool enable_variant);
+	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::SharedWriteContext *write_context, ffi::Handle<ffi::SharedExternEngine> engine, bool enable_variant);
+
+	SchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p): engine(engine_p) {
+	};
 
 private:
 	unordered_map<uintptr_t, vector<DeltaMultiFileColumnDefinition>> inflight_lists;
@@ -254,17 +272,19 @@ private:
 
 	ErrorData error;
 
+	ffi::Handle<ffi::SharedExternEngine> engine = nullptr;
+
 	static ffi::EngineSchemaVisitor CreateSchemaVisitor(SchemaVisitor &state, bool enable_variant);
 
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CStringMap *metadata);
 
-    static void ApplyDeltaColumnMapping(const ffi::CStringMap *metadata, DeltaMultiFileColumnDefinition &col_def) {
-        auto id = KernelUtils::FetchFromStringMap(metadata, "parquet.field.id");
+    static void ApplyDeltaColumnMapping(const ffi::CStringMap *metadata, DeltaMultiFileColumnDefinition &col_def, ffi::Handle<ffi::SharedExternEngine> engine) {
+        auto id = KernelUtils::FetchFromStringMap(metadata, "parquet.field.id", engine);
         if (!id.empty()) {
             col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
         }
-        auto name = KernelUtils::FetchFromStringMap(metadata, "delta.columnMapping.physicalName");
+        auto name = KernelUtils::FetchFromStringMap(metadata, "delta.columnMapping.physicalName", engine);
         if (!name.empty()) {
             col_def.identifier = Value(name);
         }
@@ -280,7 +300,7 @@ private:
 	                                bool is_nullable, const ffi::CStringMap *metadata) {
 
 	    DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), TypeId, is_nullable);
-	    ApplyDeltaColumnMapping(metadata, col_def);
+	    ApplyDeltaColumnMapping(metadata, col_def, state->engine);
 
 		state->AppendToList(sibling_list_id, name, std::move(col_def));
     }
@@ -308,7 +328,7 @@ private:
         }
 
         DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
-        ApplyDeltaColumnMapping(metadata, col_def);
+        ApplyDeltaColumnMapping(metadata, col_def, state->engine);
 
         state->AppendToList(sibling_list_id, name, std::move(col_def));
     }

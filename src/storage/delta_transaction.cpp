@@ -204,7 +204,7 @@ vector<DeltaMultiFileColumnDefinition> DeltaTransaction::GetWriteSchema(ClientCo
     }
 
     auto write_context = ffi::get_write_context(kernel_transaction.get());
-    auto result = SchemaVisitor::VisitWriteContextSchema(write_context, write_entry.get()->snapshot->VariantEnabled());
+    auto result = SchemaVisitor::VisitWriteContextSchema(write_context, write_entry.get()->snapshot->extern_engine.get(), write_entry.get()->snapshot->VariantEnabled());
     return result;
 }
 
@@ -322,13 +322,13 @@ optional_ptr<DeltaTableEntry> DeltaTransaction::GetTableEntry(idx_t version) {
     return nullptr;
 }
 
-DeltaTableEntry &DeltaTransaction::InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry, idx_t version) {
+DeltaTableEntry &DeltaTransaction::InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry, idx_t version, optional_ptr<const DeltaMultiFileList> old_snapshot) {
 	unique_lock<mutex> lck(lock);
 
     // Latest version
     if (version == DConstants::INVALID_INDEX) {
         if (!table_entry) {
-            table_entry = schema_entry.CreateTableEntry(context, version);
+            table_entry = schema_entry.CreateTableEntry(context, version, old_snapshot);
         }
         return *table_entry;
     }
@@ -338,7 +338,8 @@ DeltaTableEntry &DeltaTransaction::InitializeTableEntry(ClientContext &context, 
     if (lookup != versioned_table_entries.end()) {
         return *lookup->second;
     }
-    auto new_entry = schema_entry.CreateTableEntry(context, version);
+
+    auto new_entry = schema_entry.CreateTableEntry(context, version, old_snapshot);
     return *(versioned_table_entries[version] = std::move(new_entry));
 }
 

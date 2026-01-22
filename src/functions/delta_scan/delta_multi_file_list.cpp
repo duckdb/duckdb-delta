@@ -340,6 +340,10 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 }
 
 struct KernelPartitionVisitorData {
+	KernelPartitionVisitorData(const DeltaMultiFileList &delta_snapshot) : delta_snapshot(delta_snapshot) {
+	}
+
+	const DeltaMultiFileList &delta_snapshot;
 	vector<string> partitions;
 	ErrorData err_data;
 };
@@ -496,8 +500,9 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 	}
 }
 
+// TODO: mod_time unused
 void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::KernelStringSlice path, int64_t size,
-                                     const ffi::Stats *stats, const ffi::CDvInfo *dv_info,
+                                     int64_t mod_time, const ffi::Stats *stats, const ffi::CDvInfo *dv_info,
                                      const ffi::Expression *transform, const ffi::CStringMap *partition_values) {
 	try {
 		return VisitCallbackInternal(engine_context, path, size, stats, dv_info, transform);
@@ -509,10 +514,11 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
 
 void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context,
                                  ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
-	ffi::visit_scan_metadata(scan_metadata, engine_context, VisitCallback);
+	auto data = static_cast<KernelPartitionVisitorData *>(engine_context);
+	ffi::visit_scan_metadata(scan_metadata, data->delta_snapshot.extern_engine.get(), engine_context, VisitCallback);
 }
 
-DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path, idx_t version_p)
+DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path, idx_t version_p, optional_ptr<const DeltaMultiFileList> previous)
     : MultiFileList({ToDeltaPath(path)}, FileGlobOptions::ALLOW_EMPTY), version (version_p), context(context_p) {
 
     Value setting_res;
@@ -523,6 +529,10 @@ DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &p
     } else {
         enable_variant = false;
     }
+
+	if (previous) {
+		old_snapshot = previous->snapshot;
+	}
 }
 
 string DeltaMultiFileList::GetPath() const {
@@ -612,7 +622,7 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	vector<DeltaMultiFileColumnDefinition> visited_schema;
 	{
 		auto snapshot_ref = snapshot->GetLockingRef();
-		visited_schema = SchemaVisitor::VisitSnapshotSchema(snapshot_ref.GetPtr(), enable_variant);
+		visited_schema = SchemaVisitor::VisitSnapshotSchema(snapshot_ref.GetPtr(), extern_engine.get(), enable_variant);
 	}
 
 	for (const auto &field : visited_schema) {
@@ -689,17 +699,42 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
 
 	if (!snapshot) {
+		auto old_snapshot_val = KernelUtils::OptionalNone<ffi::Handle<ffi::SharedSnapshot>>();
+		auto path_val = KernelUtils::OptionalSome<ffi::KernelStringSlice>(path_slice);
+		if (old_snapshot) {
+			auto old_snapshot_ref = old_snapshot->GetLockingRef();
+			auto ptr = old_snapshot_ref.GetPtr();
+			old_snapshot_val = KernelUtils::OptionalSome<ffi::Handle<ffi::SharedSnapshot>>(ptr);
+			// TODO: unset path_val? let kernel check match?
+		}
+
 	    if (version == DConstants::INVALID_INDEX) {
 	        // Get latest snapshot
 	        snapshot = make_shared_ptr<SharedKernelSnapshot>(
-            TryUnpackKernelResult(ffi::snapshot(path_slice, extern_engine.get())));
+	            TryUnpackKernelResult(
+	            	ffi::snapshot(
+	            		path_val,
+            			extern_engine.get(),
+            			old_snapshot_val,
+            			KernelUtils::OptionalNone<ffi::Version>()
+            		)
+            	)
+            );
 	        // Set version
 	        auto snapshot_ref = snapshot->GetLockingRef();
 	        this->version = ffi::version(snapshot_ref.GetPtr());
 	    } else {
 	        // Get specific snapshot
-	        snapshot = make_shared_ptr<SharedKernelSnapshot>(
-            TryUnpackKernelResult(ffi::snapshot_at_version(path_slice, extern_engine.get(), version)));
+	    	snapshot = make_shared_ptr<SharedKernelSnapshot>(
+				TryUnpackKernelResult(
+					ffi::snapshot(
+						path_val,
+						extern_engine.get(),
+						old_snapshot_val,
+						KernelUtils::OptionalSome<ffi::Version>(version)
+					)
+				)
+			);
 
 	        // Double check version
 	        auto snapshot_ref = snapshot->GetLockingRef();
@@ -717,7 +752,7 @@ void DeltaMultiFileList::InitializeScan() const {
 
 	// Create Scan
 	PredicateVisitor visitor(global_columns, &table_filters);
-	scan = TryUnpackKernelResult(ffi::scan(snapshot_ref.GetPtr(), extern_engine.get(), &visitor));
+	scan = TryUnpackKernelResult(ffi::scan(snapshot_ref.GetPtr(), extern_engine.get(), &visitor, nullptr));
 
 	if (visitor.error_data.HasError()) {
 		throw IOException("Failed to initialize Scan for Delta table at '%s'. Original error: '%s'", paths[0].path,
@@ -741,7 +776,7 @@ void DeltaMultiFileList::InitializeScan() const {
 	if (partition_count > 0) {
 		auto string_slice_iterator = ffi::get_partition_columns(snapshot_ref.GetPtr());
 
-		KernelPartitionVisitorData data;
+		KernelPartitionVisitorData data(*this);
 		while (string_slice_next(string_slice_iterator, &data, KernelPartitionStringVisitor)) {
 		}
 		partitions = data.partitions;
@@ -760,7 +795,7 @@ void DeltaMultiFileList::InitializeScan() const {
 		}
 	}
 
-	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(scan.get(), true, enable_variant);
+	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(scan.get(), extern_engine.get(), true, enable_variant);
 
     DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 
