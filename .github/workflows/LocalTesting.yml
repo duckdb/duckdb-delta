@@ -71,7 +71,7 @@ jobs:
 
     - name: Launch & populate Azure test service
       run: |
-        azurite > azurite_log.txt 2>&1 &
+        azurite --skipApiVersionCheck > azurite_log.txt 2>&1 &
         sleep 10
         ./scripts/upload_test_files_to_azurite.sh
 
