@@ -49,7 +49,7 @@ generate-data:
 	#python3 -m pip install delta-spark duckdb pandas deltalake pyspark typing-extensions pyarrow
 	# NOTE: @benfleis - for now pin versions that work, since unversioned/HEAD caused a big JVM stack trace that I couldn't trivially track down;
 	# NOTE: bump to v1.5.0 once it's out
-	python3 -m pip install delta-spark==4.0.0 deltalake==1.2.1 duckdb==1.5.0.dev166 pandas==2.3.3 pyarrow==22.0.0 pyspark==4.0.1 typing-extensions==4.15.0
+	python3 -m pip install delta-spark==4.0.0 deltalake==1.2.1 duckdb==1.5.0.dev166 pandas==2.3.3 pyarrow==22.0.0 pyspark==4.0.0 typing-extensions==4.15.0
 	python3 scripts/data_generator/generate_test_data.py
 
 unpack-golden-tables-release:
