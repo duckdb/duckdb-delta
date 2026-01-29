@@ -79,7 +79,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// Register the "single table" delta catalog (to ATTACH a single delta table)
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
-	config.storage_extensions["delta"] = make_uniq<DeltaStorageExtension>();
+	StorageExtension::Register(config, "delta", make_shared_ptr<DeltaStorageExtension>());
 
 	config.AddExtensionOption("delta_scan_explain_files_filtered",
 	                          "Adds the filtered files to the explain output. Warning: this may impact performance of "

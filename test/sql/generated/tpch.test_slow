@@ -2,6 +2,9 @@
 # description: Test on some medium sized data
 # group: [delta_generated]
 
+# FIXME: @benfleis - disabling to unblock v1.5 progress - https://github.com/duckdblabs/duckdb-internal/issues/7233
+mode skip
+
 require parquet
 
 require delta

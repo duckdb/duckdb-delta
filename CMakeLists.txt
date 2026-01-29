@@ -74,10 +74,10 @@ if("${OS_NAME}" STREQUAL "linux")
   elseif("${CMAKE_CXX_COMPILER}" MATCHES "aarch64")
     set(RUST_ENV_VARS
         ${RUST_ENV_VARS}
-        CFLAGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu)
+        CFLAGS_aarch64_unknown_linux_gnu=--sysroot=/usr)
     set(RUST_ENV_VARS
         ${RUST_ENV_VARS}
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc)
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-redhat-linux-gcc)
     set(RUST_ENV_VARS
         ${RUST_ENV_VARS}
         OPENSSL_LIB_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib

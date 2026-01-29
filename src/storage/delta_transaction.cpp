@@ -138,11 +138,11 @@ struct WriteMetaData {
 
     WriteMetaData(DeltaMultiFileList &snapshot, vector<DeltaDataFile> &outstanding_appends) : WriteMetaData() {
         for (const auto &file : outstanding_appends) {
-            auto table_path = snapshot.GetPaths()[0];
+            auto table_path = snapshot.GetPath();
             auto file_without_double_slash = StringUtil::Replace(file.file_name, "\\", "/");
             // auto file_split = StringUtil::Split(file, "/");
             // auto file_name = file_split[file_split.size()-1];
-            auto file_name = file.file_name.substr(table_path.path.size());
+            auto file_name = file.file_name.substr(table_path.size());
             InsertionOrderPreservingMap<string> partitions = {};
 
             // TODO: probably horribly wrong
@@ -267,7 +267,7 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
     D_ASSERT(table_entry);
 
     // Start the kernel transaction
-    string path =  table_entry->snapshot->GetPaths()[0].path;
+    string path =  table_entry->snapshot->GetPath();
     auto path_slice = KernelUtils::ToDeltaString(path);
     auto new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction(path_slice, table_entry->snapshot->extern_engine.get()));
 

@@ -76,6 +76,10 @@ static void DeltaScanSerialize(Serializer &serializer, const optional_ptr<Functi
 	throw NotImplementedException("DeltaScan serialization not implemented");
 }
 
+static unique_ptr<FunctionData> DeltaScanDeserialize(Deserializer &deserializer, TableFunction &function) {
+	throw NotImplementedException("DeltaScan deserialization not implemented");
+}
+
 TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 	// Parquet extension needs to be loaded for this to make sense
     auto &instance = loader.GetDatabaseInstance();
@@ -93,7 +97,7 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 		// Unset all of these: they are either broken, very inefficient.
 		// TODO: implement/fix these
 		function.serialize = DeltaScanSerialize;
-		function.deserialize = nullptr;
+		function.deserialize = DeltaScanDeserialize;
 		function.statistics = nullptr;
 		function.table_scan_progress = nullptr;
 		function.get_bind_info = nullptr;

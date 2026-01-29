@@ -6,9 +6,11 @@ concurrency:
 defaults:
   run:
     shell: bash
-
 env:
   BASE_BRANCH: ${{ github.base_ref || (endsWith(github.ref, '_feature') && 'feature' || 'main') }}
+  BUILD_EXTENSION_TEST_DEPS: full # force checkout/build of httpfs in all builds
+  BUILD_HTTPFS_SRC: ${{ github.workspace }}/build/release/_deps/httpfs_extension_fc-src
+  VCPKG_COMMIT_ID: 84bab45d415d22042bd0b9081aea57f362da3f35
 
 jobs:
   azurite-tests-linux:
@@ -22,7 +24,6 @@ jobs:
       AZURE_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;TableEndpoint=http://127.0.0.1:10002/devstoreaccount1;'
       AZURE_STORAGE_ACCOUNT: devstoreaccount1
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-      BUILD_EXTENSION_TEST_DEPS: full
 
     steps:
     - uses: actions/checkout@v4
@@ -42,7 +43,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11.1
       with:
-        vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
 
     - uses: actions/setup-node@v4
 
@@ -71,6 +72,7 @@ jobs:
 
     - name: Launch & populate Azure test service
       run: |
+        # skipApiVersionCheck -- see https://learn.microsoft.com/en-us/rest/api/storageservices/versioning-for-the-azure-storage-services
         azurite --skipApiVersionCheck > azurite_log.txt 2>&1 &
         sleep 10
         ./scripts/upload_test_files_to_azurite.sh
@@ -84,7 +86,7 @@ jobs:
       shell: bash
       run: |
         echo "## azurite"
-        cat azurite_log.txt
+        cat azurite_log.txt || true
 
   minio-tests-linux:
     name: Minio (local S3 test server) tests (Linux)
@@ -109,9 +111,9 @@ jobs:
           cd duckdb
           git checkout ${{ matrix.duckdb_version }}
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install Ninja
         shell: bash
@@ -125,7 +127,7 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
         with:
-          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
 
       - name: Configure OpenSSL for Rust
         run: |
@@ -140,11 +142,18 @@ jobs:
       - name: Start S3/HTTP test server
         shell: bash
         run: |
+          # deal with odd dpkg/apt conflict
+          sudo apt purge containerd containerd.io docker docker-cli
+          sudo apt install docker-cli
           cd duckdb
-          mkdir data/attach_test
-          touch data/attach_test/attach.db
-          sudo ./scripts/install_s3_test_server.sh
-          source ./scripts/run_s3_test_server.sh
+          # NOTE: fake attach.db and link docker yml to make the minio script happy
+          rm -rf test/test_data
+          mkdir -p test/test_data
+          touch test/test_data/attach.db
+          # finally set up minio
+          ln -s ${BUILD_HTTPFS_SRC}/scripts/minio_s3.yml scripts/minio_s3.yml
+          sudo "${BUILD_HTTPFS_SRC}/scripts/install_s3_test_server.sh"
+          source "${BUILD_HTTPFS_SRC}/scripts/run_s3_test_server.sh"
           sleep 30
 
       - name: Write AWS credentials file
@@ -159,7 +168,7 @@ jobs:
           AWS_ACCESS_KEY_ID: minio_duckdb_user
           AWS_SECRET_ACCESS_KEY: minio_duckdb_user_password
           AWS_DEFAULT_REGION: eu-west-1
-          AWS_ENDPOINT: duckdb-minio.com:9000
+          AWS_ENDPOINT: http://duckdb-minio.com:9000
         run: |
           ./scripts/upload_test_files_to_minio.sh
 
@@ -175,7 +184,7 @@ jobs:
           AWS_ACCESS_KEY_ID: minio_duckdb_user
           AWS_SECRET_ACCESS_KEY: minio_duckdb_user_password
           AWS_DEFAULT_REGION: eu-west-1
-          AWS_ENDPOINT: duckdb-minio.com:9000
+          AWS_ENDPOINT: http://duckdb-minio.com:9000
         run: |
           ./build/release/test/unittest "*/test/sql/cloud/minio_local/*"
 
@@ -206,12 +215,12 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
         with:
-          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
 
       - name: Configure OpenSSL for Rust
         run: |
@@ -245,6 +254,9 @@ jobs:
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       BUILD_EXTENSION_TEST_DEPS: full
 
+    # FIXME: @benfleis - disabling to unblock v1.5 progress - https://github.com/duckdblabs/duckdb-internal/issues/7233
+    if: false
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -267,7 +279,7 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
         with:
-          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
 
       - name: Configure OpenSSL for Rust
         run: |
@@ -284,10 +296,9 @@ jobs:
       - name: Build ${{ env.BASE_BRANCH }} branch
         shell: bash
         run: | 
-          git clone --branch ${{ env.BASE_BRANCH }} https://github.com/duckdb/duckdb_delta.git --depth=1 
-          cd duckdb_delta
-          git submodule init
-          git submodule update
+          git clone --branch ${{ env.BASE_BRANCH }} https://github.com/duckdb/duckdb-delta.git --depth=1 
+          cd duckdb-delta
+          git submodule update --init --recursive
           make
           rm -rf build/release/rust
 
@@ -299,20 +310,20 @@ jobs:
         if: always()
         shell: bash
         run: |
-          python3 ./duckdb/scripts/regression/test_runner.py --old=duckdb_delta/build/release/benchmark/benchmark_runner --new=build/release/benchmark/benchmark_runner --benchmarks=.github/regression/tpch_sf1_local.csv --verbose --threads=2 --root-dir=.
+          python3 ./duckdb/scripts/regression/test_runner.py --old=duckdb-delta/build/release/benchmark/benchmark_runner --new=build/release/benchmark/benchmark_runner --benchmarks=.github/regression/tpch_sf1_local.csv --verbose --threads=2 --root-dir=.
 
       - name: Regression Test TPC-DS
         if: always()
         shell: bash
         run: |
-          python ./duckdb/scripts/regression/test_runner.py --old=duckdb_delta/build/release/benchmark/benchmark_runner --new=build/release/benchmark/benchmark_runner --benchmarks=.github/regression/tpcds_sf1_local.csv --verbose --threads=2 --root-dir=.
+          python ./duckdb/scripts/regression/test_runner.py --old=duckdb-delta/build/release/benchmark/benchmark_runner --new=build/release/benchmark/benchmark_runner --benchmarks=.github/regression/tpcds_sf1_local.csv --verbose --threads=2 --root-dir=.
 
       # FIXME: re-enable
 #      - name: Regression Test Micro
 #        if: always()
 #        shell: bash
 #        run: |
-#          python ./duckdb/scripts/regression/test_runner.py --old=duckdb_delta/build/release/benchmark/benchmark_runner --new=build/release/benchmark/benchmark_runner --benchmarks=.github/regression/micro.csv --verbose --threads=2 --root-dir=.
+#          python ./duckdb/scripts/regression/test_runner.py --old=duckdb-delta/build/release/benchmark/benchmark_runner --new=build/release/benchmark/benchmark_runner --benchmarks=.github/regression/micro.csv --verbose --threads=2 --root-dir=.
 
       - name: Test benchmark makefile
         shell: bash

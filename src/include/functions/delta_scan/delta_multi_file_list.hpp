@@ -13,6 +13,7 @@
 
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_data.hpp"
+#include "duckdb/common/multi_file/multi_file_list.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 namespace duckdb {
@@ -51,7 +52,7 @@ public:
 };
 
 //! The DeltaMultiFileList implements the MultiFileList API to allow injecting it into the regular DuckDB parquet scan
-class DeltaMultiFileList : public MultiFileList {
+class DeltaMultiFileList : public SimpleMultiFileList {
 	friend struct ScanDataCallBack;
 
 public:
@@ -65,7 +66,7 @@ public:
 	void Bind(vector<LogicalType> &return_types, vector<string> &names);
 	unique_ptr<MultiFileList> ComplexFilterPushdown(ClientContext &context, const MultiFileOptions &options,
 	                                                MultiFilePushdownInfo &info,
-	                                                vector<unique_ptr<Expression>> &filters) override;
+	                                                vector<unique_ptr<Expression>> &filters) const override;
 
 	unique_ptr<MultiFileList> DynamicFilterPushdown(ClientContext &context, const MultiFileOptions &options,
 	                                                const vector<string> &names, const vector<LogicalType> &types,
@@ -74,10 +75,10 @@ public:
 
 	unique_ptr<DeltaMultiFileList> PushdownInternal(ClientContext &context, TableFilterSet &new_filters) const;
 
-	vector<OpenFileInfo> GetAllFiles() override;
-	FileExpandResult GetExpandResult() override;
-	idx_t GetTotalFileCount() override;
-	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) override;
+	vector<OpenFileInfo> GetAllFiles() const override;
+	FileExpandResult GetExpandResult() const override;
+	idx_t GetTotalFileCount() const override;
+	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const override;
 	DeltaFileMetaData &GetMetaData(idx_t index) const;
 	idx_t GetVersion();
 	vector<string> GetPartitionColumns();
@@ -92,7 +93,7 @@ public:
 
 protected:
 	//! Get the i-th expanded file
-	OpenFileInfo GetFile(idx_t i) override;
+	OpenFileInfo GetFile(idx_t i) const override;
 
 protected:
 	OpenFileInfo GetFileInternal(idx_t i) const;
