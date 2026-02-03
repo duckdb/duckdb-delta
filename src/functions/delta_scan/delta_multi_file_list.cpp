@@ -17,6 +17,7 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 #include <regex>
+#include <cstdlib>
 
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 
@@ -280,8 +281,21 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("use_azure_cli"),
 				                        KernelUtils::ToDeltaString("true"));
 			}
-			// Authentication option 1b: non-cli credential chains will just "hope for the best" technically since we
-			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
+			// Authentication option 1b: Kubernetes Workload Identity support
+			// Check for standard Azure workload identity environment variables and pass them to the builder
+			// This enables delta-kernel-rs/object_store to use workload identity authentication
+			const char *federated_token_file = std::getenv("AZURE_FEDERATED_TOKEN_FILE");
+			const char *azure_client_id = std::getenv("AZURE_CLIENT_ID");
+			const char *azure_tenant_id = std::getenv("AZURE_TENANT_ID");
+			if (federated_token_file && azure_client_id && azure_tenant_id) {
+				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_federated_token_file"),
+				                        KernelUtils::ToDeltaString(federated_token_file));
+				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_client_id"),
+				                        KernelUtils::ToDeltaString(azure_client_id));
+				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_tenant_id"),
+				                        KernelUtils::ToDeltaString(azure_tenant_id));
+			}
+			// For other non-cli credential chains, we still "hope for the best" as per the original logic
 		} else if (!connection_string.empty() && connection_string != "NULL") {
 			// Authentication option 2: a connection string based on account key
 			auto account_key = parseFromConnectionString(connection_string, "AccountKey");
