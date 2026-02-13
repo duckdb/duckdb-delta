@@ -72,25 +72,16 @@ set(RUST_PLATFORM_TARGET "")
 if("${OS_NAME}" STREQUAL "linux")
   if("${OS_ARCH}" STREQUAL "arm64")
     set(RUST_PLATFORM_TARGET "aarch64-unknown-linux-gnu")
-  elseif("${CMAKE_CXX_COMPILER}" MATCHES "aarch64")
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        CFLAGS_aarch64_unknown_linux_gnu=--sysroot=/usr)
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-redhat-linux-gcc)
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        OPENSSL_LIB_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib
-    )
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        OPENSSL_INCLUDE_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include
-    )
-    set(RUST_PLATFORM_TARGET "aarch64-unknown-linux-gnu")
   else()
     set(RUST_PLATFORM_TARGET "x86_64-unknown-linux-gnu")
   endif()
+
+  # Point Rust openssl-sys at vcpkg OpenSSL and force static linking
+  set(RUST_ENV_VARS
+      ${RUST_ENV_VARS}
+      OPENSSL_STATIC=1
+      OPENSSL_LIB_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib
+      OPENSSL_INCLUDE_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include)
 elseif("${OS_NAME}" STREQUAL "osx")
   if("${OSX_BUILD_ARCH}" STREQUAL "arm64")
     set(RUST_PLATFORM_TARGET "aarch64-apple-darwin")
