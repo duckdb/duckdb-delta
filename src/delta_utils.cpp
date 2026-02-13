@@ -98,6 +98,8 @@ ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor 
 
 	visitor.visit_unknown = VisitUnknown;
 
+	visitor.visit_parse_json = VisitParseJsonExpression;
+
 	return visitor;
 }
 
@@ -389,6 +391,12 @@ void ExpressionVisitor::VisitUnknown(void *data, uintptr_t sibling_list_id, ffi:
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
+void ExpressionVisitor::VisitParseJsonExpression(void *data, uintptr_t sibling_list_id, uintptr_t child_list_id,
+                                                 ffi::Handle<ffi::SharedSchema> output_schema) {
+	auto state_cast = static_cast<ExpressionVisitor *>(data);
+	state_cast->error = ErrorData(ExceptionType::NOT_IMPLEMENTED, "visit_parse_json not yet supported");
+}
+
 void ExpressionVisitor::VisitDecimalLiteral(void *state, uintptr_t sibling_list_id, int64_t value_ms, uint64_t value_ls,
                                             uint8_t precision, uint8_t scale) {
 	try {
@@ -563,8 +571,10 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	return visitor;
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::SharedSnapshot *snapshot) {
+vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::SharedExternEngine *engine,
+                                                                          ffi::SharedSnapshot *snapshot) {
 	SchemaVisitor state;
+	state.engine = engine;
 	auto visitor = CreateSchemaVisitor(state);
 
 	auto schema = logical_schema(snapshot);
@@ -578,9 +588,10 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::S
 	return state.TakeFieldList(result);
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedScan *scan,
-                                                                                    bool logical) {
+vector<DeltaMultiFileColumnDefinition>
+SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedExternEngine *engine, ffi::SharedScan *scan, bool logical) {
 	SchemaVisitor visitor_state;
+	visitor_state.engine = engine;
 	auto visitor = CreateSchemaVisitor(visitor_state);
 
 	ffi::Handle<ffi::SharedSchema> schema;
@@ -600,8 +611,10 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotGlobalReadSch
 	return visitor_state.TakeFieldList(result);
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitWriteContextSchema(ffi::SharedWriteContext *write_context) {
+vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitWriteContextSchema(ffi::SharedExternEngine *engine,
+                                                                              ffi::SharedWriteContext *write_context) {
 	SchemaVisitor visitor_state;
+	visitor_state.engine = engine;
 	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);
@@ -620,7 +633,7 @@ void SchemaVisitor::VisitDecimal(SchemaVisitor *state, uintptr_t sibling_list_id
 	DeltaMultiFileColumnDefinition decimal_def(KernelUtils::FromDeltaString(name), decimal_type, is_nullable);
 	decimal_def.default_expression = make_uniq<ConstantExpression>(Value().DefaultCastAs(decimal_type));
 
-	ApplyDeltaColumnMapping(metadata, decimal_def);
+	ApplyDeltaColumnMapping(state->engine, metadata, decimal_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(decimal_def));
 }
@@ -643,7 +656,7 @@ void SchemaVisitor::VisitStruct(SchemaVisitor *state, uintptr_t sibling_list_id,
 	struct_def.children = std::move(children);
 	struct_def.default_expression = make_uniq<ConstantExpression>(Value(struct_type));
 
-	ApplyDeltaColumnMapping(metadata, struct_def);
+	ApplyDeltaColumnMapping(state->engine, metadata, struct_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(struct_def));
 }
@@ -663,7 +676,7 @@ void SchemaVisitor::VisitArray(SchemaVisitor *state, uintptr_t sibling_list_id, 
 	// TODO: kinda wonky, but column mapper uses this
 	list_def.children.front().name = "list";
 
-	ApplyDeltaColumnMapping(metadata, list_def);
+	ApplyDeltaColumnMapping(state->engine, metadata, list_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(list_def));
 }
@@ -686,7 +699,7 @@ void SchemaVisitor::VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ff
 
 	map_def.default_expression = make_uniq<ConstantExpression>(Value(map_type));
 
-	ApplyDeltaColumnMapping(metadata, map_def);
+	ApplyDeltaColumnMapping(state->engine, metadata, map_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(map_def));
 }
@@ -696,7 +709,7 @@ void SchemaVisitor::VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id
 	LogicalType type = LogicalType::VARIANT();
 
 	DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
-	ApplyDeltaColumnMapping(metadata, col_def);
+	ApplyDeltaColumnMapping(state->engine, metadata, col_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(col_def));
 }
@@ -783,9 +796,12 @@ string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
 	                                           "ParseIntervalError",
 	                                           "ChangeDataFeedUnsupported",
 	                                           "ChangeDataFeedIncompatibleSchema",
-	                                           "InvalidCheckpoint"};
+	                                           "InvalidCheckpoint",
+	                                           "LiteralExpressionTransformError",
+	                                           "CheckpointWriteError",
+	                                           "SchemaError"};
 
-	static_assert(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *) - 1 == (int)ffi::KernelError::InvalidCheckpoint,
+	static_assert(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *) - 1 == (int)ffi::KernelError::SchemaError,
 	              "KernelErrorEnumStrings mismatched with kernel");
 
 	if ((int)err < sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *)) {
@@ -820,12 +836,15 @@ vector<bool> KernelUtils::FromDeltaBoolSlice(const struct ffi::KernelBoolSlice s
 	return result;
 }
 
-string KernelUtils::FetchFromStringMap(const ffi::CStringMap *str_map, const string &key) {
-	auto res = ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew);
+string KernelUtils::FetchFromStringMap(ffi::SharedExternEngine *engine, const ffi::CStringMap *str_map,
+                                       const string &key) {
+	auto maybe_mapped = ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew, engine);
+	ffi::NullableCvoid /* = string* */ map_res = nullptr;
 	string val;
-	if (res) {
-		val = *(string *)res;
-		delete static_cast<string *>(res);
+	auto maybe_err = KernelUtils::TryUnpackResult(maybe_mapped, map_res);
+	if (!maybe_err.HasError() && map_res != nullptr) {
+		val = *(string *)map_res;
+		delete static_cast<string *>(map_res);
 	}
 	return val;
 }
@@ -1071,7 +1090,10 @@ LogLevel LoggerCallback::GetDuckDBLogLevel(ffi::Level level) {
 	switch (level) {
 	case ffi::Level::TRACE:
 		return LogLevel::LOG_TRACE;
-	case ffi::Level::DEBUGGING:
+#pragma push_macro("DEBUG")
+#undef DEBUG
+	case ffi::Level::DEBUG:
+#pragma pop_macro("DEBUG")
 		return LogLevel::LOG_DEBUG;
 	case ffi::Level::INFO:
 		return LogLevel::LOG_INFO;

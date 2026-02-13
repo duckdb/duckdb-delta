@@ -121,37 +121,6 @@ GENERATED_DATA_AVAILABLE=1 make test
 
 # Updating delta-kernel-rs / FFI version
 
-Should you need to use or update to a different version of delta-kernel-rs, you'll need to update the FFI (found in `src/include/delta_kernel_rs.hpp`). The idea is to build a patch from the delta-kernel-rs generated FFI headers, and apply it to this tree. The (rough) steps to do so look like this, if for example going from `v0.17.1` to `v0.19.0`:
-
-- update `GIT_TAG` in `CMakeLists.txt`, within the `ExternalProject_Add` function that adds `delta-kernel-rs`, e.g.
-
-```
-ExternalProject_Add(
-  ${KERNEL_NAME}
-  GIT_REPOSITORY "https://github.com/delta-io/delta-kernel-rs"
-  GIT_TAG <YOUR AWESOME TAG HERE!!!>
-  ...
-)
-```
-
-- get current (clean) and desired headers, build a patch file (may need tweaking, this is not verbatim tested):
-
-```
-cd ~/src
-git clone https://github.com/delta-io/delta-kernel-rs.git
-cd delta-kernel-rs
-
-export TAG=v0.17.1
-git checkout $TAG && pushd ffi && cargo build && popd
-mkdir -p $TAG && cp target/ffi-headers/delta_kernel_ffi.hpp $TAG
-
-export TAG=0.19.0
-git checkout $TAG && pushd ffi && cargo build && popd
-mkdir -p $TAG && cp target/ffi-headers/delta_kernel_ffi.hpp $TAG
-
-diff -u v0.17.1 v0.19.1 > ~/src/d/delta/delta_kernel_ffi.patch
-cd ~/src/duckdb-delta
-patch -p1 < delta_kernel_ffi.patch
-```
-
-- `make clean debug` and start resolving issues 😳
+Simply update the `GIT_TAG` definition found in `./CMakeLists.txt` and (re-)run
+`make clean <debug|release>`. The FFI header is included directly from the
+cargo build, and any breakage from the update should show up immediately.

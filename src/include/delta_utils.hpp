@@ -39,7 +39,7 @@ struct KernelUtils {
 	static ffi::KernelStringSlice ToDeltaString(const string &str);
 	static string FromDeltaString(const struct ffi::KernelStringSlice slice);
 	static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
-	static string FetchFromStringMap(const ffi::CStringMap *map, const string &key);
+	static string FetchFromStringMap(ffi::SharedExternEngine *engine, const ffi::CStringMap *map, const string &key);
 
 	static void *StringAllocationNew(const struct ffi::KernelStringSlice slice) {
 		return new string(slice.ptr, slice.len);
@@ -129,6 +129,8 @@ private:
 	static void VisitOpaquePredicate(void *data, uintptr_t sibling_list_id,
 	                                 ffi::Handle<ffi::SharedOpaquePredicateOp> op, uintptr_t child_list_id);
 	static void VisitUnknown(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name);
+	static void VisitParseJsonExpression(void *data, uintptr_t sibling_list_id, uintptr_t child_list_id,
+	                                     ffi::Handle<ffi::SharedSchema> output_schema);
 
 	template <ExpressionType EXPRESSION_TYPE, typename EXPRESSION_TYPENAME>
 	static ffi::VisitJunctionFn VisitUnaryExpression() {
@@ -244,14 +246,18 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 // SchemaVisitor is used to parse the schema of a Delta table from the Kernel
 class SchemaVisitor {
 public:
-	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::SharedSnapshot *snapshot);
-	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotGlobalReadSchema(ffi::SharedScan *state, bool logical);
-	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::SharedWriteContext *write_context);
+	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::SharedExternEngine *engine,
+	                                                                  ffi::SharedSnapshot *snapshot);
+	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotGlobalReadSchema(ffi::SharedExternEngine *engine,
+	                                                                            ffi::SharedScan *state, bool logical);
+	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::SharedExternEngine *engine,
+	                                                                      ffi::SharedWriteContext *write_context);
 
 private:
 	unordered_map<uintptr_t, vector<DeltaMultiFileColumnDefinition>> inflight_lists;
 	uintptr_t next_id = 1;
 
+	ffi::SharedExternEngine *engine = nullptr;
 	ErrorData error;
 
 	static ffi::EngineSchemaVisitor CreateSchemaVisitor(SchemaVisitor &state);
@@ -259,12 +265,13 @@ private:
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CStringMap *metadata);
 
-	static void ApplyDeltaColumnMapping(const ffi::CStringMap *metadata, DeltaMultiFileColumnDefinition &col_def) {
-		auto id = KernelUtils::FetchFromStringMap(metadata, "parquet.field.id");
+	static void ApplyDeltaColumnMapping(ffi::SharedExternEngine *engine, const ffi::CStringMap *metadata,
+	                                    DeltaMultiFileColumnDefinition &col_def) {
+		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
 		if (!id.empty()) {
 			col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
 		}
-		auto name = KernelUtils::FetchFromStringMap(metadata, "delta.columnMapping.physicalName");
+		auto name = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.physicalName");
 		if (!name.empty()) {
 			col_def.identifier = Value(name);
 		}
@@ -279,7 +286,7 @@ private:
 	static void VisitSimpleTypeImpl(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                                bool is_nullable, const ffi::CStringMap *metadata) {
 		DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), TypeId, is_nullable);
-		ApplyDeltaColumnMapping(metadata, col_def);
+		ApplyDeltaColumnMapping(state->engine, metadata, col_def);
 
 		state->AppendToList(sibling_list_id, name, std::move(col_def));
 	}

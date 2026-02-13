@@ -77,6 +77,8 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		if (res.HasError()) {
 			res.Throw();
 		}
+		// Use multi-threaded tokio executor (required for checkpoint support)
+		ffi::set_builder_with_multithreaded_executor(return_value, 0, 0);
 		return return_value;
 	}
 
@@ -183,6 +185,8 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			    "create an R2 or GCS secret containing the credentials for this endpoint and try again.");
 		}
 
+		// Use multi-threaded tokio executor (required for checkpoint support)
+		ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
 		return builder;
 	}
 	const auto &kv_secret = dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
@@ -191,6 +195,15 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 
 	// Here you would need to add the logic for setting the builder options for Azure
 	// This is just a placeholder and will need to be replaced with the actual logic
+	auto set_option = [](ffi::EngineBuilder *builder, const string &key, const string &value) {
+		auto res = ffi::set_builder_option(builder, KernelUtils::ToDeltaString(key), KernelUtils::ToDeltaString(value));
+		bool ok;
+		auto err = KernelUtils::TryUnpackResult(res, ok);
+		if (err.HasError()) {
+			err.Throw();
+		}
+	};
+
 	if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
 		string key_id, secret, session_token, region, endpoint, url_style;
 		bool use_ssl = true;
@@ -203,21 +216,17 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		secret_reader.TryGetSecretKey("use_ssl", use_ssl);
 
 		if (key_id.empty() && secret.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("skip_signature"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "skip_signature", "true");
 		}
 
 		if (!key_id.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_access_key_id"),
-			                        KernelUtils::ToDeltaString(key_id));
+			set_option(builder, "aws_access_key_id", key_id);
 		}
 		if (!secret.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_secret_access_key"),
-			                        KernelUtils::ToDeltaString(secret));
+			set_option(builder, "aws_secret_access_key", secret);
 		}
 		if (!session_token.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_session_token"),
-			                        KernelUtils::ToDeltaString(session_token));
+			set_option(builder, "aws_session_token", session_token);
 		}
 		if (!endpoint.empty() && endpoint != "s3.amazonaws.com") {
 			if (!StringUtil::StartsWith(endpoint, "https://") && !StringUtil::StartsWith(endpoint, "http://")) {
@@ -229,22 +238,18 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			}
 
 			if (StringUtil::StartsWith(endpoint, "http://")) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("allow_http"),
-				                        KernelUtils::ToDeltaString("true"));
+				set_option(builder, "allow_http", "true");
 			}
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_endpoint"),
-			                        KernelUtils::ToDeltaString(endpoint));
+			set_option(builder, "aws_endpoint", endpoint);
 		} else if (StringUtil::StartsWith(path, "gs://") || StringUtil::StartsWith(path, "gcs://")) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_endpoint"),
-			                        KernelUtils::ToDeltaString("https://storage.googleapis.com"));
+			set_option(builder, "aws_endpoint", "https://storage.googleapis.com");
 		}
 		if (secret_type == "s3") {
 			if (!url_style.empty() && url_style == "vhost") {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_virtual_hosted_style_request"),
-				                        KernelUtils::ToDeltaString("true"));
+				set_option(builder, "aws_virtual_hosted_style_request", "true");
 			}
 		}
-		ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_region"), KernelUtils::ToDeltaString(region));
+		set_option(builder, "aws_region", region);
 
 	} else if (secret_type == "azure") {
 		// azure seems to be super complicated as we need to cover duckdb azure plugin and delta RS builder
@@ -259,8 +264,7 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		secret_reader.TryGetSecretKey("chain", chain);
 
 		if (!account_name.empty() && account_name == "onelake") {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("use_fabric_endpoint"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "use_fabric_endpoint", "true");
 		}
 
 		auto provider = kv_secret.GetProvider();
@@ -272,13 +276,11 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			if (access_token.empty()) {
 				throw InvalidInputException("No access_token value not found in secret provider!");
 			}
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("bearer_token"),
-			                        KernelUtils::ToDeltaString(access_token));
+			set_option(builder, "bearer_token", access_token);
 		} else if (provider == "credential_chain") {
 			// Authentication option 1a: using the cli authentication
 			if (chain.find("cli") != std::string::npos) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("use_azure_cli"),
-				                        KernelUtils::ToDeltaString("true"));
+				set_option(builder, "use_azure_cli", "true");
 			}
 			// Authentication option 1b: non-cli credential chains will just "hope for the best" technically since we
 			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
@@ -288,8 +290,7 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			account_name = parseFromConnectionString(connection_string, "AccountName");
 			// Authentication option 2: a connection string based on account key
 			if (!account_name.empty() && !account_key.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("account_key"),
-				                        KernelUtils::ToDeltaString(account_key));
+				set_option(builder, "account_key", account_key);
 			} else {
 				// Authentication option 2b: a connection string based on SAS token
 				endpoint = parseFromConnectionString(connection_string, "BlobEndpoint");
@@ -298,44 +299,37 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 				}
 				auto sas_token = parseFromConnectionString(connection_string, "SharedAccessSignature");
 				if (!sas_token.empty()) {
-					ffi::set_builder_option(builder, KernelUtils::ToDeltaString("sas_token"),
-					                        KernelUtils::ToDeltaString(sas_token));
+					set_option(builder, "sas_token", sas_token);
 				}
 			}
 		} else if (provider == "service_principal") {
 			if (!client_id.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_client_id"),
-				                        KernelUtils::ToDeltaString(client_id));
+				set_option(builder, "azure_client_id", client_id);
 			}
 			if (!client_secret.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_client_secret"),
-				                        KernelUtils::ToDeltaString(client_secret));
+				set_option(builder, "azure_client_secret", client_secret);
 			}
 			if (!tenant_id.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_tenant_id"),
-				                        KernelUtils::ToDeltaString(tenant_id));
+				set_option(builder, "azure_tenant_id", tenant_id);
 			}
 		} else {
 			// Authentication option 3: no authentication, just an account name
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_skip_signature"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "azure_skip_signature", "true");
 		}
 		// Set the use_emulator option for when the azurite test server is used
 		if (account_name == "devstoreaccount1" || connection_string.find("devstoreaccount1") != string::npos) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("use_emulator"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "use_emulator", "true");
 		}
 		if (!account_name.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("account_name"),
-			                        KernelUtils::ToDeltaString(account_name)); // needed for delta RS builder
+			set_option(builder, "account_name", account_name); // needed for delta RS builder
 		}
 		if (!endpoint.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_endpoint"),
-			                        KernelUtils::ToDeltaString(endpoint));
+			set_option(builder, "azure_endpoint", endpoint);
 		}
-		ffi::set_builder_option(builder, KernelUtils::ToDeltaString("container_name"),
-		                        KernelUtils::ToDeltaString(bucket));
+		set_option(builder, "container_name", bucket);
 	}
+	// Use multi-threaded tokio executor (required for checkpoint support)
+	ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
 	return builder;
 }
 
@@ -519,7 +513,14 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
 
 void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context,
                                  ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
-	ffi::visit_scan_metadata(scan_metadata, engine_context, VisitCallback);
+	auto scandata_cb = static_cast<ScanDataCallBack *>(engine_context);
+	auto res = ffi::visit_scan_metadata(scan_metadata, scandata_cb->snapshot.extern_engine.get(), engine_context,
+	                                    VisitCallback);
+	bool ok;
+	auto err = KernelUtils::TryUnpackResult(res, ok);
+	if (err.HasError()) {
+		scandata_cb->error = err;
+	}
 }
 
 DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path, idx_t version_p)
@@ -614,7 +615,7 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	vector<DeltaMultiFileColumnDefinition> visited_schema;
 	{
 		auto snapshot_ref = snapshot->GetLockingRef();
-		visited_schema = SchemaVisitor::VisitSnapshotSchema(snapshot_ref.GetPtr());
+		visited_schema = SchemaVisitor::VisitSnapshotSchema(extern_engine.get(), snapshot_ref.GetPtr());
 	}
 
 	for (const auto &field : visited_schema) {
@@ -766,7 +767,7 @@ void DeltaMultiFileList::InitializeScan() const {
 		}
 	}
 
-	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(scan.get(), true);
+	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(extern_engine.get(), scan.get(), true);
 
 	DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 

@@ -26,7 +26,7 @@ def generate_test_data_delta_rs_multi(base_path, path, init, tables, splits = 1)
         os.makedirs(f"{generated_path}")
 
         # First we write a DuckDB file TODO: this should go in N appends as well?
-        con = duckdb.connect(f"{generated_path}/duckdb.db")
+        con = duckdb.connect(f"{generated_path}/duckdb.db", config={"allow_unsigned_extensions": "true"})
 
         con.sql(init)
 
@@ -50,7 +50,7 @@ def generate_test_data_delta_rs_multi(base_path, path, init, tables, splits = 1)
                 write_from = write_to
 
         for table in tables:
-            con = duckdb.connect(f"{generated_path}/duckdb.db")
+            con = duckdb.connect(f"{generated_path}/duckdb.db", config={"allow_unsigned_extensions": "true"})
             file_list = list(glob.glob(f"{generated_path}/{table['name']}/parquet/*.parquet"))
             file_list = sorted(file_list)
             for file in file_list:
@@ -79,7 +79,7 @@ def generate_test_data_delta_rs(base_path, path, query, part_column=False, add_g
         return
 
     try:
-        con = duckdb.connect()
+        con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
 
         con.sql(query)
 

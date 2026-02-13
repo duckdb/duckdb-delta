@@ -31,7 +31,7 @@ def get_newest_extension(builds=("release", "debug")):
 # Generates TPC-H lineitem table as multiple parquet files, creating a batch for each portion of data
 def generate_test_data(scale_factor, num_batches, path):
     for batch_num in range(1, num_batches+1):
-        con = duckdb.connect()
+        con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
         con.execute(f"call dbgen(sf={scale_factor}, children={num_batches}, step={batch_num-1})")
         os.makedirs(f"{path}/{batch_num}", exist_ok=True)
         con.execute(f"COPY lineitem TO '{path}/{batch_num}/lineitem.parquet'")
@@ -89,7 +89,7 @@ def process_batches(input_path, max_batch = 0):
 
 # Validates the output by checking the result of query 6 from TPC-H on the lineitem table
 def validate_output(delta_dir, throw = True):
-    con = duckdb.connect()
+    con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
     con.execute(f"CREATE VIEW lineitem AS FROM delta_scan('{delta_dir}');")
     result = con.sql("pragma tpch(6)").fetchall()[0][0];
     expected = Decimal('1193053.2253')
