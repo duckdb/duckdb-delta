@@ -687,7 +687,7 @@ OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) const {
 
 // req: this.lock must already be owned
 void DeltaMultiFileList::InitializeSnapshot() const {
-	// D_ASSERT(lock.is_locked())  -- no such check available; could use recursive mutex
+	// D_ASSERT(lock.is_locked())  -- no such check available; could use recursive mutex TODO: runtime check instead?
 	D_ASSERT(!client_ctx.expired());
 	auto client_ctx_shared = client_ctx.lock();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
@@ -698,12 +698,24 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	if (!snapshot) {
 		if (version == DConstants::INVALID_INDEX) {
 			// Get latest snapshot
-			snapshot = make_shared_ptr<SharedKernelSnapshot>(
-			    TryUnpackKernelResult(ffi::snapshot(path_slice, extern_engine.get())));
+			if (delta_log_path) {
+				DUCKDB_LOG_INTERNAL(*client_ctx_shared, "DeltaMultiFileList", LogLevel::LOG_DEBUG,
+				                    "Loading snapshot from log path: " + delta_log_path->val.ToString());
+				snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(
+				    ffi::snapshot_with_log_tail(path_slice, extern_engine.get(), delta_log_path->GetFFIPtr())));
+			} else {
+				DUCKDB_LOG_INTERNAL(*client_ctx_shared, "DeltaMultiFileList", LogLevel::LOG_DEBUG,
+				                    "Loading snapshot from latest");
+				snapshot = make_shared_ptr<SharedKernelSnapshot>(
+				    TryUnpackKernelResult(ffi::snapshot(path_slice, extern_engine.get())));
+			}
+
 			// Set version
 			auto snapshot_ref = snapshot->GetLockingRef();
 			this->version = ffi::version(snapshot_ref.GetPtr());
 		} else {
+			DUCKDB_LOG_INTERNAL(*client_ctx_shared, "DeltaMultiFileList", LogLevel::LOG_DEBUG,
+			                    "Loading snapshot from version '" + to_string(version) + "'");
 			// Get specific snapshot
 			snapshot = make_shared_ptr<SharedKernelSnapshot>(
 			    TryUnpackKernelResult(ffi::snapshot_at_version(path_slice, extern_engine.get(), version)));

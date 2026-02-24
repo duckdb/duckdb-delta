@@ -756,6 +756,13 @@ ffi::EngineError *DuckDBEngineError::AllocateError(ffi::KernelError etype, ffi::
 	return error;
 }
 
+ffi::EngineError *DuckDBEngineError::AllocateError(ffi::KernelError etype, const string &msg) {
+	auto error = new DuckDBEngineError;
+	error->etype = etype;
+	error->error_message = string(msg.data(), msg.length());
+	return error;
+}
+
 string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
 	const char *KERNEL_ERROR_ENUM_STRINGS[] = {"UnknownError",
 	                                           "FFIError",
@@ -820,6 +827,65 @@ string DuckDBEngineError::IntoString() {
 	// kernel using AllocateError)
 	delete this;
 	return StringUtil::Format("DeltaKernel %s (%u): %s", KernelErrorEnumToString(etype_copy), etype_copy, message_copy);
+}
+
+DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
+	val = log_path;
+	string_heap = make_uniq<StringHeap>();
+
+	if (log_path.type().id() != LogicalTypeId::LIST) {
+		throw InternalException("log_path must be a list");
+	}
+
+	auto children = ListValue::GetChildren(log_path);
+	log_entries.reserve(children.size());
+
+	for (auto &child : children) {
+		if (child.type().id() != LogicalTypeId::STRUCT) {
+			throw InternalException("log_path must be a list of structs");
+		}
+
+		auto &child_types = StructType::GetChildTypes(child.type());
+		auto &struct_values = StructValue::GetChildren(child);
+
+		string_t location;
+		int64_t last_modified = 0;
+		uint64_t size = DConstants::INVALID_INDEX;
+		for (idx_t i = 0; i < struct_values.size(); i++) {
+			auto &name = child_types[i].first;
+			auto &child = struct_values[i];
+			if (name == "file_name") {
+				location = string_heap->AddString(child.GetValue<string>());
+			} else if (name == "timestamp") {
+				last_modified = child.GetValue<int64_t>();
+			} else if (name == "file_size") {
+				size = child.GetValue<uint64_t>();
+			}
+		}
+
+		if (location.Empty() || last_modified == 0 || size == DConstants::INVALID_INDEX) {
+			throw InternalException("Invalid log_path struct: " + child.ToString());
+		}
+
+		ffi::KernelStringSlice location_slice = {location.GetData(), location.GetSize()};
+		log_entries.emplace_back(ffi::FfiLogPath {location_slice, last_modified, size});
+	}
+
+	// TODO: wth?
+	std::reverse(log_entries.begin(), log_entries.end());
+}
+
+ffi::LogPathArray DeltaLogPathArray::GetFFIPtr() {
+	return ffi::LogPathArray {
+	    .ptr = log_entries.data(),
+	    .len = log_entries.size(),
+	};
+}
+
+LogicalType KernelUtils::GetLogPathType() {
+	return LogicalType::LIST(LogicalType::STRUCT({{"file_name", LogicalType::VARCHAR},
+	                                              {"timestamp", LogicalType::BIGINT},
+	                                              {"file_size", LogicalType::UBIGINT}}));
 }
 
 ffi::KernelStringSlice KernelUtils::ToDeltaString(const string &str) {

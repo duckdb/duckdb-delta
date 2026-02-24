@@ -80,6 +80,7 @@ struct DeltaDataFile {
 	idx_t file_size_bytes;
 	idx_t footer_size;
 	vector<DeltaPartition> partition_values;
+	timestamp_t last_modified_time;
 };
 
 } // namespace duckdb

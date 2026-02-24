@@ -47,6 +47,16 @@ public:
 	//! Removes all outstanding appends and removes the files if possible
 	void CleanUpFiles();
 
+	//! CGetCommits callback for Unity Catalog managed commits
+	//! CCommit callback for Unity Catalog managed commits - returns None on success, Some(error) on failure
+	static ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> CommitCallback(ffi::NullableCvoid context,
+	                                                                                ffi::CommitRequest request);
+
+	void SetParentTableEntry(TableCatalogEntry &entry) {
+		lock_guard<mutex> guard(lock);
+		parent_table_entry = &entry;
+	}
+
 protected:
 	void InitializeTransaction(ClientContext &context);
 
@@ -76,6 +86,16 @@ private:
 		Value expected_version;
 	};
 	unordered_map<string, TransactionVersion> app_versions;
+
+	//! Whether we should invoke our parent catalog to do the commit or this catalog can do the commit itself
+	bool parent_commit = false;
+	string parent_catalog_name;
+	// string parent_catalog_schema;
+	optional_ptr<TableFunctionCatalogEntry> commit_function;
+	optional_ptr<ClientContext> current_context;
+	optional_ptr<TableCatalogEntry> parent_table_entry;
+
+	ErrorData active_error;
 };
 
 } // namespace duckdb

@@ -117,6 +117,8 @@ public: // TODO: clean up
 	mutable KernelExternEngine extern_engine;
 	mutable shared_ptr<SharedKernelSnapshot> snapshot;
 
+	mutable unique_ptr<DeltaLogPathArray> delta_log_path;
+
 protected:
 	// Note: Nearly this entire class is mutable because it represents a lazily expanded list of files that is logically
 	//       const, but not physically.
@@ -124,6 +126,7 @@ protected:
 	mutable idx_t version;
 
 	//! Delta Kernel Structures
+
 	mutable KernelScan scan;
 	mutable KernelScanDataIterator scan_data_iterator;
 
@@ -147,7 +150,7 @@ protected:
 	mutable vector<NestedNotNullConstraint> not_null_constraints;
 	mutable bool has_null_constraints_in_arrays = false;
 
-	//! Global schema: NOTE: this might be missing some sht
+	//! Global schema: NOTE: this might be missing some things
 	vector<DeltaMultiFileColumnDefinition> global_columns;
 
 	bool have_bound = false;

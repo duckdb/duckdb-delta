@@ -146,7 +146,7 @@ ExternalProject_Add(
   GIT_REPOSITORY "https://github.com/delta-io/delta-kernel-rs"
   # When bumping the kernel version, check that scripts/ffi/inline_msvc_compat.inc
   # covers any new ExternResult<T> specializations (MSVC will fail C2526 if not)
-  GIT_TAG b97cd5c552886b2a16422937d12e25d5c81ed30a # main HEAD 2026-02-13
+  GIT_TAG 810077a8a5cd0fbb6153b3f39c2355a14b8ab2ed # main HEAD 2026-02-24
   # Prints the env variables passed to the cargo build to the terminal, useful
   # in debugging because passing them through CMake is an error-prone mess
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS}

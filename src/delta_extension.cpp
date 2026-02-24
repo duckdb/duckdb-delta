@@ -44,6 +44,29 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		if (StringUtil::Lower(option.first) == "child_catalog_mode") {
 			res->child_catalog_mode = option.second.GetValue<bool>();
 		}
+		if (StringUtil::Lower(option.first) == "parent_catalog") {
+			res->parent_catalog_name = StringValue::Get(option.second);
+		}
+		if (StringUtil::Lower(option.first) == "parent_commit") {
+			res->parent_commit = option.second.GetValue<bool>();
+		}
+		if (StringUtil::Lower(option.first) == "log_tail") {
+			res->catalog_log_tail = option.second;
+		}
+	}
+
+	// If parent_commit is enabled, we need to load the internal commit function of the parent catalog here
+	if (res->parent_commit) {
+		string schema = DEFAULT_SCHEMA;
+		string commit_fun_name = "__internal_delta_ccv2_commit_staged";
+
+		CatalogEntryRetriever retriever(context);
+		EntryLookupInfo lookup_info(CatalogType::TABLE_FUNCTION_ENTRY, commit_fun_name);
+		auto fun = retriever.GetEntry(res->parent_catalog_name, schema, lookup_info, OnEntryNotFound::RETURN_NULL);
+		if (!fun) {
+			throw InternalException("Parent catalog does not have a __internal_delta_ccv2_commit_staged function");
+		}
+		res->commit_function = fun->Cast<TableFunctionCatalogEntry>();
 	}
 
 	res->SetDefaultTable(DEFAULT_SCHEMA, res->GetInternalTableName());

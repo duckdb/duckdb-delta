@@ -11,15 +11,20 @@
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/arrow/appender/append_data.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
 #include "functions/delta_scan/delta_scan.hpp"
 #include "storage/delta_insert.hpp"
+#include "duckdb/main/connection.hpp"
 #include "storage/delta_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 
 namespace duckdb {
 
 DeltaTransaction::DeltaTransaction(DeltaCatalog &delta_catalog, TransactionManager &manager, ClientContext &context)
-    : Transaction(manager, context), access_mode(delta_catalog.access_mode) {
+    : Transaction(manager, context), access_mode(delta_catalog.access_mode), parent_commit(delta_catalog.parent_commit),
+      parent_catalog_name(delta_catalog.parent_catalog_name) {
+	commit_function = delta_catalog.commit_function;
 }
 
 DeltaTransaction::~DeltaTransaction() {
@@ -141,11 +146,12 @@ struct WriteMetaData {
 				partitions.insert({snapshot.GetPartitionColumns()[part.partition_column_idx], part.partition_value});
 			}
 
-			Append(file_name, Value::MAP(partitions), file.row_count, Timestamp::GetCurrentTimestamp().value, true);
+			Append(file_name, Value::MAP(partitions), file.file_size_bytes, file.last_modified_time, true);
 		}
 	}
 
-	void Append(const string &path, Value partition_values, idx_t size, idx_t modification_time, bool data_change) {
+	void Append(const string &path, Value partition_values, idx_t size, timestamp_t modification_time,
+	            bool data_change) {
 		idx_t current_size = buffer->size();
 		idx_t current_capacity = buffer->GetCapacity();
 
@@ -156,7 +162,7 @@ struct WriteMetaData {
 		buffer->SetValue(0, current_size, path);
 		buffer->SetValue(1, current_size, partition_values);
 		buffer->SetValue(2, current_size, Value::BIGINT(size));
-		buffer->SetValue(3, current_size, Value::BIGINT(modification_time));
+		buffer->SetValue(3, current_size, Value::BIGINT(Timestamp::GetEpochMs(modification_time)));
 		buffer->SetValue(4, current_size, CreateStatsValue(size, true));
 		buffer->SetCardinality(current_size + 1);
 	}
@@ -204,6 +210,90 @@ void DeltaTransaction::CleanUpFiles() {
 		}
 	}
 	outstanding_appends.clear();
+}
+
+ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::CommitCallback(ffi::NullableCvoid context,
+                                                                                           ffi::CommitRequest request) {
+	auto transaction = const_cast<DeltaTransaction *>(reinterpret_cast<const DeltaTransaction *>(context));
+
+	try {
+		if (!transaction->current_context) {
+			throw InternalException("No current client context in Catalog Commit Callback");
+		}
+		if (!transaction->write_entry) {
+			throw InternalException("No write entry in Catalog Commit Callback");
+		}
+		if (!transaction->parent_table_entry) {
+			throw InternalException("No parent table entry in Catalog Commit Callback");
+		}
+
+		// Extract commit info from the request
+		if (request.commit_info.tag != ffi::OptionalValue<ffi::Commit>::Tag::Some) {
+			throw InternalException("CommitCallback received request without commit_info");
+		}
+
+		auto &commit_info = request.commit_info.some._0;
+		auto staged_commit_path_string = KernelUtils::FromDeltaString(commit_info.file_name);
+		auto version = commit_info.version;
+		auto timestamp_val = commit_info.timestamp;
+		auto size = commit_info.file_size;
+		auto file_modification_time = commit_info.file_modification_timestamp;
+
+		child_list_t<Value> children = {
+		    {"staged_commit_path", Value(staged_commit_path_string)},
+		    {"staged_commit_size", Value::BIGINT(size)},
+		    {"staged_commit_timestamp", Value::BIGINT(timestamp_val)},
+		    {"version", Value::BIGINT(version)},
+		    {"table_entry_pointer", Value::POINTER(CastPointerToValue(transaction->parent_table_entry.get()))},
+		    {"file_modification_time", Value::BIGINT(file_modification_time)},
+		};
+
+		auto staged_commit_data = Value::STRUCT(children);
+
+		// Invoke the commit function on the catalog
+		DataChunk output;
+		TableFunctionInput data = {nullptr, nullptr, nullptr};
+		output.Initialize(*transaction->current_context, {staged_commit_data.type(), LogicalType::BOOLEAN}, 1);
+		output.SetValue(0, 0, staged_commit_data);
+		output.SetCardinality(1);
+
+		// Special function that expects a 2-sized ANY datachunk containing the input on row 1 that will place the
+		// output on row 2
+		transaction->commit_function->functions.functions[0].function(*transaction->current_context, data, output);
+
+		auto result = output.GetValue(1, 0);
+		if (result.IsNull()) {
+			// Commit conflict - return error string
+			auto error_str = ffi::allocate_kernel_string(KernelUtils::ToDeltaString("Commit conflict"),
+			                                             DuckDBEngineError::AllocateError);
+			ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> error_result;
+			error_result.tag = ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>>::Tag::Some;
+			error_result.some._0 = error_str.ok._0;
+			return error_result;
+		}
+
+		// Success - return None
+		ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> success_result;
+		success_result.tag = ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>>::Tag::None;
+		return success_result;
+
+	} catch (std::runtime_error &e) {
+		transaction->active_error = ErrorData(e);
+		auto error_str = ffi::allocate_kernel_string(KernelUtils::ToDeltaString(transaction->active_error.Message()),
+		                                             DuckDBEngineError::AllocateError);
+		ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> error_result;
+		error_result.tag = ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>>::Tag::Some;
+		error_result.some._0 = error_str.ok._0;
+		return error_result;
+	} catch (...) {
+		string message = "Unknown error occurred when committing to a Unity Catalog managed commit";
+		auto error_str =
+		    ffi::allocate_kernel_string(KernelUtils::ToDeltaString(message), DuckDBEngineError::AllocateError);
+		ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> error_result;
+		error_result.tag = ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>>::Tag::Some;
+		error_result.some._0 = error_str.ok._0;
+		return error_result;
+	}
 }
 
 void DeltaTransaction::Commit(ClientContext &context) {
@@ -281,8 +371,18 @@ void DeltaTransaction::Commit(ClientContext &context) {
 				                             new_version, table_entry->snapshot->extern_engine.get()));
 			}
 
-			table_entry->snapshot->TryUnpackKernelResult(
-			    ffi::commit(kernel_transaction.release(), table_entry->snapshot->extern_engine.get()));
+			// We have some special error handling here to ensure the error created by DuckDB is properly thrown here,
+			// because we can't throw it across the FFI boundary, we need to store it in the transaction
+			uint64_t commit_result;
+			auto res = KernelUtils::TryUnpackResult(
+			    ffi::commit(kernel_transaction.release(), table_entry->snapshot->extern_engine.get()), commit_result);
+			if (res.HasError()) {
+				if (active_error.HasError()) {
+					active_error.Throw();
+				} else {
+					res.Throw();
+				}
+			}
 		}
 	}
 }
@@ -295,6 +395,8 @@ void DeltaTransaction::Rollback() {
 }
 
 void DeltaTransaction::InitializeTransaction(ClientContext &context) {
+	current_context = context;
+
 	if (access_mode == AccessMode::READ_ONLY) {
 		throw InvalidInputException("Can not append to a read only table");
 	}
@@ -305,8 +407,25 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 	// Start the kernel transaction
 	string path = table_entry->snapshot->GetPath();
 	auto path_slice = KernelUtils::ToDeltaString(path);
-	auto new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
-	    ffi::transaction(path_slice, table_entry->snapshot->extern_engine.get()));
+
+	ffi::Handle<ffi::ExclusiveTransaction> new_kernel_transaction;
+
+	{
+		auto snapshot_ref = table_entry->snapshot->snapshot->GetLockingRef();
+
+		if (parent_commit) {
+			// Create UC commit client with callbacks, passing `this` as the context
+			auto commit_client = ffi::get_uc_commit_client(this, CommitCallback);
+			auto table_id = KernelUtils::ToDeltaString(path); // TODO: should this be a different identifier?
+			auto uc_committer = table_entry->snapshot->TryUnpackKernelResult(
+			    ffi::get_uc_committer(commit_client, table_id, DuckDBEngineError::AllocateError));
+			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction_with_committer(
+			    snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(), uc_committer));
+		} else {
+			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
+			    ffi::transaction(path_slice, table_entry->snapshot->extern_engine.get()));
+		}
+	}
 
 	// Create commit info
 	DeltaCommitInfo commit_info;
@@ -329,8 +448,18 @@ void DeltaTransaction::Append(ClientContext &context, const vector<DeltaDataFile
 		InitializeTransaction(context);
 	}
 
+	idx_t start = outstanding_appends.size();
+
 	// Append the newly inserted data
 	outstanding_appends.insert(outstanding_appends.end(), append_files.begin(), append_files.end());
+
+	for (idx_t i = start; i < outstanding_appends.size(); i++) {
+		auto &file = outstanding_appends[i];
+		auto &fs = FileSystem::GetFileSystem(context);
+		auto f = fs.OpenFile(file.file_name, FileOpenFlags::FILE_FLAGS_READ);
+		file.last_modified_time = f->file_system.GetLastModifiedTime(*f);
+		file.file_size_bytes = f->GetFileSize();
+	}
 }
 
 void DeltaTransaction::SetTransactionVersion(const string &app_id_p, idx_t new_version_p, Value expected_version_p) {

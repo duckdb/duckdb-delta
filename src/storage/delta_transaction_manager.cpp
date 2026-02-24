@@ -1,5 +1,6 @@
 #include "storage/delta_transaction_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "functions/delta_scan/delta_multi_file_list.hpp"
 
 namespace duckdb {
 
