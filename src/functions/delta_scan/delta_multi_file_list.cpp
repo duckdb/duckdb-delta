@@ -17,6 +17,7 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 #include <regex>
+#include <cstdlib>
 
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 
@@ -282,8 +283,15 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			if (chain.find("cli") != std::string::npos) {
 				set_option(builder, "use_azure_cli", "true");
 			}
-			// Authentication option 1b: non-cli credential chains will just "hope for the best" technically since we
-			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
+			// Authentication option 1b: Kubernetes Workload Identity
+			const char *federated_token_file = std::getenv("AZURE_FEDERATED_TOKEN_FILE");
+			const char *azure_client_id = std::getenv("AZURE_CLIENT_ID");
+			const char *azure_tenant_id = std::getenv("AZURE_TENANT_ID");
+			if (federated_token_file && azure_client_id && azure_tenant_id) {
+				set_option(builder, "azure_federated_token_file", federated_token_file);
+				set_option(builder, "azure_client_id", azure_client_id);
+				set_option(builder, "azure_tenant_id", azure_tenant_id);
+			}
 		} else if (!connection_string.empty() && connection_string != "NULL") {
 			// Authentication option 2: a connection string based on account key
 			auto account_key = parseFromConnectionString(connection_string, "AccountKey");
