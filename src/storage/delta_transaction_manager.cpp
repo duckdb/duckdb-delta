@@ -52,7 +52,18 @@ void DeltaTransactionManager::RollbackTransaction(Transaction &transaction) {
 }
 
 void DeltaTransactionManager::Checkpoint(ClientContext &context, bool force) {
-	// NOP
+	// Fetch the currently active delta transaction
+	auto &delta_transaction = DeltaTransaction::Get(context, delta_catalog);
+
+	// Initialize the transaction-local copy of the delta snapshot
+	auto &table_entry = delta_transaction.InitializeTableEntry(context, delta_catalog.GetMainSchema(),
+	                                                           delta_catalog.use_specific_version);
+
+	// Get a locking ref to the shared ffi snapshot
+	auto snapshot_ref = table_entry.snapshot->snapshot->GetLockingRef();
+
+	table_entry.snapshot->TryUnpackKernelResult(
+	    ffi::checkpoint_snapshot(snapshot_ref.GetPtr(), table_entry.snapshot->extern_engine.get()));
 }
 
 } // namespace duckdb

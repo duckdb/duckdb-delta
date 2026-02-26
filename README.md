@@ -1,7 +1,7 @@
 # DuckDB Delta Extension
 
-This is the experimental DuckDB extension for [Delta](https://delta.io/). It is built using the (also experimental)
-[Delta Kernel](https://github.com/delta-incubator/delta-kernel-rs). The extension (currently) offers **read** support for delta
+This is the DuckDB extension for [Delta](https://delta.io/), built using the
+[Delta Kernel](https://github.com/delta-incubator/delta-kernel-rs). The extension offers read and limited write (blind insert) support for delta
 tables, both local and remote.
 
 ## Supported platforms
@@ -73,7 +73,7 @@ CREATE SECRET (
 
 ## Features
 
-While still experimental, many (scanning) features/optimizations are already supported in this extension as it reuses most of DuckDB's
+Many features/optimizations are supported in this extension as it reuses most of DuckDB's
 regular parquet scanning logic:
 
 - multithreaded scans and parquet metadata reading
@@ -81,12 +81,12 @@ regular parquet scanning logic:
   - skipping row-groups in file (based on parquet metadata)
   - skipping complete files (based on delta partition info)
 - projection pushdown
+- blind inserts
 - scanning tables with deletion vectors
 - all primitive types
 - structs
+- VARIANT type support
 - Cloud storage (AWS, Azure, GCP) support with secrets
-
-More features coming soon!
 
 ## Building
 

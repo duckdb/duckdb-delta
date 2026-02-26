@@ -8,11 +8,10 @@
 
 #pragma once
 
-#include "delta_utils.hpp"
+#include "delta_multi_file_list.hpp"
 #include "duckdb/function/table_function.hpp"
 
 namespace duckdb {
-class DeltaMultiFileList;
 
 enum class DeltaFilterPushdownMode : uint8_t {
 	NONE = 0,
