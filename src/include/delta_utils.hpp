@@ -52,7 +52,6 @@ struct DeltaLogPathArray {
 };
 
 struct KernelUtils {
-	static vector<ffi::FfiLogPath> CreateLogPath(Value log_path);
 	static LogicalType GetLogPathType();
 	static ffi::KernelStringSlice ToDeltaString(const string &str);
 	static string FromDeltaString(const struct ffi::KernelStringSlice slice);

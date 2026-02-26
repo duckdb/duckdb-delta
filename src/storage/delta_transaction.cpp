@@ -250,6 +250,8 @@ ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::Comm
 
 		auto staged_commit_data = Value::STRUCT(children);
 
+		DUCKDB_LOG_INTERNAL(*transaction->current_context, "delta.CatalogManagedCommit", LogLevel::LOG_DEBUG, staged_commit_data.ToString());
+
 		// Invoke the commit function on the catalog
 		DataChunk output;
 		TableFunctionInput data = {nullptr, nullptr, nullptr};
@@ -304,6 +306,7 @@ void DeltaTransaction::Commit(ClientContext &context) {
 			auto write_context = ffi::get_write_context(kernel_transaction.get());
 			auto write_path = ffi::get_write_path(write_context, allocate_string);
 
+			// TODO: why would kernel want us to write elsewhere
 			string write_path_string;
 			if (write_path) {
 				write_path_string = *(string *)write_path;
@@ -374,6 +377,8 @@ void DeltaTransaction::Commit(ClientContext &context) {
 			// We have some special error handling here to ensure the error created by DuckDB is properly thrown here,
 			// because we can't throw it across the FFI boundary, we need to store it in the transaction
 			uint64_t commit_result;
+
+			DUCKDB_LOG_INTERNAL(context, "delta.Commit", LogLevel::LOG_DEBUG, "Committing %s", table_entry->snapshot->GetPath());
 			auto res = KernelUtils::TryUnpackResult(
 			    ffi::commit(kernel_transaction.release(), table_entry->snapshot->extern_engine.get()), commit_result);
 			if (res.HasError()) {
@@ -453,6 +458,7 @@ void DeltaTransaction::Append(ClientContext &context, const vector<DeltaDataFile
 	// Append the newly inserted data
 	outstanding_appends.insert(outstanding_appends.end(), append_files.begin(), append_files.end());
 
+	// TODO: this requires a round trip! we might already be able to optimize this
 	for (idx_t i = start; i < outstanding_appends.size(); i++) {
 		auto &file = outstanding_appends[i];
 		auto &fs = FileSystem::GetFileSystem(context);
