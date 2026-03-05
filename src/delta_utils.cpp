@@ -871,7 +871,7 @@ DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
 		log_entries.emplace_back(ffi::FfiLogPath {location_slice, last_modified, size});
 	}
 
-	// TODO: wth?
+	// Note: kernel expects reverse order here, as this is max ~50 entries this is cheap
 	std::reverse(log_entries.begin(), log_entries.end());
 }
 
