@@ -92,7 +92,8 @@ private:
 	string parent_catalog_name;
 	// string parent_catalog_schema;
 	optional_ptr<TableFunctionCatalogEntry> commit_function;
-	optional_ptr<ClientContext> current_context;
+	string unity_table_id;
+	weak_ptr<ClientContext> current_context;
 	optional_ptr<TableCatalogEntry> parent_table_entry;
 
 	ErrorData active_error;

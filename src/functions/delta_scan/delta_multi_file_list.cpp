@@ -700,7 +700,7 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 			// Get latest snapshot
 			if (delta_log_path) {
 				DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-				                    "Loading snapshot for '%s' with log path: %s ", string(path_slice.ptr,path_slice.len) , delta_log_path->val.ToString());
+				                    "Loading snapshot for '%s' with %d log tail entries", string(path_slice.ptr,path_slice.len), delta_log_path->log_entries.size());
 				snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(
 				    ffi::snapshot_with_log_tail(path_slice, extern_engine.get(), delta_log_path->GetFFIPtr())));
 			} else {

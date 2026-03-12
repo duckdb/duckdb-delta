@@ -44,6 +44,7 @@ public:
 	optional_ptr<TableCatalogEntry> parent_table_entry;
 	bool parent_commit = false;
 	optional_ptr<TableFunctionCatalogEntry> commit_function;
+	string unity_table_id;
 
 	// Store the log_tail for catalog-managed commits (CCV2)
 	Value catalog_log_tail;

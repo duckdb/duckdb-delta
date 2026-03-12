@@ -23,7 +23,7 @@ namespace duckdb {
 
 DeltaTransaction::DeltaTransaction(DeltaCatalog &delta_catalog, TransactionManager &manager, ClientContext &context)
     : Transaction(manager, context), access_mode(delta_catalog.access_mode), parent_commit(delta_catalog.parent_commit),
-      parent_catalog_name(delta_catalog.parent_catalog_name) {
+      parent_catalog_name(delta_catalog.parent_catalog_name), unity_table_id(delta_catalog.unity_table_id) {
 	commit_function = delta_catalog.commit_function;
 }
 
@@ -214,10 +214,11 @@ void DeltaTransaction::CleanUpFiles() {
 
 ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::CommitCallback(ffi::NullableCvoid context,
                                                                                            ffi::CommitRequest request) {
-	auto transaction = const_cast<DeltaTransaction *>(reinterpret_cast<const DeltaTransaction *>(context));
+	auto transaction = reinterpret_cast<DeltaTransaction *>(context);
 
 	try {
-		if (!transaction->current_context) {
+		auto current_context = transaction->current_context.lock();
+		if (!current_context) {
 			throw InternalException("No current client context in Catalog Commit Callback");
 		}
 		if (!transaction->write_entry) {
@@ -250,18 +251,18 @@ ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::Comm
 
 		auto staged_commit_data = Value::STRUCT(children);
 
-		DUCKDB_LOG_INTERNAL(*transaction->current_context, "delta.CatalogManagedCommit", LogLevel::LOG_DEBUG, staged_commit_data.ToString());
+		DUCKDB_LOG_INTERNAL(*current_context, "delta.CatalogManagedCommit", LogLevel::LOG_DEBUG, staged_commit_data.ToString());
 
 		// Invoke the commit function on the catalog
 		DataChunk output;
 		TableFunctionInput data = {nullptr, nullptr, nullptr};
-		output.Initialize(*transaction->current_context, {staged_commit_data.type(), LogicalType::BOOLEAN}, 1);
+		output.Initialize(*current_context, {staged_commit_data.type(), LogicalType::BOOLEAN}, 1);
 		output.SetValue(0, 0, staged_commit_data);
 		output.SetCardinality(1);
 
 		// Special function that expects a 2-sized ANY datachunk containing the input on row 1 that will place the
 		// output on row 2
-		transaction->commit_function->functions.functions[0].function(*transaction->current_context, data, output);
+		transaction->commit_function->functions.functions[0].function(*current_context, data, output);
 
 		auto result = output.GetValue(1, 0);
 		if (result.IsNull()) {
@@ -279,7 +280,7 @@ ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::Comm
 		success_result.tag = ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>>::Tag::None;
 		return success_result;
 
-	} catch (std::runtime_error &e) {
+	} catch (std::exception &e) {
 		transaction->active_error = ErrorData(e);
 		auto error_str = ffi::allocate_kernel_string(KernelUtils::ToDeltaString(transaction->active_error.Message()),
 		                                             DuckDBEngineError::AllocateError);
@@ -400,7 +401,7 @@ void DeltaTransaction::Rollback() {
 }
 
 void DeltaTransaction::InitializeTransaction(ClientContext &context) {
-	current_context = context;
+	current_context = context.shared_from_this();
 
 	if (access_mode == AccessMode::READ_ONLY) {
 		throw InvalidInputException("Can not append to a read only table");
@@ -421,7 +422,7 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 		if (parent_commit) {
 			// Create UC commit client with callbacks, passing `this` as the context
 			auto commit_client = ffi::get_uc_commit_client(this, CommitCallback);
-			auto table_id = KernelUtils::ToDeltaString(path); // TODO: should this be a different identifier?
+			auto table_id = KernelUtils::ToDeltaString(unity_table_id.empty() ? path : unity_table_id);
 			auto uc_committer = table_entry->snapshot->TryUnpackKernelResult(
 			    ffi::get_uc_committer(commit_client, table_id, DuckDBEngineError::AllocateError));
 			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction_with_committer(
@@ -459,12 +460,12 @@ void DeltaTransaction::Append(ClientContext &context, const vector<DeltaDataFile
 	outstanding_appends.insert(outstanding_appends.end(), append_files.begin(), append_files.end());
 
 	// TODO: this requires a round trip! we might already be able to optimize this
+	// Note: file_size_bytes is already set from copy stats; we only need last_modified_time from the file system
 	for (idx_t i = start; i < outstanding_appends.size(); i++) {
 		auto &file = outstanding_appends[i];
 		auto &fs = FileSystem::GetFileSystem(context);
 		auto f = fs.OpenFile(file.file_name, FileOpenFlags::FILE_FLAGS_READ);
 		file.last_modified_time = f->file_system.GetLastModifiedTime(*f);
-		file.file_size_bytes = f->GetFileSize();
 	}
 }
 

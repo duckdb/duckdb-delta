@@ -3,7 +3,6 @@
 #include "delta_utils.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "storage/delta_catalog.hpp"
-#include "delta_utils.hpp"
 
 #include "delta_extension.hpp"
 

@@ -830,7 +830,6 @@ string DuckDBEngineError::IntoString() {
 }
 
 DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
-	val = log_path;
 	string_heap = make_uniq<StringHeap>();
 
 	if (log_path.type().id() != LogicalTypeId::LIST) {
@@ -849,8 +848,9 @@ DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
 		auto &struct_values = StructValue::GetChildren(child);
 
 		string_t location;
-		int64_t last_modified = 0;
+		int64_t last_modified = NumericLimits<int64_t>::Minimum();
 		uint64_t size = DConstants::INVALID_INDEX;
+		bool has_timestamp = false;
 		for (idx_t i = 0; i < struct_values.size(); i++) {
 			auto &name = child_types[i].first;
 			auto &child = struct_values[i];
@@ -858,12 +858,13 @@ DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
 				location = string_heap->AddString(child.GetValue<string>());
 			} else if (name == "timestamp") {
 				last_modified = child.GetValue<int64_t>();
+				has_timestamp = true;
 			} else if (name == "file_size") {
 				size = child.GetValue<uint64_t>();
 			}
 		}
 
-		if (location.Empty() || last_modified == 0 || size == DConstants::INVALID_INDEX) {
+		if (location.Empty() || !has_timestamp || size == DConstants::INVALID_INDEX) {
 			throw InternalException("Invalid log_path struct: " + child.ToString());
 		}
 
