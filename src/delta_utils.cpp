@@ -40,7 +40,7 @@ ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor 
 	ffi::EngineExpressionVisitor visitor;
 
 	visitor.data = &state;
-	visitor.make_field_list = (uintptr_t(*)(void *, uintptr_t)) & MakeFieldList;
+	visitor.make_field_list = (uintptr_t (*)(void *, uintptr_t))&MakeFieldList;
 
 	// Templated primitive functions
 	visitor.visit_literal_bool = VisitPrimitiveLiteralBool;
@@ -540,19 +540,15 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	ffi::EngineSchemaVisitor visitor;
 
 	visitor.data = &state;
-	visitor.make_field_list = (uintptr_t(*)(void *, uintptr_t)) & MakeFieldList;
-	visitor.visit_struct =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
-	    VisitStruct;
-	visitor.visit_array =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
-	    VisitArray;
-	visitor.visit_map =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
-	    VisitMap;
-	visitor.visit_decimal =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uint8_t, uint8_t)) &
-	    VisitDecimal;
+	visitor.make_field_list = (uintptr_t (*)(void *, uintptr_t))&MakeFieldList;
+	visitor.visit_struct = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
+	                                 uintptr_t))&VisitStruct;
+	visitor.visit_array = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
+	                                uintptr_t))&VisitArray;
+	visitor.visit_map = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
+	                              uintptr_t))&VisitMap;
+	visitor.visit_decimal = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
+	                                  uint8_t, uint8_t))&VisitDecimal;
 	visitor.visit_string = VisitSimpleType<LogicalType::VARCHAR>();
 	visitor.visit_long = VisitSimpleType<LogicalType::BIGINT>();
 	visitor.visit_integer = VisitSimpleType<LogicalType::INTEGER>();
@@ -567,7 +563,7 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	visitor.visit_timestamp_ntz = VisitSimpleType<LogicalType::TIMESTAMP>();
 
 	visitor.visit_variant =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata)) & VisitVariant;
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata))&VisitVariant;
 
 	return visitor;
 }
@@ -878,10 +874,7 @@ DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
 }
 
 ffi::LogPathArray DeltaLogPathArray::GetFFIPtr() {
-	return ffi::LogPathArray {
-	    .ptr = log_entries.data(),
-	    .len = log_entries.size(),
-	};
+	return {log_entries.data(), log_entries.size()};
 }
 
 LogicalType KernelUtils::GetLogPathType() {
@@ -940,7 +933,7 @@ KernelUtils::UnpackTransformExpression(const vector<unique_ptr<ParsedExpression>
 PredicateVisitor::PredicateVisitor(const vector<DeltaMultiFileColumnDefinition> &columns,
                                    optional_ptr<const TableFilterSet> filters) {
 	predicate = this;
-	visitor = (uintptr_t(*)(void *, ffi::KernelExpressionVisitorState *)) & VisitPredicate;
+	visitor = (uintptr_t (*)(void *, ffi::KernelExpressionVisitorState *))&VisitPredicate;
 
 	if (filters) {
 		for (auto &filter : filters->filters) {
