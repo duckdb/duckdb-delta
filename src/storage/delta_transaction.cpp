@@ -314,6 +314,12 @@ void DeltaTransaction::Commit(ClientContext &context) {
 				delete (string *)write_path;
 			}
 
+			for (const auto & append : outstanding_appends) {
+				if (!StringUtil::StartsWith(append.file_name, write_path_string)) {
+					throw InternalException("Incorrect write path detected!");
+				}
+			}
+
 			// Create metadata from the current outstanding appends
 			WriteMetaData write_metadata(*table_entry->snapshot, outstanding_appends);
 			// Convert write metadata to ArrowFFI

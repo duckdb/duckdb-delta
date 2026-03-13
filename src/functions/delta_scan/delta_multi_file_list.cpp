@@ -687,7 +687,7 @@ OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) const {
 
 // req: this.lock must already be owned
 void DeltaMultiFileList::InitializeSnapshot() const {
-	// D_ASSERT(lock.is_locked())  -- no such check available; could use recursive mutex TODO: runtime check instead?
+	// D_ASSERT(lock.is_locked())  -- no such check available; could use recursive mutex
 	D_ASSERT(!client_ctx.expired());
 	auto client_ctx_shared = client_ctx.lock();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);

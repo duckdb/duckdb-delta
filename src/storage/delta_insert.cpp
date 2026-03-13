@@ -369,7 +369,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		physical_copy_ref.partition_columns = partition_columns;
 		physical_copy_ref.write_empty_file = true;
 	} else {
-		physical_copy_ref.file_path = FileSystem::GetFileSystem(context).JoinPath(delta_path, "duckdb-" + current_write_uuid + ".parquet");
+		physical_copy_ref.file_path = delta_path + "duckdb-" + current_write_uuid + ".parquet";
 		physical_copy_ref.partition_output = false;
 		physical_copy_ref.write_empty_file = false;
 	}
