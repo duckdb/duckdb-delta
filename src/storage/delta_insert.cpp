@@ -44,11 +44,15 @@ public:
 	explicit DeltaInsertGlobalState(const DeltaTableEntry &table)
 	    : table_name(table.name), not_null_constraints(table.GetNotNullConstraints()) {
 		table.ThrowOnUnsupportedFieldForInserting();
+
+		columns = table.snapshot->GetLazyLoadedGlobalColumns();
 	};
 
 	string table_name;
 
 	vector<DeltaDataFile> written_files;
+
+	vector<DeltaMultiFileColumnDefinition> columns;
 
 	idx_t insert_count = 0;
 
@@ -105,23 +109,6 @@ static vector<string> ParseQuotedList(const string &input, char list_separator) 
 	}
 	return result;
 }
-
-struct DeltaColumnStats {
-	explicit DeltaColumnStats() = default;
-
-	string min;
-	string max;
-	idx_t null_count = 0;
-	idx_t num_values = 0;
-	idx_t column_size_bytes = 0;
-	bool contains_nan = false;
-	bool has_null_count = false;
-	bool has_num_values = false;
-	bool has_min = false;
-	bool has_max = false;
-	bool any_valid = true;
-	bool has_contains_nan = false;
-};
 
 static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 	DeltaColumnStats column_stats;
@@ -180,6 +167,21 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			auto column_names = ParseQuotedList(col_name, '.');
 			auto stats = ParseColumnStats(col_stats);
 
+			// Find type of column for stats TODO: column mapped names
+			bool found = false;
+			LogicalType coltype;
+			for (auto &col : global_state.columns) {
+				if (col.name == column_names[0]) {
+					found = true;
+					coltype = col.type;
+					break;
+				}
+			}
+			if (!found) {
+				throw InternalException("Column %s not found in table %s", StringUtil::Join(column_names, "."),
+				                        global_state.table_name);
+			}
+
 			if (stats.has_null_count && stats.null_count > 0) {
 				auto constraint = global_state.not_null_constraints.find(column_names[0]);
 				if (constraint != global_state.not_null_constraints.end()) {
@@ -198,6 +200,16 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 					}
 				}
 			}
+
+			// Skip types whose stats we don't yet support
+			if (coltype.id() == LogicalTypeId::VARIANT || coltype.id() == LogicalTypeId::LIST) {
+				continue;
+			}
+
+			stats.root_type = coltype;
+
+			// Push the columns stats into the datafile
+			data_file.column_stats.push_back({std::move(column_names), std::move(stats)});
 		}
 
 		// extract the partition info

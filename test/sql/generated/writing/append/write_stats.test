@@ -34,7 +34,7 @@ query I
 select add.stats FROM read_json('__TEST_DIR__/write_stats/simple_table/delta_lake/_delta_log/00000000000000000002.json')
 ----
 NULL
-{"numRecords":1,"tightBounds":true}
+{"numRecords":1,"nullCount":{"i":0},"minValues":{"i":5},"maxValues":{"i":5},"tightBounds":true}
 
 statement ok
 INSERT INTO simple_table FROM range(0,10) t(i) ;
@@ -43,4 +43,33 @@ query I
 select add.stats FROM read_json('__TEST_DIR__/write_stats/simple_table/delta_lake/_delta_log/00000000000000000003.json')
 ----
 NULL
-{"numRecords":10,"tightBounds":true}
+{"numRecords":10,"nullCount":{"i":0},"minValues":{"i":0},"maxValues":{"i":9},"tightBounds":true}
+
+# Verify file skipping works on stats written during inserts.
+# Table now has 3 files:
+#   File 1 (original):    i in [0, 9]
+#   File 2 (VALUES 5):    i in [5, 5]
+#   File 3 (range 0-9):   i in [0, 9]
+
+# i > 5 skips File 2 (max=5), must scan the other two
+query II
+EXPLAIN ANALYZE SELECT i FROM simple_table WHERE i > 5
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 2/3.*
+
+# i > 9 is above the max of every file — all skipped
+query II
+EXPLAIN ANALYZE SELECT i FROM simple_table WHERE i > 9
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 0/3.*
+
+# Sanity-check the actual results are correct
+query I
+SELECT count(*) FROM simple_table WHERE i > 5
+----
+8
+
+query I
+SELECT count(*) FROM simple_table WHERE i > 9
+----
+0

@@ -17,6 +17,9 @@
 #include "storage/delta_insert.hpp"
 #include "duckdb/main/connection.hpp"
 #include "storage/delta_table_entry.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 
 namespace duckdb {
@@ -89,47 +92,138 @@ private:
 	DataChunk buffer;
 };
 
+struct StatNode {
+	// If leaf node contains value
+	DeltaColumnStats stats;
+	LogicalType type;
+	unordered_map<string, StatNode> children;
+};
+
+static LogicalType ParseInnerType(const LogicalType &root_type, const vector<string> &name, idx_t offset) {
+	if (root_type.IsNested() && name.size() == offset) {
+		throw InternalException("Invalid stats name: empty");
+	}
+	if (root_type.id() == LogicalTypeId::STRUCT) {
+		auto &children = StructType::GetChildTypes(root_type);
+		for (auto &child : children) {
+			if (child.first == name[offset]) {
+				return ParseInnerType(child.second, name, offset + 1);
+			}
+		}
+		throw InternalException("Invalid stats name: did not find expected child: %s", name[offset]);
+	} else {
+		return root_type;
+	}
+}
+
+// Converts the stats from a.b.c -> colstat to a nested StatNode tree
+static void ParseStatsType(const vector<string> &name, idx_t offset, DeltaColumnStats &stats,
+                           unordered_map<string, StatNode> &output) {
+	if (name.size() <= offset) {
+		throw InternalException("Invalid stats name: empty");
+	}
+
+	bool is_leaf = (name.size() == 1 + offset);
+
+	if (output.find(name[offset]) != output.end()) {
+		// Non-leaf collision means a sibling field already created this parent node — merge into it
+		if (is_leaf) {
+			throw InternalException("Invalid stats name: duplicate leaf '%s'", name[offset]);
+		}
+		return ParseStatsType(name, offset + 1, stats, output[name[offset]].children);
+	}
+
+	output[name[offset]] = StatNode();
+
+	// We are at the leaf
+	if (is_leaf) {
+		output[name[offset]].stats = stats;
+		output[name[offset]].type = ParseInnerType(stats.root_type, name, 1);
+		return;
+	}
+
+	return ParseStatsType(name, offset + 1, stats, output[name[offset]].children);
+}
+
+static Value CreateValueLogicalTypeFromStatNode(const unordered_map<string, StatNode> &tree, const string &field) {
+	child_list_t<Value> children;
+
+	for (const auto &node : tree) {
+		if (node.second.children.size() == 0) {
+			if (field == "min") {
+				children.push_back({node.first, Value(node.second.stats.min).DefaultCastAs(node.second.type)});
+			} else if (field == "max") {
+				children.push_back({node.first, Value(node.second.stats.max).DefaultCastAs(node.second.type)});
+			} else if (field == "null_count") {
+				children.push_back({node.first, Value::BIGINT(node.second.stats.null_count)});
+			} else {
+				throw InternalException("Invalid field: %s", field.c_str());
+			}
+		} else {
+			children.push_back({node.first, CreateValueLogicalTypeFromStatNode(node.second.children, field)});
+		}
+	}
+
+	// TODO: support lists and other madness
+	return Value::STRUCT(children);
+}
+
 struct WriteMetaData {
-	static LogicalType GetStatsType() {
+	static LogicalType GetStatsType(optional_ptr<const DeltaDataFile> file) {
+		if (file && !file->column_stats.empty()) {
+			unordered_map<string, StatNode> result;
+			for (auto stat : file->column_stats) {
+				ParseStatsType(stat.first, 0, stat.second, result);
+			}
+
+			return LogicalType::STRUCT(child_list_t<LogicalType>({
+			    {"numRecords", LogicalType::BIGINT},
+			    {"nullCount", CreateValueLogicalTypeFromStatNode(result, "null_count").type()},
+			    {"minValues", CreateValueLogicalTypeFromStatNode(result, "min").type()},
+			    {"maxValues", CreateValueLogicalTypeFromStatNode(result, "max").type()},
+			    {"tightBounds", LogicalType::BOOLEAN},
+			}));
+		}
+
 		return LogicalType::STRUCT(
 		    child_list_t<LogicalType>({{"numRecords", LogicalType::BIGINT}, {"tightBounds", LogicalType::BOOLEAN}}));
 	}
 
-	static Value CreateStatsValue(idx_t num_rows, bool tight_bounds) {
-		return Value::STRUCT(GetStatsType(), {Value::BIGINT(num_rows), Value(tight_bounds)});
+	static Value CreateStatsValue(const DeltaDataFile &file, bool tight_bounds) {
+		if (file.column_stats.empty()) {
+			return Value::STRUCT(GetStatsType(nullptr), {Value::BIGINT(file.row_count), Value(tight_bounds)});
+		}
+
+		unordered_map<string, StatNode> result;
+		for (auto stat : file.column_stats) {
+			ParseStatsType(stat.first, 0, stat.second, result);
+		}
+
+		return Value::STRUCT(GetStatsType(&file), {
+		                                              Value::BIGINT(file.row_count),
+		                                              CreateValueLogicalTypeFromStatNode(result, "null_count"),
+		                                              CreateValueLogicalTypeFromStatNode(result, "min"),
+		                                              CreateValueLogicalTypeFromStatNode(result, "max"),
+		                                              Value(tight_bounds),
+		                                          });
 	}
 
-	static vector<LogicalType> GetTypes() {
-		// TODO: this needs to be in the schema of the file to write
-		// stats: struct
-		//     |    |-- numRecords: long
-		//     |    |-- tightBounds: boolean
-		//     |    |-- minValues: struct
-		//     |    |    |-- a: struct
-		//     |    |    |    |-- b: struct
-		//     |    |    |    |    |-- c: long
-		//     |    |-- maxValues: struct
-		//     |    |    |-- a: struct
-		//     |    |    |    |-- b: struct
-		//     |    |    |    |    |-- c: long
-
+	static vector<LogicalType> GetTypes(optional_ptr<const DeltaDataFile> file) {
 		return {LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR), LogicalType::BIGINT,
-		        LogicalType::BIGINT, GetStatsType()};
+		        LogicalType::BIGINT, GetStatsType(file)};
 	};
-
 	static vector<string> GetNames() {
 		return {"path", "partitionValues", "size", "modificationTime", "stats"};
 	};
 
-	WriteMetaData() {
+	WriteMetaData(DeltaMultiFileList &snapshot, vector<DeltaDataFile> &outstanding_appends) {
+		const DeltaDataFile *first_file = outstanding_appends.empty() ? nullptr : &outstanding_appends[0];
+		buffer_types = GetTypes(first_file);
 		buffer = make_uniq<DataChunk>();
-		buffer->Initialize(Allocator::DefaultAllocator(), GetTypes());
-	}
+		buffer->Initialize(Allocator::DefaultAllocator(), buffer_types);
 
-	WriteMetaData(DeltaMultiFileList &snapshot, vector<DeltaDataFile> &outstanding_appends) : WriteMetaData() {
 		for (const auto &file : outstanding_appends) {
 			auto table_path = snapshot.GetPath();
-			auto file_without_double_slash = StringUtil::Replace(file.file_name, "\\", "/");
 
 			// consume any leading '/' chars to be certain path is relative -- as seen in #268 they corrupt (for spark)
 			// https://github.com/duckdb/duckdb-delta/issues/268
@@ -140,18 +234,15 @@ struct WriteMetaData {
 			D_ASSERT(!StringUtil::StartsWith(file_name, "/"));
 
 			InsertionOrderPreservingMap<string> partitions = {};
-
-			// TODO: probably horribly wrong
 			for (const auto &part : file.partition_values) {
 				partitions.insert({snapshot.GetPartitionColumns()[part.partition_column_idx], part.partition_value});
 			}
 
-			Append(file_name, Value::MAP(partitions), file.file_size_bytes, file.last_modified_time, true);
+			Append(file_name, Value::MAP(partitions), file);
 		}
 	}
 
-	void Append(const string &path, Value partition_values, idx_t size, timestamp_t modification_time,
-	            bool data_change) {
+	void Append(const string &path, Value partition_values, const DeltaDataFile &file) {
 		idx_t current_size = buffer->size();
 		idx_t current_capacity = buffer->GetCapacity();
 
@@ -159,11 +250,13 @@ struct WriteMetaData {
 			buffer->SetCapacity(2 * current_capacity);
 		}
 
+		auto stats = CreateStatsValue(file, true);
+
 		buffer->SetValue(0, current_size, path);
 		buffer->SetValue(1, current_size, partition_values);
-		buffer->SetValue(2, current_size, Value::BIGINT(size));
-		buffer->SetValue(3, current_size, Value::BIGINT(Timestamp::GetEpochMs(modification_time)));
-		buffer->SetValue(4, current_size, CreateStatsValue(size, true));
+		buffer->SetValue(2, current_size, Value::BIGINT(file.file_size_bytes));
+		buffer->SetValue(3, current_size, Value::BIGINT(Timestamp::GetEpochMs(file.last_modified_time)));
+		buffer->SetValue(4, current_size, stats);
 		buffer->SetCardinality(current_size + 1);
 	}
 
@@ -180,13 +273,14 @@ struct WriteMetaData {
 		unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
 		ClientProperties props("UTC", ArrowOffsetSize::REGULAR, false, false, false, ArrowFormatVersion::V1_0, context);
 		ArrowConverter::ToArrowArray(*buffer, (ArrowArray *)(&ffi_data.array), props, extension_types);
-		ArrowConverter::ToArrowSchema((ArrowSchema *)(&ffi_data.schema), GetTypes(), GetNames(), props);
+		ArrowConverter::ToArrowSchema((ArrowSchema *)(&ffi_data.schema), buffer_types, GetNames(), props);
 
 		ffi_data.array.release = reinterpret_cast<void (*)(ffi::FFI_ArrowArray *)>(InstrumentedRelease);
 
 		return ffi_data;
 	}
 
+	vector<LogicalType> buffer_types;
 	unique_ptr<DataChunk> buffer;
 };
 

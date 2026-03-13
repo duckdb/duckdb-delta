@@ -1,4 +1,5 @@
 #include "delta_utils.hpp"
+#include "duckdb/planner/filter/struct_filter.hpp"
 
 #include <list>
 
@@ -1031,13 +1032,42 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, const Co
 		}
 		break;
 	}
+	case LogicalTypeId::DECIMAL: {
+		auto precision = DecimalType::GetWidth(value.type());
+		auto scale = DecimalType::GetScale(value.type());
+		uint64_t value_hi, value_lo;
+		auto phys = value.type().InternalType();
+		if (phys == PhysicalType::INT128) {
+			auto h = value.GetValueUnsafe<hugeint_t>();
+			value_hi = (uint64_t)h.upper;
+			value_lo = h.lower;
+		} else {
+			int64_t v;
+			if (phys == PhysicalType::INT16) {
+				v = value.GetValueUnsafe<int16_t>();
+			} else if (phys == PhysicalType::INT32) {
+				v = value.GetValueUnsafe<int32_t>();
+			} else {
+				v = value.GetValueUnsafe<int64_t>();
+			}
+			value_hi = v < 0 ? UINT64_MAX : 0ULL;
+			value_lo = (uint64_t)v;
+		}
+		auto maybe_right = ffi::visit_expression_literal_decimal(state, value_hi, value_lo, precision, scale,
+		                                                         DuckDBEngineError::AllocateError);
+		auto right_res = KernelUtils::TryUnpackResult(maybe_right, right);
+		if (right_res.HasError()) {
+			error_data = right_res;
+			return ~0;
+		}
+		break;
+	}
 	// TODO: implement these types
+	case LogicalTypeId::TIMESTAMP:    // kernel ignores max stats for timestamps (see delta-kernel-rs#1002)
+	case LogicalTypeId::TIMESTAMP_TZ: // kernel ignores max stats for timestamps (see delta-kernel-rs#1002)
 	case LogicalTypeId::STRUCT:
 	case LogicalTypeId::MAP:
 	case LogicalTypeId::LIST:
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::TIMESTAMP_TZ:
-	case LogicalTypeId::DECIMAL:
 	default:
 		break; // unsupported type
 	}
@@ -1102,6 +1132,21 @@ uintptr_t PredicateVisitor::VisitIsNotNull(const string &col_name, ffi::KernelEx
 	return ffi::visit_predicate_not(state, VisitIsNull(col_name, state));
 }
 
+uintptr_t PredicateVisitor::VisitStructExtractFilter(const string &col_name, const StructFilter &filter,
+                                                     ffi::KernelExpressionVisitorState *state) {
+	// Build the full dot-separated path by recursing through nested StructFilters.
+	// E.g. col "i" with StructFilter{child_name="a", child_filter=StructFilter{child_name="b", leaf}}
+	// becomes "i.a.b". visit_expression_column splits on "." to construct the kernel ColumnName.
+	string full_path = col_name + "." + filter.child_name;
+	const TableFilter *child = filter.child_filter.get();
+	while (child->filter_type == TableFilterType::STRUCT_EXTRACT) {
+		const auto &nested = static_cast<const StructFilter &>(*child);
+		full_path += "." + nested.child_name;
+		child = nested.child_filter.get();
+	}
+	return VisitFilter(full_path, *child, state);
+}
+
 uintptr_t PredicateVisitor::VisitFilter(const string &col_name, const TableFilter &filter,
                                         ffi::KernelExpressionVisitorState *state) {
 	switch (filter.filter_type) {
@@ -1113,12 +1158,12 @@ uintptr_t PredicateVisitor::VisitFilter(const string &col_name, const TableFilte
 		return VisitIsNull(col_name, state);
 	case TableFilterType::IS_NOT_NULL:
 		return VisitIsNotNull(col_name, state);
+	case TableFilterType::STRUCT_EXTRACT:
+		return VisitStructExtractFilter(col_name, static_cast<const StructFilter &>(filter), state);
 	// TODO: implement once kernel can do arbitrary expressions
 	case TableFilterType::EXPRESSION_FILTER:
 	// TODO: implement once kernel adds support for IN filters / arbitrary expressions
 	case TableFilterType::IN_FILTER:
-	// TODO: implement once kernel can do struct extract pushdown / arbitrary expressions
-	case TableFilterType::STRUCT_EXTRACT:
 	// TODO: figure out if this is ever useful
 	case TableFilterType::DYNAMIC_FILTER:
 	// TODO: can we even push these down?

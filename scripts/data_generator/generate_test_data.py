@@ -29,6 +29,16 @@ con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
 con.query(f"COPY (SELECT i, i%2 as part FROM range(0,10) tbl(i)) TO '{TMP_PATH}/simple_table_partitioned.parquet'")
 generate_test_data_pyspark(BASE_PATH,'simple_table_partitioned', 'simple_table_partitioned', input_path=f'{TMP_PATH}/simple_table_partitioned.parquet', partition_column='part')
 
+## really simple
+con = duckdb.connect()
+con.query(f"COPY (SELECT {{'a':{{'b': i}}}} as i FROM range(0,10) tbl(i)) TO '{TMP_PATH}/simple_table_nested.parquet'")
+generate_test_data_pyspark(BASE_PATH, 'simple_table_nested', 'simple_table_nested', f'{TMP_PATH}/simple_table_nested.parquet')
+
+## simple list table
+con = duckdb.connect()
+con.query(f"COPY (SELECT i::INT AS id, list_value(i, i+1, i+2)::INT[] AS items FROM range(0,10) tbl(i)) TO '{TMP_PATH}/simple_table_list.parquet'")
+generate_test_data_pyspark(BASE_PATH, 'simple_table_list', 'simple_table_list', f'{TMP_PATH}/simple_table_list.parquet')
+
 ## really simple column mapped
 ## Table with simple evolution: adding a column
 base_query = 'SELECT i, i%2 as part FROM range(0,9) tbl(i);'
@@ -136,6 +146,16 @@ for type in ["bool", "int", "tinyint", "smallint", "bigint", "float", "double", 
 ## Partitioned table with date type
 type = "date"
 query = f"CREATE table test_table as select ('1994-01-0' || i::VARCHAR)::DATE as value1, ('1994-01-0' || i::VARCHAR)::DATE as part from range(1,6) tbl(i)"
+generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping/{type}", query, "part")
+
+## Partitioned table with timestamp type
+type = "timestamp"
+query = f"CREATE table test_table as select ('2024-01-0' || i::VARCHAR || ' 00:00:00')::TIMESTAMP as value1, ('2024-01-0' || i::VARCHAR || ' 00:00:00')::TIMESTAMP as part from range(1,6) tbl(i)"
+generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping/{type}", query, "part")
+
+## Partitioned table with decimal type
+type = "decimal"
+query = f"CREATE table test_table as select i::DECIMAL(10,2) as value1, i::DECIMAL(10,2) as part from range(1,6) tbl(i)"
 generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping/{type}", query, "part")
 
 ## Partitioned table with all types we can file skip on

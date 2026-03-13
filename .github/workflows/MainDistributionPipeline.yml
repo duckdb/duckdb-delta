@@ -14,13 +14,13 @@ concurrency:
 jobs:
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.0
     secrets: inherit # required for writing to vcpkg binary cache
     with:
       # Main config
       extension_name: &ext_name delta
-      duckdb_version: &duckdb_ref v1.5-variegata
-      ci_tools_version: &ci_tools_ref main
+      duckdb_version: &duckdb_ref v1.5.0
+      ci_tools_version: &ci_tools_ref v1.5.0
       enable_rust: true
       rust_logs: true
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl'

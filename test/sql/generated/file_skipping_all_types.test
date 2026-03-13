@@ -140,13 +140,73 @@ WHERE part = '1994-01-01'
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
 
+### DECIMAL
+
+# using decimal column to skip files
+query II
+EXPLAIN ANALYZE SELECT value1, part
+FROM delta_scan('./data/generated/test_file_skipping/decimal/delta_lake')
+WHERE value1 = 3.00::DECIMAL(10,2)
+----
+analyzed_plan	<REGEX>:.*File Filters:.*value1=3.*Scanning Files: 1/5.*
+
+query II
+SELECT value1, part
+FROM delta_scan('./data/generated/test_file_skipping/decimal/delta_lake')
+WHERE value1 = 3.00::DECIMAL(10,2)
+----
+3.00	3.00
+
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/decimal/delta_lake')
+WHERE part = 3.00::DECIMAL(10,2)
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
+
+### STRUCT
+
+# using struct field column to skip files
+query II
+EXPLAIN ANALYZE SELECT value.i
+FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+WHERE value.i > 8
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
+
+query I
+SELECT value.i
+FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+WHERE value.i > 8
+----
+9
+
+query II
+EXPLAIN ANALYZE SELECT value.i
+FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+WHERE value.j > 10
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 0/2.*
+
+query II
+EXPLAIN ANALYZE SELECT value.i
+FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+WHERE value.i = 0
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
+
+query I
+SELECT value.i
+FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+WHERE value.i = 0
+----
+0
+
 # TODO test remaining types:
-# - STRUCT
 # - MAP
 # - LIST
 # - TIMESTAMP
 # - TIMESTAMP_TZ
-# - DECIMAL
 
 ### Now test all Comparators are fileskipping
 

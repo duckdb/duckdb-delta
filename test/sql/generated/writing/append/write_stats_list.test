@@ -1,0 +1,33 @@
+# name: test/sql/generated/writing/append/write_stats_list.test
+# description: verify that stats are NOT written for List columns on insert (no crash, no list entries in stats)
+# group: [append]
+
+require parquet
+
+require delta
+
+require json
+
+require-env GENERATED_DATA_AVAILABLE
+
+statement ok
+from copy_dir('data/generated/simple_table_list', '__TEST_DIR__/write_stats_list/simple_table_list');
+
+statement ok
+ATTACH '__TEST_DIR__/write_stats_list/simple_table_list/delta_lake' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES (10, [10, 11, 12]);
+
+# items (LIST) must not appear in any stats field
+query II
+SELECT
+    json_extract(add.stats, '$.nullCount.items') IS NULL,
+    json_extract(add.stats, '$.minValues.items') IS NULL
+FROM read_json('__TEST_DIR__/write_stats_list/simple_table_list/delta_lake/_delta_log/00000000000000000002.json')
+WHERE add IS NOT NULL
+----
+true	true
+
+statement ok
+DETACH t;

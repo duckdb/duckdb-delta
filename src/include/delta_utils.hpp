@@ -10,8 +10,7 @@
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/common/error_data.hpp"
-#include "duckdb/parser/expression/comparison_expression.hpp"
-#include <duckdb/planner/filter/null_filter.hpp>
+#include "duckdb/planner/filter/struct_filter.hpp"
 #include <iostream>
 
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
@@ -463,6 +462,8 @@ private:
 
 	uintptr_t VisitIsNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
 	uintptr_t VisitIsNotNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
+	uintptr_t VisitStructExtractFilter(const string &col_name, const StructFilter &filter,
+	                                   ffi::KernelExpressionVisitorState *state);
 
 	uintptr_t VisitFilter(const string &col_name, const TableFilter &filter, ffi::KernelExpressionVisitorState *state);
 };

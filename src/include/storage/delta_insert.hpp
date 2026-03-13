@@ -70,6 +70,28 @@ struct DeltaPartition {
 	string partition_value;
 };
 
+struct DeltaColumnStats {
+	explicit DeltaColumnStats() = default;
+
+	string min;
+	string max;
+	idx_t null_count = 0;
+	idx_t num_values = 0;
+	idx_t column_size_bytes = 0;
+	bool contains_nan = false;
+	bool has_null_count = false;
+	bool has_num_values = false;
+	bool has_min = false;
+	bool has_max = false;
+	bool any_valid = true;
+	bool has_contains_nan = false;
+
+	// Injected type to materialize stats with
+	LogicalType root_type;
+};
+
+struct DeltaMultiFileColumnDefinition;
+
 struct DeltaDataFile {
 	DeltaDataFile() = default;
 	// DeltaDataFile(const DeltaDataFile &other);
@@ -81,6 +103,9 @@ struct DeltaDataFile {
 	idx_t footer_size;
 	vector<DeltaPartition> partition_values;
 	timestamp_t last_modified_time;
+
+	// Stats per column, where column name is vector of path
+	vector<pair<vector<string>, DeltaColumnStats>> column_stats;
 };
 
 } // namespace duckdb

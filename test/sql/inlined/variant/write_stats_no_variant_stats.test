@@ -1,0 +1,33 @@
+# name: test/sql/inlined/variant/write_stats_no_variant_stats.test
+# description: verify that stats are NOT written for Variant columns on insert
+# group: [variant]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+statement ok
+from copy_dir('data/inlined/variant/basic', '__TEST_DIR__/write_stats_variant');
+
+statement ok
+ATTACH '__TEST_DIR__/write_stats_variant' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES (100, {'x': 1}), (200, NULL);
+
+# data (VARIANT) must not appear in any stats field
+query II
+SELECT
+    json_extract(add.stats, '$.nullCount.data') IS NULL,
+    json_extract(add.stats, '$.minValues.data') IS NULL
+FROM read_json('__TEST_DIR__/write_stats_variant/_delta_log/00000000000000000002.json')
+WHERE add IS NOT NULL
+----
+true	true
+
+statement ok
+DETACH t;
