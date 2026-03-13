@@ -212,6 +212,7 @@ void DeltaTransaction::CleanUpFiles() {
 	outstanding_appends.clear();
 }
 
+
 ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::CommitCallback(ffi::NullableCvoid context,
                                                                                            ffi::CommitRequest request) {
 	auto transaction = reinterpret_cast<DeltaTransaction *>(context);
@@ -232,6 +233,8 @@ ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::Comm
 		if (request.commit_info.tag != ffi::OptionalValue<ffi::Commit>::Tag::Some) {
 			throw InternalException("CommitCallback received request without commit_info");
 		}
+
+		// TODO (sam): This function is a little hacky right now, could be cleaned up
 
 		auto &commit_info = request.commit_info.some._0;
 		auto staged_commit_path_string = KernelUtils::FromDeltaString(commit_info.file_name);
