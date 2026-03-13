@@ -193,3 +193,94 @@ query I rowsort with_checkpoint
 SELECT *
 FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/with_checkpoint/expected/latest/**/*.parquet')
 ----
+
+# cdf
+query I rowsort cdf
+SELECT *
+FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/cdf/delta')
+----
+
+query I rowsort cdf
+SELECT *
+FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/cdf/expected/latest/**/*.parquet')
+----
+
+# check_constraints
+query I rowsort check_constraints
+SELECT *
+FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/check_constraints/delta')
+----
+
+query I rowsort check_constraints
+SELECT *
+FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/check_constraints/expected/latest/**/*.parquet')
+----
+
+# column_mapping
+query I rowsort column_mapping_dat
+SELECT *
+FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/column_mapping/delta')
+----
+
+query I rowsort column_mapping_dat
+SELECT *
+FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/column_mapping/expected/latest/**/*.parquet')
+----
+
+# deletion_vectors
+query I rowsort deletion_vectors
+SELECT *
+FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/deletion_vectors/delta')
+----
+
+query I rowsort deletion_vectors
+SELECT *
+FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/deletion_vectors/expected/latest/**/*.parquet')
+----
+
+# generated_columns
+query I rowsort generated_columns
+SELECT *
+FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/generated_columns/delta')
+----
+
+query I rowsort generated_columns
+SELECT *
+FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/generated_columns/expected/latest/**/*.parquet')
+----
+
+# iceberg_compat_v1
+# TODO: fails with InvalidProtocolError: Writer features must be Writer-only or also listed in reader features
+# likely kernel or data issue, needs to be checked.
+#
+# query I rowsort iceberg_compat_v1
+# SELECT *
+# FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/iceberg_compat_v1/delta')
+# ----
+#
+# query I rowsort iceberg_compat_v1
+# SELECT *
+# FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/iceberg_compat_v1/expected/latest/**/*.parquet')
+# ----
+
+# partitioned_with_null
+query I rowsort partitioned_with_null
+SELECT *
+FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/partitioned_with_null/delta')
+----
+
+query I rowsort partitioned_with_null
+SELECT *
+FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/partitioned_with_null/expected/latest/**/*.parquet')
+----
+
+# timestamp_ntz
+query I rowsort timestamp_ntz_dat
+SELECT *
+FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/timestamp_ntz/delta')
+----
+
+query I rowsort timestamp_ntz_dat
+SELECT *
+FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/timestamp_ntz/expected/latest/**/*.parquet')
+----
