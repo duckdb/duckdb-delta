@@ -212,7 +212,6 @@ void DeltaTransaction::CleanUpFiles() {
 	outstanding_appends.clear();
 }
 
-
 ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::CommitCallback(ffi::NullableCvoid context,
                                                                                            ffi::CommitRequest request) {
 	auto transaction = reinterpret_cast<DeltaTransaction *>(context);
@@ -254,7 +253,8 @@ ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::Comm
 
 		auto staged_commit_data = Value::STRUCT(children);
 
-		DUCKDB_LOG_INTERNAL(*current_context, "delta.CatalogManagedCommit", LogLevel::LOG_DEBUG, staged_commit_data.ToString());
+		DUCKDB_LOG_INTERNAL(*current_context, "delta.CatalogManagedCommit", LogLevel::LOG_DEBUG,
+		                    staged_commit_data.ToString());
 
 		// Invoke the commit function on the catalog
 		DataChunk output;
@@ -320,7 +320,7 @@ void DeltaTransaction::Commit(ClientContext &context) {
 				delete (string *)write_path;
 			}
 
-			for (const auto & append : outstanding_appends) {
+			for (const auto &append : outstanding_appends) {
 				if (!StringUtil::StartsWith(append.file_name, write_path_string)) {
 					throw InternalException("Incorrect write path detected!");
 				}
@@ -391,7 +391,8 @@ void DeltaTransaction::Commit(ClientContext &context) {
 			// because we can't throw it across the FFI boundary, we need to store it in the transaction
 			uint64_t commit_result;
 
-			DUCKDB_LOG_INTERNAL(context, "delta.Commit", LogLevel::LOG_DEBUG, "Committing %s", table_entry->snapshot->GetPath());
+			DUCKDB_LOG_INTERNAL(context, "delta.Commit", LogLevel::LOG_DEBUG, "Committing %s",
+			                    table_entry->snapshot->GetPath());
 			auto res = KernelUtils::TryUnpackResult(
 			    ffi::commit(kernel_transaction.release(), table_entry->snapshot->extern_engine.get()), commit_result);
 			if (res.HasError()) {

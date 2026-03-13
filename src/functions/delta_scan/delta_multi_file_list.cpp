@@ -700,12 +700,14 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 			// Get latest snapshot
 			if (delta_log_path) {
 				DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-				                    "Loading snapshot for '%s' with %d log tail entries", string(path_slice.ptr,path_slice.len), delta_log_path->log_entries.size());
+				                    "Loading snapshot for '%s' with %d log tail entries",
+				                    string(path_slice.ptr, path_slice.len), delta_log_path->log_entries.size());
 				snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(
 				    ffi::snapshot_with_log_tail(path_slice, extern_engine.get(), delta_log_path->GetFFIPtr())));
 			} else {
 				DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-				                    "Loading snapshot for '%s' at latest version", string(path_slice.ptr,path_slice.len));
+				                    "Loading snapshot for '%s' at latest version",
+				                    string(path_slice.ptr, path_slice.len));
 				snapshot = make_shared_ptr<SharedKernelSnapshot>(
 				    TryUnpackKernelResult(ffi::snapshot(path_slice, extern_engine.get())));
 			}
@@ -715,7 +717,8 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 			this->version = ffi::version(snapshot_ref.GetPtr());
 		} else {
 			DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-			                    "Loading snapshot for '%s' at version %d", string(path_slice.ptr,path_slice.len), version);
+			                    "Loading snapshot for '%s' at version %d", string(path_slice.ptr, path_slice.len),
+			                    version);
 			// Get specific snapshot
 			snapshot = make_shared_ptr<SharedKernelSnapshot>(
 			    TryUnpackKernelResult(ffi::snapshot_at_version(path_slice, extern_engine.get(), version)));
