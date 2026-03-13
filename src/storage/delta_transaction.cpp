@@ -263,6 +263,9 @@ ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::Comm
 		output.SetValue(0, 0, staged_commit_data);
 		output.SetCardinality(1);
 
+		if (!transaction->commit_function) {
+			throw InternalException("No commit function found in Catalog Commit Callback");
+		}
 		// Special function that expects a 2-sized ANY datachunk containing the input on row 1 that will place the
 		// output on row 2
 		transaction->commit_function->functions.functions[0].function(*current_context, data, output);
