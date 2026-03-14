@@ -266,6 +266,13 @@ WHERE part between 2 and 4
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
 
+# NOTE: count triggers profiler
+query II
+EXPLAIN ANALYZE SELECT count(1)
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
+WHERE part = 2 OR part = 4
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
 
 # null causes full scan
 query II

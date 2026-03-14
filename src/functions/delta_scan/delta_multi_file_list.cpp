@@ -901,9 +901,6 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 		if (should_report_explain_output) {
 			if (!mfr_info->extra_info.total_files.IsValid()) {
 				mfr_info->extra_info.total_files = old_total;
-			} else if (mfr_info->extra_info.total_files.GetIndex() != old_total) {
-				throw InternalException(
-				    "Error encountered when analyzing filtered out files for delta scan: total_files inconsistent!");
 			}
 
 			if (!mfr_info->extra_info.filtered_files.IsValid() ||
