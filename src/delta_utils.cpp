@@ -837,36 +837,36 @@ DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
 		throw InternalException("log_path must be a list");
 	}
 
-	auto children = ListValue::GetChildren(log_path);
-	log_entries.reserve(children.size());
+	auto list_items = ListValue::GetChildren(log_path);
+	log_entries.reserve(list_items.size());
 
-	for (auto &child : children) {
-		if (child.type().id() != LogicalTypeId::STRUCT) {
+	for (auto &item : list_items) {
+		if (item.type().id() != LogicalTypeId::STRUCT) {
 			throw InternalException("log_path must be a list of structs");
 		}
 
-		auto &child_types = StructType::GetChildTypes(child.type());
-		auto &struct_values = StructValue::GetChildren(child);
+		auto &field_types = StructType::GetChildTypes(item.type());
+		auto &field_values = StructValue::GetChildren(item);
 
 		string_t location;
 		int64_t last_modified = NumericLimits<int64_t>::Minimum();
 		uint64_t size = DConstants::INVALID_INDEX;
 		bool has_timestamp = false;
-		for (idx_t i = 0; i < struct_values.size(); i++) {
-			auto &name = child_types[i].first;
-			auto &child = struct_values[i];
-			if (name == "file_name") {
-				location = string_heap->AddString(child.GetValue<string>());
-			} else if (name == "timestamp") {
-				last_modified = child.GetValue<int64_t>();
+		for (idx_t i = 0; i < field_values.size(); i++) {
+			auto &field_name = field_types[i].first;
+			auto &field_value = field_values[i];
+			if (field_name == "file_name") {
+				location = string_heap->AddString(field_value.GetValue<string>());
+			} else if (field_name == "timestamp") {
+				last_modified = field_value.GetValue<int64_t>();
 				has_timestamp = true;
-			} else if (name == "file_size") {
-				size = child.GetValue<uint64_t>();
+			} else if (field_name == "file_size") {
+				size = field_value.GetValue<uint64_t>();
 			}
 		}
 
 		if (location.Empty() || !has_timestamp || size == DConstants::INVALID_INDEX) {
-			throw InternalException("Invalid log_path struct: " + child.ToString());
+			throw InternalException("Invalid log_path struct: " + item.ToString());
 		}
 
 		ffi::KernelStringSlice location_slice = {location.GetData(), location.GetSize()};

@@ -1,7 +1,9 @@
 #include "storage/delta_transaction.hpp"
 
+#include "duckdb/common/helper.hpp"
 #include "functions/delta_scan/delta_scan.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
+#include "path.hpp"
 
 #include <duckdb/main/client_data.hpp>
 
@@ -19,7 +21,6 @@
 #include "storage/delta_table_entry.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 
 namespace duckdb {
@@ -405,20 +406,25 @@ void DeltaTransaction::Commit(ClientContext &context) {
 
 		if (!outstanding_appends.empty()) {
 			auto write_context = ffi::get_write_context(kernel_transaction.get());
-			auto write_path = ffi::get_write_path(write_context, allocate_string);
 
-			// TODO: why would kernel want us to write elsewhere
-			string write_path_string;
-			if (write_path) {
-				write_path_string = *(string *)write_path;
-				delete (string *)write_path;
-			}
+			{
+				// in local files, path can be relative, but kernel emits absolute path; confirm this with in situ
+				// canonicalization and move on; this block is like a big D_ASSERT
+				auto delta_path = Path::FromString(table_entry->snapshot->GetPath());
+				auto write_path_str =
+				    optional_ptr<string>(static_cast<string *>(ffi::get_write_path(write_context, allocate_string)));
 
-			for (const auto &append : outstanding_appends) {
-				if (!StringUtil::StartsWith(append.file_name, write_path_string)) {
-					// TODO: this fails right now even though paths are the same, just in different shape (e.g. file://
-					// url vs regular path) throw InternalException("Incorrect write path detected: %s does not start
-					// with %s", append.file_name, write_path_string);
+				if (write_path_str && delta_path.IsLocal()) {
+					auto write_path = Path::FromString(*write_path_str).ToLocal();
+					D_ASSERT(write_path.IsAbsolute());
+					auto cwd_path = Path::FromString(FileSystem::GetWorkingDirectory()).ToLocal();
+					for (const auto &append : outstanding_appends) {
+						auto append_path = cwd_path.Join(append.file_name); // yay! RHS/LHS common prefix joins
+						if (!append_path.HasParentage(write_path)) {
+							throw InternalException("Incorrect write path detected: %s does not start with %s",
+							                        append.file_name, *write_path_str);
+						}
+					}
 				}
 			}
 

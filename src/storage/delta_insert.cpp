@@ -21,6 +21,7 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
+#include "path.hpp"
 
 namespace duckdb {
 
@@ -320,7 +321,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		table_entry = op.table.Cast<DeltaTableEntry>();
 	}
 
-	string delta_path = table_entry->snapshot->GetPath();
+	string delta_path = Path::Normalize(table_entry->snapshot->GetPath());
 
 	// Create Copy Info
 	auto info = make_uniq<CopyInfo>();
@@ -381,7 +382,8 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		physical_copy_ref.partition_columns = partition_columns;
 		physical_copy_ref.write_empty_file = true;
 	} else {
-		physical_copy_ref.file_path = delta_path + "duckdb-" + current_write_uuid + ".parquet";
+		physical_copy_ref.file_path =
+		    Path::FromString(delta_path).Join("duckdb-" + current_write_uuid + ".parquet").ToString();
 		physical_copy_ref.partition_output = false;
 		physical_copy_ref.write_empty_file = false;
 	}
