@@ -1,6 +1,7 @@
 #include "storage/delta_insert.hpp"
 
-#include <duckdb/common/sorting/hashed_sort.hpp>
+#include "duckdb/common/sorting/hashed_sort.hpp"
+#include "duckdb/common/path.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp"
@@ -21,7 +22,6 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
-#include "path.hpp"
 
 namespace duckdb {
 

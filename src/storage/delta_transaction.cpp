@@ -1,9 +1,9 @@
 #include "storage/delta_transaction.hpp"
 
 #include "duckdb/common/helper.hpp"
+#include "path_utils.hpp"
 #include "functions/delta_scan/delta_scan.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
-#include "path.hpp"
 
 #include <duckdb/main/client_data.hpp>
 
@@ -415,12 +415,12 @@ void DeltaTransaction::Commit(ClientContext &context) {
 				    optional_ptr<string>(static_cast<string *>(ffi::get_write_path(write_context, allocate_string)));
 
 				if (write_path_str && delta_path.IsLocal()) {
-					auto write_path = Path::FromString(*write_path_str).ToLocal();
+					auto write_path = PathToLocal(Path::FromString(*write_path_str));
 					D_ASSERT(write_path.IsAbsolute());
-					auto cwd_path = Path::FromString(FileSystem::GetWorkingDirectory()).ToLocal();
+					auto cwd_path = PathToLocal(Path::FromString(FileSystem::GetWorkingDirectory()));
 					for (const auto &append : outstanding_appends) {
 						auto append_path = cwd_path.Join(append.file_name); // yay! RHS/LHS common prefix joins
-						if (!append_path.HasParentage(write_path)) {
+						if (PathGetCommonLineage(append_path, write_path) < 0) {
 							throw InternalException("Incorrect write path detected: %s does not start with %s",
 							                        append.file_name, *write_path_str);
 						}

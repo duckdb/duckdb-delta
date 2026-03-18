@@ -26,7 +26,7 @@ set(EXTENSION_SOURCES
     src/functions/expression_functions.cpp
     src/functions/util_functions.cpp
     src/functions/delta_transaction_utils/idempotency_helpers.cpp
-    src/path.cpp # TODO: remove me post v1.5.0
+    src/path_utils.cpp
     src/storage/delta_insert.cpp
     src/storage/delta_catalog.cpp
     src/storage/delta_schema_entry.cpp
