@@ -1,13 +1,20 @@
 #include "path_utils.hpp"
 
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/string_util.hpp"
+#include "duckdb/common/file_system.hpp"
 
 //
 // TODO: (@benfleis) after ToLocal/ToFileLocal/GetCommonLineage land in duckdb core, delete this file.
 //
 
 namespace duckdb {
+
+Path PathToAbsolute(const Path &path) {
+	if (path.IsAbsolute()) {
+		return path;
+	}
+	return Path::FromString(FileSystem::GetWorkingDirectory()).Join(path);
+}
 
 Path PathToLocal(const Path &path) {
 	if (!path.IsLocal()) {

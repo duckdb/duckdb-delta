@@ -18,6 +18,9 @@
 
 namespace duckdb {
 
+// relative: a/b -> $PWD/a/b, absolute: return `path`
+Path PathToAbsolute(const Path &path);
+
 // file:/{1,3}... -> /..., throws if non-local
 Path PathToLocal(const Path &path);
 

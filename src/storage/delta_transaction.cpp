@@ -415,11 +415,9 @@ void DeltaTransaction::Commit(ClientContext &context) {
 				    optional_ptr<string>(static_cast<string *>(ffi::get_write_path(write_context, allocate_string)));
 
 				if (write_path_str && delta_path.IsLocal()) {
-					auto write_path = PathToLocal(Path::FromString(*write_path_str));
-					D_ASSERT(write_path.IsAbsolute());
-					auto cwd_path = PathToLocal(Path::FromString(FileSystem::GetWorkingDirectory()));
+					auto write_path = PathToLocal(PathToAbsolute(Path::FromString(*write_path_str)));
 					for (const auto &append : outstanding_appends) {
-						auto append_path = cwd_path.Join(append.file_name); // yay! RHS/LHS common prefix joins
+						auto append_path = PathToLocal(PathToAbsolute(Path::FromString(append.file_name)));
 						if (PathGetCommonLineage(append_path, write_path) < 0) {
 							throw InternalException("Incorrect write path detected: %s does not start with %s",
 							                        append.file_name, *write_path_str);
