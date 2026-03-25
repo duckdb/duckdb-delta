@@ -407,25 +407,6 @@ void DeltaTransaction::Commit(ClientContext &context) {
 		if (!outstanding_appends.empty()) {
 			auto write_context = ffi::get_write_context(kernel_transaction.get());
 
-			{
-				// in local files, path can be relative, but kernel emits absolute path; confirm this with in situ
-				// canonicalization and move on; this block is like a big D_ASSERT
-				auto delta_path = Path::FromString(table_entry->snapshot->GetPath());
-				auto write_path_str =
-				    optional_ptr<string>(static_cast<string *>(ffi::get_write_path(write_context, allocate_string)));
-
-				if (write_path_str && delta_path.IsLocal()) {
-					auto write_path = PathToLocal(PathToAbsolute(Path::FromString(*write_path_str)));
-					for (const auto &append : outstanding_appends) {
-						auto append_path = PathToLocal(PathToAbsolute(Path::FromString(append.file_name)));
-						if (PathGetCommonLineage(append_path, write_path) < 0) {
-							throw InternalException("Incorrect write path detected: %s does not start with %s",
-							                        append.file_name, *write_path_str);
-						}
-					}
-				}
-			}
-
 			// Create metadata from the current outstanding appends
 			WriteMetaData write_metadata(*table_entry->snapshot, outstanding_appends);
 			// Convert write metadata to ArrowFFI
