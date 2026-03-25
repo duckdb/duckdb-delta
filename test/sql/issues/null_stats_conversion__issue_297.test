@@ -10,6 +10,8 @@ require delta
 
 require json
 
+require notwindows # paths to JSON fail, skip windows
+
 statement ok
 from copy_dir('data/inlined/simple_table/delta_lake', '__TEST_DIR__/null_stats');
 
