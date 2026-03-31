@@ -13,23 +13,29 @@
 namespace duckdb {
 class ExtensionLoader;
 
-class BaseMetadataFunction : public TableFunction {
+class DeltaBaseMetadataFunction : public TableFunction {
 public:
-    BaseMetadataFunction(string name, table_function_bind_t bind);
-
+	DeltaBaseMetadataFunction(string name, table_function_bind_t bind);
 };
 
-class DeltaFileListFunction : public BaseMetadataFunction {
+class DeltaFileListFunction : public DeltaBaseMetadataFunction {
 public:
-    DeltaFileListFunction();
+	DeltaFileListFunction();
+};
+
+class DeltaDomainMetadataFunction : public DeltaBaseMetadataFunction {
+public:
+	DeltaDomainMetadataFunction();
 };
 
 struct MetadataBindData : public TableFunctionData {
-    MetadataBindData() {
-    }
+	MetadataBindData() {
+	}
 
-    vector<vector<Value>> rows;
+	vector<vector<Value>> rows;
 };
+
+class TableFunction;
 
 class DeltaFunctions {
 public:
@@ -39,11 +45,14 @@ public:
 private:
 	//! Table Functions
 	static TableFunctionSet GetDeltaScanFunction(ExtensionLoader &loader);
-    static TableFunctionSet GetDeltaFileListFunction(ExtensionLoader &loader);
+	static TableFunctionSet GetDeltaFileListFunction(ExtensionLoader &loader);
+	static TableFunctionSet GetDeltaDomainMetadataFunction(ExtensionLoader &loader);
 
 	//! Scalar Functions
 	static ScalarFunctionSet GetExpressionFunction(ExtensionLoader &loader);
 
-    static ScalarFunctionSet GetWriteFileFunction(ExtensionLoader &loader);
+	static ScalarFunctionSet GetWriteFileFunction(ExtensionLoader &loader);
+
+	static vector<TableFunction> GetTransactionIdempotencyHelpers(DatabaseInstance &instance);
 };
 } // namespace duckdb

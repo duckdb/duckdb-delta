@@ -1,0 +1,56 @@
+# name: test/sql/inlined/variant/basic.test
+# group: [variant]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+from copy_dir('data/inlined/variant/basic', '__TEST_DIR__/data/inlined/variant/basic');
+
+statement ok
+ATTACH '__TEST_DIR__/data/inlined/variant/basic' AS delta_table (TYPE delta);
+
+query IIIIII
+DESCRIBE delta_table;
+----
+id	INTEGER	YES	NULL	NULL	NULL
+data	VARIANT	YES	NULL	NULL	NULL
+
+query II
+select * from delta_table;
+----
+21	{'a': test, 'b': [21, test, true, {'c': 42}]}
+
+# Not shredded
+query I
+select stats(data) from delta_table;
+----
+shredding_state: INCONSISTENT[Has Null: true, Has No Null: true]
+
+query I
+select variant_typeof(data) from delta_table;
+----
+OBJECT(a, b)
+
+query I
+select variant_typeof(data.b) from delta_table;
+----
+ARRAY(4)
+
+statement ok
+insert into delta_table VALUES
+	(42, 'test'),
+	(84, {'d': [1, 2, 3]}),
+	(1337, ['testing'::VARIANT, 21, true, {'hello': 'world'}])
+;
+
+query II
+select * from delta_table;
+----
+42	test
+84	{'d': [1, 2, 3]}
+1337	[testing, 21, true, {'hello': world}]
+21	{'a': test, 'b': [21, test, true, {'c': 42}]}

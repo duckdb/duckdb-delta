@@ -1,5 +1,6 @@
 # name: test/sql/generated/writing/append/transaction_append.test
 # description: test appending to some generated tables
+# group: [append]
 
 require parquet
 

@@ -72,18 +72,22 @@ virtual_column_map_t DeltaVirtualColumns(ClientContext &, optional_ptr<FunctionD
 }
 
 static void DeltaScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
-                                 const TableFunction &function) {
+                               const TableFunction &function) {
 	throw NotImplementedException("DeltaScan serialization not implemented");
+}
+
+static unique_ptr<FunctionData> DeltaScanDeserialize(Deserializer &deserializer, TableFunction &function) {
+	throw NotImplementedException("DeltaScan deserialization not implemented");
 }
 
 TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 	// Parquet extension needs to be loaded for this to make sense
-    auto &instance = loader.GetDatabaseInstance();
+	auto &instance = loader.GetDatabaseInstance();
 	ExtensionHelper::AutoLoadExtension(instance, "parquet");
 
 	// The delta_scan function is constructed by grabbing the parquet scan from the Catalog, then injecting the
 	// DeltaMultiFileReader into it to create a Delta-based multi file read
-    auto &parquet_scan = loader.GetTableFunction("parquet_scan");
+	auto &parquet_scan = loader.GetTableFunction("parquet_scan");
 	auto parquet_scan_copy = parquet_scan.functions;
 
 	for (auto &function : parquet_scan_copy.functions) {
@@ -93,7 +97,7 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 		// Unset all of these: they are either broken, very inefficient.
 		// TODO: implement/fix these
 		function.serialize = DeltaScanSerialize;
-		function.deserialize = nullptr;
+		function.deserialize = DeltaScanDeserialize;
 		function.statistics = nullptr;
 		function.table_scan_progress = nullptr;
 		function.get_bind_info = nullptr;
@@ -107,6 +111,7 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 
 		function.named_parameters["pushdown_partition_info"] = LogicalType::BOOLEAN;
 		function.named_parameters["pushdown_filters"] = LogicalType::VARCHAR;
+		function.named_parameters["log_tail"] = KernelUtils::GetLogPathType();
 
 		function.name = "delta_scan";
 	}

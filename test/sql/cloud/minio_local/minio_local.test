@@ -1,6 +1,6 @@
-# name: test/sql/cloud/minio_local/aws_secret_chains_env.test
+# name: test/sql/cloud/minio_local/minio_local.test
 # description: test delta extension with a local minio installation
-# group: [aws]
+# group: [minio_local]
 
 require httpfs
 

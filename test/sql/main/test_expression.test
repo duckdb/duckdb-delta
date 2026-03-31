@@ -1,6 +1,6 @@
 # name: test/sql/main/test_expression.test
 # description: Test the get_delta_test_expression function
-# group: [delta_generated]
+# group: [main]
 
 require parquet
 

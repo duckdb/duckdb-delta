@@ -1,6 +1,6 @@
-# name: test/sql/cloud/minio_local/gcs_r2.test
+# name: test/sql/cloud/gcs.test
 # description: test delta extension with GCS and R2
-# group: [aws]
+# group: [cloud]
 
 require httpfs
 

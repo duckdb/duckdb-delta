@@ -1,4 +1,4 @@
-# name: test/sql/cloud/spn_auth.test
+# name: test/sql/cloud/azure/spn_auth.test
 # description: test azure extension with service principal authentication
 # group: [azure]
 

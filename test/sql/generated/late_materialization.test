@@ -1,5 +1,6 @@
 # name: test/sql/generated/late_materialization.test
 # description: test the late materialization optimization
+# group: [generated]
 
 require parquet
 

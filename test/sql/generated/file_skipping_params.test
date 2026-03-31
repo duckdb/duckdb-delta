@@ -1,6 +1,6 @@
 # name: test/sql/generated/file_skipping_params.test
 # description: Test filter pushdown parameters
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

@@ -9,6 +9,8 @@
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -76,6 +78,8 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		if (res.HasError()) {
 			res.Throw();
 		}
+		// Use multi-threaded tokio executor (required for checkpoint support)
+		ffi::set_builder_with_multithreaded_executor(return_value, 0, 0);
 		return return_value;
 	}
 
@@ -182,6 +186,8 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			    "create an R2 or GCS secret containing the credentials for this endpoint and try again.");
 		}
 
+		// Use multi-threaded tokio executor (required for checkpoint support)
+		ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
 		return builder;
 	}
 	const auto &kv_secret = dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
@@ -190,6 +196,15 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 
 	// Here you would need to add the logic for setting the builder options for Azure
 	// This is just a placeholder and will need to be replaced with the actual logic
+	auto set_option = [](ffi::EngineBuilder *builder, const string &key, const string &value) {
+		auto res = ffi::set_builder_option(builder, KernelUtils::ToDeltaString(key), KernelUtils::ToDeltaString(value));
+		bool ok;
+		auto err = KernelUtils::TryUnpackResult(res, ok);
+		if (err.HasError()) {
+			err.Throw();
+		}
+	};
+
 	if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
 		string key_id, secret, session_token, region, endpoint, url_style;
 		bool use_ssl = true;
@@ -202,21 +217,17 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		secret_reader.TryGetSecretKey("use_ssl", use_ssl);
 
 		if (key_id.empty() && secret.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("skip_signature"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "skip_signature", "true");
 		}
 
 		if (!key_id.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_access_key_id"),
-			                        KernelUtils::ToDeltaString(key_id));
+			set_option(builder, "aws_access_key_id", key_id);
 		}
 		if (!secret.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_secret_access_key"),
-			                        KernelUtils::ToDeltaString(secret));
+			set_option(builder, "aws_secret_access_key", secret);
 		}
 		if (!session_token.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_session_token"),
-			                        KernelUtils::ToDeltaString(session_token));
+			set_option(builder, "aws_session_token", session_token);
 		}
 		if (!endpoint.empty() && endpoint != "s3.amazonaws.com") {
 			if (!StringUtil::StartsWith(endpoint, "https://") && !StringUtil::StartsWith(endpoint, "http://")) {
@@ -228,22 +239,18 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			}
 
 			if (StringUtil::StartsWith(endpoint, "http://")) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("allow_http"),
-				                        KernelUtils::ToDeltaString("true"));
+				set_option(builder, "allow_http", "true");
 			}
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_endpoint"),
-			                        KernelUtils::ToDeltaString(endpoint));
+			set_option(builder, "aws_endpoint", endpoint);
 		} else if (StringUtil::StartsWith(path, "gs://") || StringUtil::StartsWith(path, "gcs://")) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_endpoint"),
-			                        KernelUtils::ToDeltaString("https://storage.googleapis.com"));
+			set_option(builder, "aws_endpoint", "https://storage.googleapis.com");
 		}
-		if (secret_type == "s3"){
-			if (!url_style.empty() && url_style == "vhost"){
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_virtual_hosted_style_request"),
-				                        KernelUtils::ToDeltaString("true"));
+		if (secret_type == "s3") {
+			if (!url_style.empty() && url_style == "vhost") {
+				set_option(builder, "aws_virtual_hosted_style_request", "true");
 			}
 		}
-		ffi::set_builder_option(builder, KernelUtils::ToDeltaString("aws_region"), KernelUtils::ToDeltaString(region));
+		set_option(builder, "aws_region", region);
 
 	} else if (secret_type == "azure") {
 		// azure seems to be super complicated as we need to cover duckdb azure plugin and delta RS builder
@@ -258,8 +265,7 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		secret_reader.TryGetSecretKey("chain", chain);
 
 		if (!account_name.empty() && account_name == "onelake") {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("use_fabric_endpoint"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "use_fabric_endpoint", "true");
 		}
 
 		auto provider = kv_secret.GetProvider();
@@ -271,25 +277,21 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			if (access_token.empty()) {
 				throw InvalidInputException("No access_token value not found in secret provider!");
 			}
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("bearer_token"),
-			                        KernelUtils::ToDeltaString(access_token));
+			set_option(builder, "bearer_token", access_token);
 		} else if (provider == "credential_chain") {
 			// Authentication option 1a: using the cli authentication
 			if (chain.find("cli") != std::string::npos) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("use_azure_cli"),
-				                        KernelUtils::ToDeltaString("true"));
+				set_option(builder, "use_azure_cli", "true");
 			}
 			// Authentication option 1b: non-cli credential chains will just "hope for the best" technically since we
 			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
 		} else if (!connection_string.empty() && connection_string != "NULL") {
-
 			// Authentication option 2: a connection string based on account key
 			auto account_key = parseFromConnectionString(connection_string, "AccountKey");
 			account_name = parseFromConnectionString(connection_string, "AccountName");
 			// Authentication option 2: a connection string based on account key
 			if (!account_name.empty() && !account_key.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("account_key"),
-				                        KernelUtils::ToDeltaString(account_key));
+				set_option(builder, "account_key", account_key);
 			} else {
 				// Authentication option 2b: a connection string based on SAS token
 				endpoint = parseFromConnectionString(connection_string, "BlobEndpoint");
@@ -298,44 +300,37 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 				}
 				auto sas_token = parseFromConnectionString(connection_string, "SharedAccessSignature");
 				if (!sas_token.empty()) {
-					ffi::set_builder_option(builder, KernelUtils::ToDeltaString("sas_token"),
-					                        KernelUtils::ToDeltaString(sas_token));
+					set_option(builder, "sas_token", sas_token);
 				}
 			}
 		} else if (provider == "service_principal") {
 			if (!client_id.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_client_id"),
-				                        KernelUtils::ToDeltaString(client_id));
+				set_option(builder, "azure_client_id", client_id);
 			}
 			if (!client_secret.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_client_secret"),
-				                        KernelUtils::ToDeltaString(client_secret));
+				set_option(builder, "azure_client_secret", client_secret);
 			}
 			if (!tenant_id.empty()) {
-				ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_tenant_id"),
-				                        KernelUtils::ToDeltaString(tenant_id));
+				set_option(builder, "azure_tenant_id", tenant_id);
 			}
 		} else {
 			// Authentication option 3: no authentication, just an account name
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_skip_signature"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "azure_skip_signature", "true");
 		}
 		// Set the use_emulator option for when the azurite test server is used
 		if (account_name == "devstoreaccount1" || connection_string.find("devstoreaccount1") != string::npos) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("use_emulator"),
-			                        KernelUtils::ToDeltaString("true"));
+			set_option(builder, "use_emulator", "true");
 		}
 		if (!account_name.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("account_name"),
-			                        KernelUtils::ToDeltaString(account_name)); // needed for delta RS builder
+			set_option(builder, "account_name", account_name); // needed for delta RS builder
 		}
 		if (!endpoint.empty()) {
-			ffi::set_builder_option(builder, KernelUtils::ToDeltaString("azure_endpoint"),
-			                        KernelUtils::ToDeltaString(endpoint));
+			set_option(builder, "azure_endpoint", endpoint);
 		}
-		ffi::set_builder_option(builder, KernelUtils::ToDeltaString("container_name"),
-		                        KernelUtils::ToDeltaString(bucket));
+		set_option(builder, "container_name", bucket);
 	}
+	// Use multi-threaded tokio executor (required for checkpoint support)
+	ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
 	return builder;
 }
 
@@ -353,74 +348,81 @@ static void KernelPartitionStringVisitor(ffi::NullableCvoid engine_context, ffi:
 	data->partitions.push_back(KernelUtils::FromDeltaString(slice));
 }
 
-static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transformation, const vector<DeltaMultiFileColumnDefinition> &cols) {
-    if (transformation.Cast<FunctionExpression>().function_name != "delta_kernel_transform_expression") {
-        throw IOException("Unexpected function of root expression returned by delta kernel: %s", transformation.Cast<FunctionExpression>().function_name);
-    }
+static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transformation,
+                                                       const vector<DeltaMultiFileColumnDefinition> &cols) {
+	if (transformation.Cast<FunctionExpression>().function_name != "delta_kernel_transform_expression") {
+		throw IOException("Unexpected function of root expression returned by delta kernel: %s",
+		                  transformation.Cast<FunctionExpression>().function_name);
+	}
 
-    unordered_map<idx_t, Value> res;
+	unordered_map<idx_t, Value> res;
 
-    // Iterate the children of the transform
-    for (auto & child: transformation.Cast<FunctionExpression>().children) {
-        auto &transform_op = child->Cast<FunctionExpression>();
-        if (transform_op.function_name != "delta_transform_op") {
-            throw IOException("Unexpected function for delta_transform_op returned by delta kernel: %s", child->Cast<FunctionExpression>().function_name);
-        }
+	// Iterate the children of the transform
+	for (auto &child : transformation.Cast<FunctionExpression>().children) {
+		auto &transform_op = child->Cast<FunctionExpression>();
+		if (transform_op.function_name != "delta_transform_op") {
+			throw IOException("Unexpected function for delta_transform_op returned by delta kernel: %s",
+			                  child->Cast<FunctionExpression>().function_name);
+		}
 
-        bool is_replace = false;
-        string field_name;
-        vector<Value> values;
+		bool is_replace = false;
+		string field_name;
+		vector<Value> values;
 
-        for (auto &transform_op_child : transform_op.children) {
-            if (transform_op_child->GetExpressionType() == ExpressionType::COMPARE_EQUAL) {
-                auto name = transform_op_child->Cast<ComparisonExpression>().left->Cast<ColumnRefExpression>().GetName();
-                auto value = transform_op_child->Cast<ComparisonExpression>().right->Cast<ConstantExpression>().value;
+		for (auto &transform_op_child : transform_op.children) {
+			if (transform_op_child->GetExpressionType() == ExpressionType::COMPARE_EQUAL) {
+				auto name =
+				    transform_op_child->Cast<ComparisonExpression>().left->Cast<ColumnRefExpression>().GetName();
+				auto value = transform_op_child->Cast<ComparisonExpression>().right->Cast<ConstantExpression>().value;
 
-                if (name == "is_replace") {
-                    is_replace = value.GetValue<bool>();
-                } else if (name == "field_name") {
-                    if (!value.IsNull()) {
-                        field_name = value.ToString();
-                    }
-                } else {
-                    throw InternalException("Unexpected name for delta_transform_op returned by delta kernel: %s", name);
-                }
-            } else if (transform_op_child->GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-                values.push_back(transform_op_child->Cast<ConstantExpression>().value);
-            } else {
-                throw NotImplementedException("Unexpected expression for delta_transform_op returned by delta kernel: %s", transform_op_child->ToString());
-            }
-        }
+				if (name == "is_replace") {
+					is_replace = value.GetValue<bool>();
+				} else if (name == "field_name") {
+					if (!value.IsNull()) {
+						field_name = value.ToString();
+					}
+				} else {
+					throw InternalException("Unexpected name for delta_transform_op returned by delta kernel: %s",
+					                        name);
+				}
+			} else if (transform_op_child->GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+				values.push_back(transform_op_child->Cast<ConstantExpression>().value);
+			} else {
+				throw NotImplementedException(
+				    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
+				    transform_op_child->ToString());
+			}
+		}
 
-        /// NOTE: Treating list id 0 as an empty list yields a simplified truth table:
-        ///
-        /// |field_name? |is_replace? |meaning|
-        /// |-|-|-|
-        /// | NO  | *   | Prepend a (possibly empty) list of expressions to the output
-        /// | YES | NO  | Insert a (possibly empty)  list of expressions after the named input field
-        /// | YES | YES | Replace the named input field with a (possibly empty) list of expressions
-        // TODO: broken for multiple transform expressions?
-        idx_t index_to_insert = 0;
-        if (!field_name.empty()) {
-            for (idx_t i = 0; i < cols.size(); ++i) {
-                if (field_name == cols[i].name) {
-                    index_to_insert = is_replace ? i : i+1;
-                    break;
-                }
-            }
-        }
+		/// NOTE: Treating list id 0 as an empty list yields a simplified truth table:
+		///
+		/// |field_name? |is_replace? |meaning|
+		/// |-|-|-|
+		/// | NO  | *   | Prepend a (possibly empty) list of expressions to the output
+		/// | YES | NO  | Insert a (possibly empty)  list of expressions after the named input field
+		/// | YES | YES | Replace the named input field with a (possibly empty) list of expressions
+		// TODO: broken for multiple transform expressions?
+		idx_t index_to_insert = 0;
+		if (!field_name.empty()) {
+			for (idx_t i = 0; i < cols.size(); ++i) {
+				if (field_name == cols[i].name) {
+					index_to_insert = is_replace ? i : i + 1;
+					break;
+				}
+			}
+		}
 
-        for (idx_t i = 0; i < values.size(); ++i) {
-            res[index_to_insert + i] = values[i];
-        }
-    }
+		for (idx_t i = 0; i < values.size(); ++i) {
+			res[index_to_insert + i] = values[i];
+		}
+	}
 
-    return res;
+	return res;
 }
 
 void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, ffi::KernelStringSlice path,
-                                             int64_t size, const ffi::Stats *stats, const ffi::CDvInfo *dv_info,
-                                             const ffi::Expression *transform) {
+                                             int64_t size, int64_t mod_time, const ffi::Stats *stats,
+                                             const ffi::CDvInfo *dv_info, const ffi::Expression *transform) {
 	auto context = (ScanDataCallBack *)engine_context;
 	auto &snapshot = context->snapshot;
 
@@ -447,21 +449,21 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 		snapshot.metadata.back()->cardinality = stats->num_records;
 	}
 
-    if (dv_info->has_vector) {
-        // Fetch the deletion vector
-        auto selection_vector_res =
-            ffi::selection_vector_from_dv(dv_info->info, snapshot.extern_engine.get(), KernelUtils::ToDeltaString(snapshot.root_path));
+	if (dv_info->has_vector) {
+		// Fetch the deletion vector
+		auto selection_vector_res = ffi::selection_vector_from_dv(dv_info->info, snapshot.extern_engine.get(),
+		                                                          KernelUtils::ToDeltaString(snapshot.root_path));
 
-        ffi::KernelBoolSlice selection_vector;
-        auto res = KernelUtils::TryUnpackResult(selection_vector_res, selection_vector);
-        if (res.HasError()) {
-            context->error = res;
-            return;
-        }
-        if (selection_vector.ptr) {
-            snapshot.metadata.back()->selection_vector = selection_vector;
-        }
-    }
+		ffi::KernelBoolSlice selection_vector;
+		auto res = KernelUtils::TryUnpackResult(selection_vector_res, selection_vector);
+		if (res.HasError()) {
+			context->error = res;
+			return;
+		}
+		if (selection_vector.ptr) {
+			snapshot.metadata.back()->selection_vector = selection_vector;
+		}
+	}
 
 	// Lookup all columns for potential hits in the constant map
 	if (transform) {
@@ -473,13 +475,16 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 			                           "Failed to parse transformation expression from delta kernel: null returned");
 			return;
 		}
-	    if (parsed_transformation_expression->size() != 1 || parsed_transformation_expression->front()->GetExpressionType() != ExpressionType::FUNCTION) {
-	        context->error = ErrorData(ExceptionType::IO,
-                                       "Failed to fetch partitions from delta kernel transform: Transform is unknown expression");
-	        return;
-	    }
+		if (parsed_transformation_expression->size() != 1 ||
+		    parsed_transformation_expression->front()->GetExpressionType() != ExpressionType::FUNCTION) {
+			context->error =
+			    ErrorData(ExceptionType::IO,
+			              "Failed to fetch partitions from delta kernel transform: Transform is unknown expression");
+			return;
+		}
 
-	    auto transform_partitions = FindPartitionValues(*(*parsed_transformation_expression)[0], snapshot.global_columns);
+		auto transform_partitions =
+		    FindPartitionValues(*(*parsed_transformation_expression)[0], snapshot.global_columns);
 
 		case_insensitive_map_t<Value> constant_map;
 		for (idx_t i = 0; i < snapshot.partitions.size(); ++i) {
@@ -504,7 +509,7 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
                                      int64_t mod_time, const ffi::Stats *stats, const ffi::CDvInfo *dv_info,
                                      const ffi::Expression *transform, const ffi::CStringMap *partition_values) {
 	try {
-		return VisitCallbackInternal(engine_context, path, size, stats, dv_info, transform);
+		return VisitCallbackInternal(engine_context, path, size, mod_time, stats, dv_info, transform);
 	} catch (std::runtime_error &e) {
 		auto context = (ScanDataCallBack *)engine_context;
 		context->error = ErrorData(e);
@@ -513,29 +518,38 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
 
 void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context,
                                  ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
-	auto data = static_cast<KernelPartitionVisitorData *>(engine_context);
-	ffi::visit_scan_metadata(scan_metadata, data->delta_snapshot.extern_engine.get(), engine_context, VisitCallback);
+	auto scandata_cb = static_cast<ScanDataCallBack *>(engine_context);
+	auto res = ffi::visit_scan_metadata(scan_metadata, scandata_cb->snapshot.extern_engine.get(), engine_context,
+	                                    VisitCallback);
+	bool ok;
+	auto err = KernelUtils::TryUnpackResult(res, ok);
+	if (err.HasError()) {
+		scandata_cb->error = err;
+	}
 }
 
-DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path, idx_t version_p, optional_ptr<const DeltaMultiFileList> previous)
-    : MultiFileList({ToDeltaPath(path)}, FileGlobOptions::ALLOW_EMPTY), version (version_p), context(context_p) {
+DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path_p, idx_t version_p,
+                                       optional_ptr<const DeltaMultiFileList> previous)
+    : SimpleMultiFileList({ToDeltaPath(path_p)}), version(version_p) {
+	unique_lock<mutex> lck(lock);
 
-    Value setting_res;
-    auto res = context.TryGetCurrentSetting("variant_legacy_encoding", setting_res);
-    if (res) {
-        D_ASSERT(setting_res.type() == LogicalType::BOOLEAN);
-        enable_variant = setting_res.GetValue<bool>();
-    } else {
-        enable_variant = false;
-    }
+	enable_variant = true;
+	Value setting_res;
+	// TODO: remove post merge
+	auto res = context_p.TryGetCurrentSetting("__delta_only_variant_encoding_enabled", setting_res);
+	if (res) {
+		D_ASSERT(setting_res.type() == LogicalType::BOOLEAN);
+		enable_variant = setting_res.GetValue<bool>();
+	}
 
 	if (previous) {
 		old_snapshot = previous->snapshot;
 	}
+	client_ctx = weak_ptr<ClientContext>(context_p.shared_from_this());
 }
 
 string DeltaMultiFileList::GetPath() const {
-	return GetPaths()[0].path;
+	return paths[0].path;
 }
 
 string DeltaMultiFileList::ToDuckDBPath(const string &raw_path) {
@@ -564,55 +578,53 @@ string DeltaMultiFileList::ToDeltaPath(const string &raw_path) {
 }
 
 static void ExtractNotNullConstraints(vector<NestedNotNullConstraint> &constraints,
-                               const vector<DeltaMultiFileColumnDefinition> &columns, idx_t index = DConstants::INVALID_INDEX, const string &parent_path = "") {
+                                      const vector<DeltaMultiFileColumnDefinition> &columns,
+                                      idx_t index = DConstants::INVALID_INDEX, const string &parent_path = "") {
+	idx_t col_id = 0;
+	for (auto &col : columns) {
+		// Traverse struct
+		string field_path = parent_path.empty() ? "\"" + col.name + "\"" : parent_path + ".\"" + col.name + "\"";
+		idx_t index_to_set = index == DConstants::INVALID_INDEX ? col_id++ : index;
 
-    idx_t col_id = 0;
-    for (auto &col : columns) {
-        // Traverse struct
-        string field_path = parent_path.empty() ? "\"" + col.name + "\"" : parent_path + ".\"" + col.name + "\"";
-        idx_t index_to_set = index == DConstants::INVALID_INDEX ? col_id++ : index;
+		if (!col.nullable) {
+			constraints.push_back(NestedNotNullConstraint(LogicalIndex(index_to_set), field_path));
+		}
 
-        if (!col.nullable) {
-            constraints.push_back(NestedNotNullConstraint(LogicalIndex(index_to_set), field_path));
-        }
-
-        if (col.type.id() == LogicalTypeId::STRUCT) {
-            ExtractNotNullConstraints(constraints, col.children, index_to_set, field_path);
-        }
-    }
+		if (col.type.id() == LogicalTypeId::STRUCT) {
+			ExtractNotNullConstraints(constraints, col.children, index_to_set, field_path);
+		}
+	}
 }
 
-static bool ExtractHasNullConstraintsInArrays(const vector<DeltaMultiFileColumnDefinition> &columns, bool in_array = false) {
-    for (auto &col : columns) {
-        if (col.type.id() == LogicalTypeId::ARRAY || col.type.id() == LogicalTypeId::LIST) {
-            if (!col.nullable) {
-                return true;
-            }
-        }
+static bool ExtractHasNullConstraintsInArrays(const vector<DeltaMultiFileColumnDefinition> &columns,
+                                              bool in_array = false) {
+	for (auto &col : columns) {
+		if (col.type.id() == LogicalTypeId::ARRAY || col.type.id() == LogicalTypeId::LIST) {
+			if (!col.nullable) {
+				return true;
+			}
+		}
 
-        // Traverse nested types
-        if (col.type.id() == LogicalTypeId::STRUCT ||
-            col.type.id() == LogicalTypeId::MAP ||
-            col.type.id() == LogicalTypeId::LIST ||
-            col.type.id() == LogicalTypeId::ARRAY) {
+		// Traverse nested types
+		if (col.type.id() == LogicalTypeId::STRUCT || col.type.id() == LogicalTypeId::MAP ||
+		    col.type.id() == LogicalTypeId::LIST || col.type.id() == LogicalTypeId::ARRAY) {
+			if (ExtractHasNullConstraintsInArrays(col.children, true)) {
+				return true;
+			}
+		}
+	}
 
-            if (ExtractHasNullConstraintsInArrays(col.children, true)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+	return false;
 }
 
 void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> &names) {
 	unique_lock<mutex> lck(lock);
 
 	if (have_bound) {
-	    for (const auto &field : global_columns) {
-	        names.push_back(field.name);
-	        return_types.push_back(field.type);
-	    }
+		for (const auto &field : global_columns) {
+			names.push_back(field.name);
+			return_types.push_back(field.type);
+		}
 		return;
 	}
 
@@ -621,7 +633,7 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	vector<DeltaMultiFileColumnDefinition> visited_schema;
 	{
 		auto snapshot_ref = snapshot->GetLockingRef();
-		visited_schema = SchemaVisitor::VisitSnapshotSchema(snapshot_ref.GetPtr(), extern_engine.get(), enable_variant);
+		visited_schema = SchemaVisitor::VisitSnapshotSchema(extern_engine.get(), snapshot_ref.GetPtr(), enable_variant);
 	}
 
 	for (const auto &field : visited_schema) {
@@ -632,11 +644,11 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	// Store the bound names for resolving the complex filter pushdown later
 	have_bound = true;
 
-    ExtractNotNullConstraints(this->not_null_constraints, visited_schema);
+	ExtractNotNullConstraints(this->not_null_constraints, visited_schema);
 
-    has_null_constraints_in_arrays = ExtractHasNullConstraintsInArrays(visited_schema);
+	has_null_constraints_in_arrays = ExtractHasNullConstraintsInArrays(visited_schema);
 
-    this->global_columns = std::move(visited_schema);
+	this->global_columns = std::move(visited_schema);
 }
 
 OpenFileInfo DeltaMultiFileList::GetFileInternal(idx_t i) const {
@@ -685,61 +697,58 @@ idx_t DeltaMultiFileList::GetTotalFileCountInternal() const {
 	return resolved_files.size();
 }
 
-OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) {
+OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) const {
 	// TODO: profile this: we should be able to use atomics here to optimize
 	unique_lock<mutex> lck(lock);
 	return GetFileInternal(i);
 }
 
+// req: this.lock must already be owned
 void DeltaMultiFileList::InitializeSnapshot() const {
+	// D_ASSERT(lock.is_locked())  -- no such check available; could use recursive mutex
+	D_ASSERT(!client_ctx.expired());
+	auto client_ctx_shared = client_ctx.lock();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
 
-	auto interface_builder = CreateBuilder(context, paths[0].path);
+	auto interface_builder = CreateBuilder(*client_ctx_shared, paths[0].path);
 	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
 
 	if (!snapshot) {
-		auto old_snapshot_val = KernelUtils::OptionalNone<ffi::Handle<ffi::SharedSnapshot>>();
-		auto path_val = KernelUtils::OptionalSome<ffi::KernelStringSlice>(path_slice);
+		DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
+		                    "Loading snapshot for '%s': version=%s, log_tail=%s, incremental=%s",
+		                    string(path_slice.ptr, path_slice.len),
+		                    version == DConstants::INVALID_INDEX ? "HEAD" : to_string(version),
+		                    delta_log_path ? "true" : "false", old_snapshot ? "true" : "false");
+
+		ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
 		if (old_snapshot) {
 			auto old_snapshot_ref = old_snapshot->GetLockingRef();
-			auto ptr = old_snapshot_ref.GetPtr();
-			old_snapshot_val = KernelUtils::OptionalSome<ffi::Handle<ffi::SharedSnapshot>>(ptr);
+			auto old_version = ffi::version(old_snapshot_ref.GetPtr());
+			if (version == DConstants::INVALID_INDEX || version >= old_version) {
+				// Going forward (or HEAD): use old snapshot as hint
+				builder = TryUnpackKernelResult(
+				    ffi::get_snapshot_builder_from(old_snapshot_ref.GetPtr(), extern_engine.get()));
+			} else {
+				// Going backward: kernel rejects builder_from for older versions
+				builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
+			}
+		} else {
+			builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
 		}
+		if (version != DConstants::INVALID_INDEX) {
+			ffi::snapshot_builder_set_version(&builder, version);
+		}
+		if (delta_log_path) {
+			TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&builder, delta_log_path->GetFFIPtr()));
+		}
+		snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(ffi::snapshot_builder_build(builder)));
 
-	    if (version == DConstants::INVALID_INDEX) {
-	        // Get latest snapshot
-	        snapshot = make_shared_ptr<SharedKernelSnapshot>(
-	            TryUnpackKernelResult(
-	            	ffi::snapshot(
-	            		path_val,
-            			extern_engine.get(),
-            			old_snapshot_val,
-            			KernelUtils::OptionalNone<ffi::Version>()
-            		)
-            	)
-            );
-	        // Set version
-	        auto snapshot_ref = snapshot->GetLockingRef();
-	        this->version = ffi::version(snapshot_ref.GetPtr());
-	    } else {
-	        // Get specific snapshot
-	    	snapshot = make_shared_ptr<SharedKernelSnapshot>(
-				TryUnpackKernelResult(
-					ffi::snapshot(
-						path_val,
-						extern_engine.get(),
-						old_snapshot_val,
-						KernelUtils::OptionalSome<ffi::Version>(version)
-					)
-				)
-			);
-
-	        // Double check version
-	        auto snapshot_ref = snapshot->GetLockingRef();
-	        if (ffi::version(snapshot_ref.GetPtr()) != version) {
-	            throw InvalidInputException("Snapshot version does not match requested version");
-	        }
-	    }
+		auto snapshot_ref = snapshot->GetLockingRef();
+		if (version == DConstants::INVALID_INDEX) {
+			this->version = ffi::version(snapshot_ref.GetPtr());
+		} else if (ffi::version(snapshot_ref.GetPtr()) != version) {
+			throw InvalidInputException("Snapshot version does not match requested version");
+		}
 	}
 
 	initialized_snapshot = true;
@@ -759,12 +768,12 @@ void DeltaMultiFileList::InitializeScan() const {
 
 	// Get table path
 	auto ptr = ffi::scan_table_root(scan.get(), [](ffi::KernelStringSlice kernel_str) -> ffi::NullableCvoid {
-	    string * test = new string;
-	    *test = KernelUtils::FromDeltaString(kernel_str);
-	    return test;
+		string *test = new string;
+		*test = KernelUtils::FromDeltaString(kernel_str);
+		return test;
 	});
-    root_path = *static_cast<string*>(ptr);
-    delete static_cast<string*>(ptr);
+	root_path = *static_cast<string *>(ptr);
+	delete static_cast<string *>(ptr);
 
 	// Create scan data iterator
 	scan_data_iterator = TryUnpackKernelResult(ffi::scan_metadata_iter_init(extern_engine.get(), scan.get()));
@@ -793,9 +802,10 @@ void DeltaMultiFileList::InitializeScan() const {
 		}
 	}
 
-	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(scan.get(), extern_engine.get(), true, enable_variant);
+	lazy_loaded_schema =
+	    SchemaVisitor::VisitSnapshotGlobalReadSchema(extern_engine.get(), scan.get(), true, enable_variant);
 
-    DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
+	DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 
 	initialized_scan = true;
 }
@@ -831,7 +841,7 @@ unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContex
 		}
 	}
 
-    // TODO clean up this mess with a copy constructor?
+	// TODO clean up this mess with a copy constructor?
 
 	filtered_list->table_filters = std::move(result_filter_set);
 	filtered_list->global_columns = global_columns;
@@ -858,7 +868,7 @@ static DeltaFilterPushdownMode GetDeltaFilterPushdownMode(ClientContext &context
 unique_ptr<MultiFileList> DeltaMultiFileList::ComplexFilterPushdown(ClientContext &context,
                                                                     const MultiFileOptions &options,
                                                                     MultiFilePushdownInfo &info,
-                                                                    vector<unique_ptr<Expression>> &filters) {
+                                                                    vector<unique_ptr<Expression>> &filters) const {
 	auto pushdown_mode = GetDeltaFilterPushdownMode(context, options);
 	if (pushdown_mode == DeltaFilterPushdownMode::NONE || pushdown_mode == DeltaFilterPushdownMode::DYNAMIC_ONLY) {
 		return nullptr;
@@ -1022,7 +1032,7 @@ DeltaMultiFileList::DynamicFilterPushdown(ClientContext &context, const MultiFil
 	return nullptr;
 }
 
-vector<OpenFileInfo> DeltaMultiFileList::GetAllFiles() {
+vector<OpenFileInfo> DeltaMultiFileList::GetAllFiles() const {
 	unique_lock<mutex> lck(lock);
 	idx_t i = resolved_files.size();
 	// TODO: this can probably be improved
@@ -1032,7 +1042,7 @@ vector<OpenFileInfo> DeltaMultiFileList::GetAllFiles() {
 	return resolved_files;
 }
 
-FileExpandResult DeltaMultiFileList::GetExpandResult() {
+FileExpandResult DeltaMultiFileList::GetExpandResult() const {
 	// We avoid exposing the ExpandResult to DuckDB here because we want to materialize the Snapshot as late as
 	// possible: materializing too early (GetExpandResult is called *before* filter pushdown by the Parquet scanner),
 	// will lead into needing to create 2 scans of the snapshot TODO: we need to investigate if this is actually a
@@ -1040,12 +1050,12 @@ FileExpandResult DeltaMultiFileList::GetExpandResult() {
 	return FileExpandResult::MULTIPLE_FILES;
 }
 
-idx_t DeltaMultiFileList::GetTotalFileCount() {
+idx_t DeltaMultiFileList::GetTotalFileCount() const {
 	unique_lock<mutex> lck(lock);
 	return GetTotalFileCountInternal();
 }
 
-unique_ptr<NodeStatistics> DeltaMultiFileList::GetCardinality(ClientContext &context) {
+unique_ptr<NodeStatistics> DeltaMultiFileList::GetCardinality(ClientContext &context) const {
 	// This also ensures all files are expanded
 	auto total_file_count = DeltaMultiFileList::GetTotalFileCount();
 
@@ -1099,15 +1109,15 @@ vector<DeltaMultiFileColumnDefinition> &DeltaMultiFileList::GetLazyLoadedGlobalC
 }
 
 vector<NestedNotNullConstraint> DeltaMultiFileList::GetNestedNotNullConstraints() const {
-    unique_lock<mutex> lck(lock);
-    EnsureScanInitialized();
-    return not_null_constraints;
+	unique_lock<mutex> lck(lock);
+	EnsureScanInitialized();
+	return not_null_constraints;
 }
 
 bool DeltaMultiFileList::HasNullConstraintsInArrays() const {
-    unique_lock<mutex> lck(lock);
-    EnsureScanInitialized();
-    return has_null_constraints_in_arrays;
+	unique_lock<mutex> lck(lock);
+	EnsureScanInitialized();
+	return has_null_constraints_in_arrays;
 };
 
 unique_ptr<MultiFileReader> DeltaMultiFileReader::CreateInstance(const TableFunction &table_function) {

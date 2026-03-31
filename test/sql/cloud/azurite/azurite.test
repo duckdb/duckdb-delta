@@ -1,6 +1,6 @@
 # name: test/sql/cloud/azurite/azurite.test
 # description: test with azurite test server
-# group: [azure]
+# group: [azurite]
 
 # Require statement will ensure this test is run with this extension loaded
 require azure

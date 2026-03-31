@@ -1,6 +1,6 @@
 # name: test/sql/generated/partitioned_with_structs.test
 # description: Test structs on a table with partitions
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

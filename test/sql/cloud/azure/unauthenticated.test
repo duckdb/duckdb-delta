@@ -1,4 +1,4 @@
-# name: test/sql/cloud/unauthenticated.test
+# name: test/sql/cloud/azure/unauthenticated.test
 # description: test unauthenticated queries
 # group: [azure]
 

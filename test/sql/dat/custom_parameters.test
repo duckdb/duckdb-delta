@@ -1,6 +1,6 @@
 # name: test/sql/dat/custom_parameters.test
-# description: DAT test suite: use the basic append test to test the delta_file_number param 
-# group: [delta]
+# description: DAT test suite: use the basic append test to test the delta_file_number param
+# group: [dat]
 
 require parquet
 

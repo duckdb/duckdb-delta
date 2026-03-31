@@ -1,6 +1,6 @@
-# name: test/sql/golden_tests/generated_slow.test
+# name: test/sql/golden_tests/generated.test_slow
 # description: generated generated golden table tests
-# group: [delta_kernel_rs]
+# group: [golden_tests]
 
 require parquet
 

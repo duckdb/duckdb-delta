@@ -1,6 +1,6 @@
 # name: test/sql/dat/basic_append.test
-# description: DAT test suite: basic_append 
-# group: [delta]
+# description: DAT test suite: basic_append
+# group: [dat]
 
 require parquet
 

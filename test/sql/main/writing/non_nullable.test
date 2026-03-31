@@ -1,5 +1,6 @@
-# name: test/sql/main/writing/basic_append.test
+# name: test/sql/main/writing/non_nullable.test
 # description: test appending to some generated tables
+# group: [writing]
 
 require parquet
 

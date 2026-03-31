@@ -1,0 +1,62 @@
+# name: test/sql/generated/delta_domain_metadata.test
+# description: Test delta_domain_metadata function
+# group: [generated]
+
+require parquet
+
+require delta
+
+require-env GENERATED_DATA_AVAILABLE
+
+# Test schema
+query IIIIII
+DESCRIBE FROM delta_domain_metadata('./data/generated/simple_partitioned/delta_lake');
+----
+domain	VARCHAR	YES	NULL	NULL	NULL
+configuration	VARCHAR	YES	NULL	NULL	NULL
+
+# Test on a table without domain metadata (should return empty)
+query II
+SELECT * FROM delta_domain_metadata('./data/generated/simple_partitioned/delta_lake');
+----
+
+# Test with version parameter
+query II
+SELECT * FROM delta_domain_metadata('./data/generated/simple_partitioned/delta_lake', version=0);
+----
+
+# Test that domain metadata appears as tags on attached delta tables (no domain metadata)
+statement ok
+ATTACH './data/generated/simple_partitioned/delta_lake' AS no_domain_meta (TYPE delta);
+
+query I
+SELECT tags FROM duckdb_tables() WHERE database_name='no_domain_meta';
+----
+{}
+
+statement ok
+DETACH no_domain_meta;
+
+# Test domain_metadata function on table with domain metadata
+query II
+SELECT * FROM delta_domain_metadata('./data/generated/domain_metadata_table/delta_lake') ORDER BY domain;
+----
+another_domain	config_string
+test_domain	{"key": "test_value"}
+
+# Test that domain metadata appears as tags on attached delta tables (with domain metadata)
+statement ok
+ATTACH './data/generated/domain_metadata_table/delta_lake' AS with_domain_meta (TYPE delta);
+
+query I
+SELECT tags['test_domain'] FROM duckdb_tables() WHERE database_name='with_domain_meta';
+----
+{"key": "test_value"}
+
+query I
+SELECT tags['another_domain'] FROM duckdb_tables() WHERE database_name='with_domain_meta';
+----
+config_string
+
+statement ok
+DETACH with_domain_meta;

@@ -17,10 +17,12 @@ namespace duckdb {
 
 class DeltaInsert : public PhysicalOperator {
 public:
-    //! INSERT INTO
-    DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, TableCatalogEntry &table, physical_index_vector_t<idx_t> column_index_map);
-    //! CREATE TABLE AS
-    DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, SchemaCatalogEntry &schema, unique_ptr<BoundCreateTableInfo> info);
+	//! INSERT INTO
+	DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, TableCatalogEntry &table,
+	            physical_index_vector_t<idx_t> column_index_map);
+	//! CREATE TABLE AS
+	DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, SchemaCatalogEntry &schema,
+	            unique_ptr<BoundCreateTableInfo> info);
 
 	//! The table to insert into
 	optional_ptr<TableCatalogEntry> table;
@@ -30,12 +32,13 @@ public:
 	unique_ptr<BoundCreateTableInfo> info;
 	//! column_index_map
 	physical_index_vector_t<idx_t> column_index_map;
-    //! The physical copy used internally by this insert
-    unique_ptr<PhysicalOperator> physical_copy_to_file;
+	//! The physical copy used internally by this insert
+	unique_ptr<PhysicalOperator> physical_copy_to_file;
 
 public:
 	// // Source interface
-	SourceResultType GetData(ExecutionContext &context, DataChunk &chunk, OperatorSourceInput &input) const override;
+	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
+	                                 OperatorSourceInput &input) const override;
 
 	bool IsSource() const override {
 		return true;
@@ -43,12 +46,12 @@ public:
 
 public:
 	// Sink interface
-    SinkResultType Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const override;
-    // SinkCombineResultType Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const override;
-    SinkFinalizeType Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
-                              OperatorSinkFinalizeInput &input) const override;
-    // unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const override;
-    unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
+	SinkResultType Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const override;
+	// SinkCombineResultType Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const override;
+	SinkFinalizeType Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
+	                          OperatorSinkFinalizeInput &input) const override;
+	// unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const override;
+	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
 
 	bool IsSink() const override {
 		return true;
@@ -63,20 +66,46 @@ public:
 };
 
 struct DeltaPartition {
-    idx_t partition_column_idx;
-    string partition_value;
+	idx_t partition_column_idx;
+	string partition_value;
 };
 
-struct DeltaDataFile {
-    DeltaDataFile() = default;
-    // DeltaDataFile(const DeltaDataFile &other);
-    // DeltaDataFile &operator=(const DeltaDataFile &);
+struct DeltaColumnStats {
+	explicit DeltaColumnStats() = default;
 
-    string file_name;
-    idx_t row_count;
-    idx_t file_size_bytes;
-    idx_t footer_size;
-    vector<DeltaPartition> partition_values;
+	string min;
+	string max;
+	idx_t null_count = 0;
+	idx_t num_values = 0;
+	idx_t column_size_bytes = 0;
+	bool contains_nan = false;
+	bool has_null_count = false;
+	bool has_num_values = false;
+	bool has_min = false;
+	bool has_max = false;
+	bool any_valid = true;
+	bool has_contains_nan = false;
+
+	// Injected type to materialize stats with
+	LogicalType root_type;
+};
+
+struct DeltaMultiFileColumnDefinition;
+
+struct DeltaDataFile {
+	DeltaDataFile() = default;
+	// DeltaDataFile(const DeltaDataFile &other);
+	// DeltaDataFile &operator=(const DeltaDataFile &);
+
+	string file_name;
+	idx_t row_count;
+	idx_t file_size_bytes;
+	idx_t footer_size;
+	vector<DeltaPartition> partition_values;
+	timestamp_t last_modified_time;
+
+	// Stats per column, where column name is vector of path
+	vector<pair<vector<string>, DeltaColumnStats>> column_stats;
 };
 
 } // namespace duckdb

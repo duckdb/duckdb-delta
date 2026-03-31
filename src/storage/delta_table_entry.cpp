@@ -30,84 +30,85 @@ void DeltaTableEntry::BindUpdateConstraints(Binder &binder, LogicalGet &, Logica
 	throw NotImplementedException("BindUpdateConstraints for delta table");
 }
 
-TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, unique_ptr<FunctionData> &bind_data, optional_ptr<const EntryLookupInfo > lookup_info) {
-    auto &db = DatabaseInstance::GetDatabase(context);
-    auto &system_catalog = Catalog::GetSystemCatalog(db);
+TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, unique_ptr<FunctionData> &bind_data,
+                                                       optional_ptr<const EntryLookupInfo> lookup_info) {
+	auto &db = DatabaseInstance::GetDatabase(context);
+	auto &system_catalog = Catalog::GetSystemCatalog(db);
 
-    auto data = CatalogTransaction::GetSystemTransaction(db);
-    auto &schema = system_catalog.GetSchema(data, DEFAULT_SCHEMA);
-    auto catalog_entry = schema.GetEntry(data, CatalogType::TABLE_FUNCTION_ENTRY, "delta_scan");
-    if (!catalog_entry) {
-    	throw InvalidInputException("Function with name \"%s\" not found in ExtensionLoader::GetTableFunction", name);
-    }
-    auto &delta_function_set = catalog_entry->Cast<TableFunctionCatalogEntry>();
+	auto data = CatalogTransaction::GetSystemTransaction(db);
+	auto &schema = system_catalog.GetSchema(data, DEFAULT_SCHEMA);
+	auto catalog_entry = schema.GetEntry(data, CatalogType::TABLE_FUNCTION_ENTRY, "delta_scan");
+	if (!catalog_entry) {
+		throw InvalidInputException("Function with name \"%s\" not found in ExtensionLoader::GetTableFunction", name);
+	}
+	auto &delta_function_set = catalog_entry->Cast<TableFunctionCatalogEntry>();
 
-    auto delta_scan_function = delta_function_set.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
-    auto &delta_catalog = catalog.Cast<DeltaCatalog>();
+	auto delta_scan_function = delta_function_set.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
+	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 
-    auto &transaction = DeltaTransaction::Get(context, delta_catalog);
-    if (transaction.HasOutstandingAppends()) {
-        throw CatalogException("Scanning a table with uncommitted writes is not supported");
-    }
+	auto &transaction = DeltaTransaction::Get(context, delta_catalog);
+	if (transaction.HasOutstandingAppends()) {
+		throw CatalogException("Scanning a table with uncommitted writes is not supported");
+	}
 
-    // Copy over the internal kernel snapshot
-    auto function_info = make_shared_ptr<DeltaFunctionInfo>();
+	// Copy over the internal kernel snapshot
+	auto function_info = make_shared_ptr<DeltaFunctionInfo>();
 
-    idx_t version = DConstants::INVALID_INDEX;
-    if (lookup_info && lookup_info->GetAtClause()) {
-        version = ParseDeltaVersionFromAtClause(*lookup_info->GetAtClause());
-    }
+	idx_t version = DConstants::INVALID_INDEX;
+	if (lookup_info && lookup_info->GetAtClause()) {
+		version = ParseDeltaVersionFromAtClause(*lookup_info->GetAtClause());
+	}
 
-    if (version != DConstants::INVALID_INDEX && snapshot->GetVersion() != version) {
-        throw InternalException("Delta table snapshot version does not match at clause version.");
-    }
+	if (version != DConstants::INVALID_INDEX && snapshot->GetVersion() != version) {
+		throw InternalException("Delta table snapshot version does not match at clause version.");
+	}
 
-    function_info->snapshot = this->snapshot;
-    function_info->table_name = delta_catalog.GetName();
-    delta_scan_function.function_info = std::move(function_info);
+	function_info->snapshot = this->snapshot;
+	function_info->table_name = delta_catalog.GetName();
+	delta_scan_function.function_info = std::move(function_info);
 
-    vector<Value> inputs = {delta_catalog.GetDBPath()};
-    named_parameter_map_t param_map;
-    vector<LogicalType> return_types;
-    vector<string> names;
-    TableFunctionRef empty_ref;
+	vector<Value> inputs = {delta_catalog.GetDBPath()};
+	named_parameter_map_t param_map;
+	vector<LogicalType> return_types;
+	vector<string> names;
+	TableFunctionRef empty_ref;
 
-    // Propagate settings
-    param_map.insert({"pushdown_partition_info", delta_catalog.pushdown_partition_info});
-    param_map.insert({"pushdown_filters", DeltaEnumUtils::ToString(delta_catalog.filter_pushdown_mode)});
+	// Propagate settings
+	param_map.insert({"pushdown_partition_info", delta_catalog.pushdown_partition_info});
+	param_map.insert({"pushdown_filters", DeltaEnumUtils::ToString(delta_catalog.filter_pushdown_mode)});
 
-    TableFunctionBindInput bind_input(inputs, param_map, return_types, names, nullptr, nullptr, delta_scan_function,
-                                      empty_ref);
+	TableFunctionBindInput bind_input(inputs, param_map, return_types, names, nullptr, nullptr, delta_scan_function,
+	                                  empty_ref);
 
-    auto result = delta_scan_function.bind(context, bind_input, return_types, names);
-    bind_data = std::move(result);
+	auto result = delta_scan_function.bind(context, bind_input, return_types, names);
+	bind_data = std::move(result);
 
-    return delta_scan_function;
+	return delta_scan_function;
 }
 
 case_insensitive_map_t<vector<NestedNotNullConstraint>> DeltaTableEntry::GetNotNullConstraints() const {
-    case_insensitive_map_t<vector<NestedNotNullConstraint>> result;
-    for (auto &constraint : snapshot->GetNestedNotNullConstraints()) {
-        auto &col = GetColumn(constraint.index);
-        auto &item= result[col.Name()];
-        item.push_back(constraint);
-    }
-    return result;
+	case_insensitive_map_t<vector<NestedNotNullConstraint>> result;
+	for (auto &constraint : snapshot->GetNestedNotNullConstraints()) {
+		auto &col = GetColumn(constraint.index);
+		auto &item = result[col.Name()];
+		item.push_back(constraint);
+	}
+	return result;
 }
 
 void DeltaTableEntry::ThrowOnUnsupportedFieldForInserting() const {
-    if (snapshot && snapshot->HasNullConstraintsInArrays()) {
-        throw NotImplementedException("Inserting into a table with null constraints in arrays is not supported");
-    }
+	if (snapshot && snapshot->HasNullConstraintsInArrays()) {
+		throw NotImplementedException("Inserting into a table with null constraints in arrays is not supported");
+	}
 }
 
-
-TableFunction DeltaTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data, const EntryLookupInfo &lookup_info) {
-    return GetScanFunctionInternal(context, bind_data, lookup_info);
+TableFunction DeltaTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
+                                               const EntryLookupInfo &lookup_info) {
+	return GetScanFunctionInternal(context, bind_data, lookup_info);
 }
 
 TableFunction DeltaTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
-    return GetScanFunctionInternal(context, bind_data, nullptr);
+	return GetScanFunctionInternal(context, bind_data, nullptr);
 }
 
 TableStorageInfo DeltaTableEntry::GetStorageInfo(ClientContext &context) {

@@ -1,0 +1,55 @@
+# name: test/sql/issues/null_stats_conversion__issue_297.test
+# description: inserting rows with all-NULL DOUBLE columns must not crash during commit
+# group: [issues]
+
+#              (parquet omits min/max for all-NULL columns; has_min/has_max must be checked)
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows # paths to JSON fail, skip windows
+
+statement ok
+from copy_dir('data/inlined/simple_table/delta_lake', '__TEST_DIR__/null_stats');
+
+statement ok
+ATTACH '__TEST_DIR__/null_stats' AS null_stats (TYPE delta, READ_ONLY false);
+
+# Insert non-null (=42), then NULL to get both real min/max and null stats in 2 transactions.
+statement ok
+INSERT INTO null_stats VALUES (42);
+
+statement ok
+INSERT INTO null_stats VALUES (NULL);
+
+# verify inserts
+query I rowsort
+SELECT i FROM null_stats WHERE i IS NULL OR i = 42 ORDER BY i;
+----
+42
+NULL
+
+# v1 (non-NULL insert): min/max present, nullCount=0
+query III
+SELECT
+    json_extract_string(add.stats, '$.minValues.i'),
+    json_extract_string(add.stats, '$.maxValues.i'),
+    json_extract_string(add.stats, '$.nullCount.i')
+FROM read_json('__TEST_DIR__/null_stats/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL
+----
+42	42	0
+
+# v2 (all-NULL insert): min/max absent, nullCount=1
+query III
+SELECT
+    json_extract_string(add.stats, '$.minValues.i'),
+    json_extract_string(add.stats, '$.maxValues.i'),
+    json_extract_string(add.stats, '$.nullCount.i')
+FROM read_json('__TEST_DIR__/null_stats/_delta_log/00000000000000000002.json')
+WHERE add IS NOT NULL
+----
+NULL	NULL	1

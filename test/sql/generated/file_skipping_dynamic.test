@@ -1,6 +1,6 @@
 # name: test/sql/generated/file_skipping_dynamic.test
 # description: Test dynamic filter pushdown
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

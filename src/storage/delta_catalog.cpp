@@ -11,18 +11,20 @@
 namespace duckdb {
 
 idx_t ParseDeltaVersionFromAtClause(const BoundAtClause &at_clause) {
-    if (StringUtil::Lower(at_clause.Unit()) != "version") {
-        throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version'");
-    }
-    Value version_value = at_clause.GetValue();
-    if (!version_value.DefaultTryCastAs(LogicalType::UBIGINT, false)) {
-        throw InvalidInputException("Failed to parse version number '%s' into a valid version", at_clause.GetValue().ToString().c_str());
-    }
-    return version_value.GetValue<idx_t>();
+	if (StringUtil::Lower(at_clause.Unit()) != "version") {
+		throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version'");
+	}
+	Value version_value = at_clause.GetValue();
+	if (!version_value.DefaultTryCastAs(LogicalType::UBIGINT, false)) {
+		throw InvalidInputException("Failed to parse version number '%s' into a valid version",
+		                            at_clause.GetValue().ToString().c_str());
+	}
+	return version_value.GetValue<idx_t>();
 }
 
 DeltaCatalog::DeltaCatalog(AttachedDatabase &db_p, const string &path, AccessMode access_mode)
-    : Catalog(db_p), path(path), access_mode(access_mode), use_cache(false), use_specific_version(DConstants::INVALID_INDEX), pushdown_partition_info(true),
+    : Catalog(db_p), path(path), access_mode(access_mode), use_cache(false),
+      use_specific_version(DConstants::INVALID_INDEX), pushdown_partition_info(true),
       filter_pushdown_mode(DEFAULT_PUSHDOWN_MODE) {
 }
 
@@ -85,7 +87,7 @@ optional_idx DeltaCatalog::GetCatalogVersion(ClientContext &context) {
 		return transaction_table_entry->snapshot->GetVersion();
 	}
 
-    return use_specific_version == DConstants::INVALID_INDEX ? optional_idx::Invalid() : use_specific_version;
+	return use_specific_version == DConstants::INVALID_INDEX ? optional_idx::Invalid() : use_specific_version;
 }
 
 DatabaseSize DeltaCatalog::GetDatabaseSize(ClientContext &context) {

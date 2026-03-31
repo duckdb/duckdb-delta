@@ -1,6 +1,6 @@
 # name: test/sql/generated/blob.test
 # description: Test the BLOB type
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

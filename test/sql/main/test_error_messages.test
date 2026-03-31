@@ -1,6 +1,6 @@
 # name: test/sql/main/test_error_messages.test
 # description: Test that clean error messages are generated
-# group: [delta_generated]
+# group: [main]
 
 require parquet
 

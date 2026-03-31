@@ -1,6 +1,6 @@
 # name: test/sql/generated/big_deletion_vectors.test_slow
 # description: Test medium sized data with deletion vectors
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

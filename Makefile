@@ -22,7 +22,7 @@ test_debug: export DAT_PATH=./build/debug/rust/src/delta_kernel/acceptance/tests
 # Core extensions that we need for crucial testing
 DEFAULT_TEST_EXTENSION_DEPS=tpcds;tpch;json;
 # For cloud testing we also need these extensions
-FULL_TEST_EXTENSION_DEPS=httpfs
+FULL_TEST_EXTENSION_DEPS=azure;httpfs;aws
 
 # Aws and Azure have vcpkg dependencies and therefore need vcpkg merging
 ifeq (${BUILD_EXTENSION_TEST_DEPS}, full)
@@ -46,8 +46,18 @@ include benchmark/benchmark.Makefile
 #	. ./venv/bin/activate
 #   export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/11.0.27/libexec/openjdk.jdk/Contents/Home
 generate-data:
-	python3 -m pip install delta-spark duckdb pandas deltalake pyspark typing-extensions pyarrow
+	# NOTE: @benfleis - for now pin versions that work, since unversioned/HEAD caused a big JVM stack trace that I couldn't trivially track down;
+	python3 -m pip install delta-spark==4.0.0 deltalake==1.2.1 duckdb==1.4.4 pandas==2.3.3 pyarrow==22.0.0 pyspark==4.0.1 typing-extensions==4.15.0
 	python3 scripts/data_generator/generate_test_data.py
+	# avoid footguns -- make outputs read only
+	find data/generated -mindepth 1 -print0 | xargs -0 -n 1000 chmod a-w
 
 unpack-golden-tables-release:
 	./scripts/unwrap_golden_tables.sh
+
+# shortcuts for FFI targets
+kernel_debug:
+	cd build/debug && cmake --build . --config Debug --target extension/delta/CMakeFiles/delta_kernel
+
+kernel_release:
+	cd build/release && cmake --build . --config Release --target extension/delta/CMakeFiles/delta_kernel

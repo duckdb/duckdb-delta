@@ -1,6 +1,6 @@
 # name: test/sql/generated/simple_partitioned.test
 # description: test simple partitioned dataset
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

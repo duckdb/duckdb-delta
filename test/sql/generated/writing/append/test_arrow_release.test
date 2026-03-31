@@ -1,6 +1,6 @@
 # name: test/sql/generated/writing/append/test_arrow_release.test
 # description: Test to prove that arrow data is released properly by kernel
-# group: [generated]
+# group: [append]
 
 require parquet
 

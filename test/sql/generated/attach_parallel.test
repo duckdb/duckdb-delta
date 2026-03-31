@@ -1,6 +1,6 @@
 # name: test/sql/generated/attach_parallel.test
 # description: Test attaching a delta table and reading from it in parallel
-# group: [dat]
+# group: [generated]
 
 require parquet
 

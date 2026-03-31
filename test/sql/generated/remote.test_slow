@@ -1,6 +1,6 @@
 # name: test/sql/generated/remote.test_slow
 # description: test delta scan on remote data using secret
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

@@ -1,4 +1,4 @@
-# name: test/sql/cloud/basic.test
+# name: test/sql/cloud/azure/cli_auth.test
 # description: confirm queried data is correct
 # group: [azure]
 

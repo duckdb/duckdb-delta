@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+# NOTE: usage -- env_minio <cmd> [args], just like `env`, also accepts env's args
+
+export S3_TEST_SERVER_AVAILABLE=1
+export DUCKDB_MINIO_TEST_SERVER_AVAILABLE=1
+export AWS_ACCESS_KEY_ID=minio_duckdb_user
+export AWS_SECRET_ACCESS_KEY=minio_duckdb_user_password
+export AWS_DEFAULT_REGION=eu-west-1
+export AWS_ENDPOINT=http://duckdb-minio.com:9000
+
+exec env "$@"

@@ -6,6 +6,11 @@ concurrency:
 defaults:
   run:
     shell: bash
+env:
+  BUILD_EXTENSION_TEST_DEPS: full
+  GEN: Ninja
+  VCPKG_COMMIT_ID: 84bab45d415d22042bd0b9081aea57f362da3f35
+  VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
 
 jobs:
   azure-tests-linux:
@@ -13,12 +18,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VCPKG_TARGET_TRIPLET: x64-linux
-      VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-      GEN: Ninja
       DUCKDB_PLATFORM: linux_amd64
-      BUILD_EXTENSION_TEST_DEPS: full
+      ENV_AZURE: ${{ github.workspace }}/build/release/_deps/azure_extension_fc-src/scripts/env_azure
 
     steps:
+      - name: Setup credentials
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          AZURE_TENANT_ID: op://testing-rw/azure/tenant_id
+          AZURE_CLIENT_ID: op://testing-rw/azure/client_id
+          AZURE_CLIENT_SECRET: op://testing-rw/azure/client_secret
+
       - name: Install required ubuntu packages
         run: |
           sudo apt-get update -y -qq
@@ -32,15 +45,14 @@ jobs:
           fetch-depth: 0
           submodules: 'true'
 
-      - name: Setup Ccache
-        uses: hendrikmuhs/ccache-action@v1.2.11 # Note: pinned due to GLIBC incompatibility in later releases
+      - uses: hendrikmuhs/ccache-action@main
         with:
           key: ${{ github.job }}-${{ matrix.duckdb_arch }}
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
         with:
-          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
 
       - name: Configure OpenSSL for Rust
         run: |
@@ -52,35 +64,26 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build extension
-        env:
-          GEN: ninja
         run: |
           make release
 
       - name: Test with Service Principal (SPN) in env vars
-        env:
-          AZURE_CLIENT_ID: ${{secrets.AZURE_CLIENT_ID}}
-          AZURE_CLIENT_SECRET: ${{secrets.AZURE_CLIENT_SECRET}}
-          AZURE_TENANT_ID: ${{secrets.AZURE_TENANT_ID}}
-          AZURE_STORAGE_ACCOUNT: ${{secrets.AZURE_STORAGE_ACCOUNT}}
         run: |
-          python3 duckdb/scripts/run_tests_one_by_one.py ./build/release/test/unittest `pwd`/test/sql/cloud/*
-
-      - name: Test with Access Token in env vars
-        env:
-          AZURE_STORAGE_ACCOUNT: ${{secrets.AZURE_STORAGE_ACCOUNT}}
-        run: |
-          az login --service-principal -u ${{secrets.AZURE_CLIENT_ID}} -p ${{secrets.AZURE_CLIENT_SECRET}} --tenant ${{secrets.AZURE_TENANT_ID}}
-          export AZURE_ACCESS_TOKEN=`az account get-access-token --resource https://storage.azure.com --query accessToken --output tsv`        
-          python3 duckdb/scripts/run_tests_one_by_one.py ./build/release/test/unittest `pwd`/test/sql/cloud/*          
+          ${ENV_AZURE} ./build/release/test/unittest `pwd`/test/sql/cloud/*
 
       - name: Test with SPN logged in in azure-cli
         env:
-          AZURE_STORAGE_ACCOUNT: ${{secrets.AZURE_STORAGE_ACCOUNT}}
           DUCKDB_AZ_CLI_LOGGED_IN: 1
         run: |
-          az login --service-principal -u ${{secrets.AZURE_CLIENT_ID}} -p ${{secrets.AZURE_CLIENT_SECRET}} --tenant ${{secrets.AZURE_TENANT_ID}}
-          python3 duckdb/scripts/run_tests_one_by_one.py ./build/release/test/unittest `pwd`/test/sql/cloud/*
+          # note: first CLI login, then allow env_azure to setup several key (non secret) vars, then clear SECRET after env script
+          # to prevent accidental use of env secrets.
+          az login --service-principal --user="${AZURE_CLIENT_ID}" --password="${AZURE_CLIENT_SECRET}" --tenant="${AZURE_TENANT_ID}"
+          ${ENV_AZURE} env -u AZURE_CLIENT_SECRET ./build/release/test/unittest "test/sql/cloud/azure_writes.test"
+
+      - name: Test with Access Token in env vars
+        run: |
+          export AZURE_ACCESS_TOKEN=`az account get-access-token --resource https://storage.azure.com --query accessToken --output tsv`        
+          ${ENV_AZURE} env -u AZURE_CLIENT_SECRET ./build/release/test/unittest `pwd`/test/sql/cloud/*          
 
       - name: Log out azure-cli
         if: always()

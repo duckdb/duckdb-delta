@@ -1,6 +1,6 @@
 # name: test/sql/generated/partitioned_large.test
 # description: test partitioning aware operators
-# group: [delta_generated]
+# group: [generated]
 
 require parquet
 

@@ -1,5 +1,6 @@
 #include "storage/delta_schema_entry.hpp"
 
+#include "delta_utils.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "storage/delta_catalog.hpp"
 
@@ -7,12 +8,14 @@
 
 #include "storage/delta_table_entry.hpp"
 #include "storage/delta_transaction.hpp"
-#include "duckdb/parser/parsed_data/create_index_info.hpp"
-#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
-#include "duckdb/parser/parsed_data/drop_info.hpp"
-#include "duckdb/parser/constraints/list.hpp"
+
 #include "duckdb/common/unordered_set.hpp"
+#include "duckdb/parser/constraints/list.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 
 namespace duckdb {
@@ -102,25 +105,43 @@ static bool CatalogTypeIsSupported(CatalogType type) {
 	}
 }
 
-unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version, optional_ptr<const DeltaMultiFileList> old_snapshot) {
+unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version,
+                                                               optional_ptr<const DeltaMultiFileList> old_snapshot) {
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version, old_snapshot);
+
+	// Set log_tail for catalog-managed commits (CCV2) if available
+	if (!delta_catalog.catalog_log_tail.IsNull()) {
+		snapshot->delta_log_path = make_uniq<DeltaLogPathArray>(delta_catalog.catalog_log_tail);
+	}
 
 	// Get the names and types from the delta snapshot
 	vector<LogicalType> return_types;
 	vector<string> names;
 	snapshot->Bind(return_types, names);
 
-    // TODO: forward nullability constraints
+	// TODO: forward nullability constraints
 
 	CreateTableInfo table_info;
 	for (idx_t i = 0; i < return_types.size(); i++) {
 		table_info.columns.AddColumn(ColumnDefinition(names[i], return_types[i]));
 	}
-	table_info.table = !delta_catalog.internal_table_name.empty() ? delta_catalog.internal_table_name : catalog.GetName();
+	table_info.table =
+	    !delta_catalog.internal_table_name.empty() ? delta_catalog.internal_table_name : catalog.GetName();
 
-    // Copy over constraints to table info TODO: these are incompatible currently
-    // table_info.constraints = snapshot->not_null_constraints;}
+	// Copy over constraints to table info TODO: these are incompatible currently
+	// table_info.constraints = snapshot->not_null_constraints;}
+
+	// Populate tags from domain metadata
+	{
+		auto snapshot_ref = snapshot->snapshot->GetLockingRef();
+		ffi::visit_domain_metadata(
+		    snapshot_ref.GetPtr(), snapshot->extern_engine.get(), &table_info.tags,
+		    [](ffi::NullableCvoid engine_context, ffi::KernelStringSlice domain, ffi::KernelStringSlice configuration) {
+			    auto &tags = *static_cast<InsertionOrderPreservingMap<string> *>(const_cast<void *>(engine_context));
+			    tags.insert({KernelUtils::FromDeltaString(domain), KernelUtils::FromDeltaString(configuration)});
+		    });
+	}
 
 	auto table_entry = make_uniq<DeltaTableEntry>(delta_catalog, *this, table_info);
 	table_entry->snapshot = std::move(snapshot);
@@ -157,18 +178,18 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 
 	auto type = lookup_info.GetCatalogType();
 	auto &name = lookup_info.GetEntryName();
-    auto &delta_catalog = catalog.Cast<DeltaCatalog>();
+	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 
 	if (type == CatalogType::TABLE_ENTRY && (name == catalog.GetName() || name == delta_catalog.internal_table_name)) {
 		auto &delta_transaction = GetDeltaTransaction(transaction);
 
-	    idx_t version = delta_catalog.use_specific_version;
+		idx_t version = delta_catalog.use_specific_version;
 
-	    // If there's an AT clause we are doing timetravel
-	    auto at_clause = lookup_info.GetAtClause();
-	    if (at_clause) {
-	        version = ParseDeltaVersionFromAtClause(*at_clause);
-	    }
+		// If there's an AT clause we are doing timetravel
+		auto at_clause = lookup_info.GetAtClause();
+		if (at_clause) {
+			version = ParseDeltaVersionFromAtClause(*at_clause);
+		}
 
 		auto transaction_table_entry = delta_transaction.GetTableEntry(version);
 		if (transaction_table_entry) {
@@ -178,10 +199,10 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		if (delta_catalog.UseCachedSnapshot()) {
 			unique_lock<mutex> l(lock);
 
-		    // If the version being requested is different from the one we have cached, we
-		    if (delta_catalog.use_specific_version != version) {
-		        return delta_transaction.InitializeTableEntry(context, *this, version, nullptr);
-		    }
+			// If the version being requested is different from the one we have cached, we
+			if (delta_catalog.use_specific_version != version) {
+				return delta_transaction.InitializeTableEntry(context, *this, version, nullptr);
+			}
 
 			if (!cached_table) {
 				cached_table = CreateTableEntry(context, version, nullptr);
@@ -190,13 +211,12 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		} else {
 			unique_lock<mutex> l(lock);
 
-			// Important Gotcha: if UseCachedSnapshot is false, we still store and return the cached snapshot for the first time
 			if (!cached_table) {
 				cached_table = CreateTableEntry(context, version, nullptr);
-				return *cached_table;
 			}
 
-			// The second time though we use the cached snapshot to initialize the new one, which will be significantly faster
+			// Always go through InitializeTableEntry so the transaction's table_entry is set,
+			// using the cached snapshot as base for fast re-initialization.
 			return delta_transaction.InitializeTableEntry(context, *this, version, *cached_table->snapshot);
 		}
 	}

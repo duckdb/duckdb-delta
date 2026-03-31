@@ -20,10 +20,13 @@ set(EXTENSION_SOURCES
     src/functions/delta_scan/delta_scan.cpp
     src/functions/delta_scan/delta_multi_file_list.cpp
     src/functions/delta_scan/delta_multi_file_reader.cpp
+    src/functions/delta_domain_metadata.cpp
     src/functions/delta_metadata_scan.cpp
     src/functions/metadata_functions.cpp
     src/functions/expression_functions.cpp
     src/functions/util_functions.cpp
+    src/functions/delta_transaction_utils/idempotency_helpers.cpp
+    src/path_utils.cpp
     src/storage/delta_insert.cpp
     src/storage/delta_catalog.cpp
     src/storage/delta_schema_entry.cpp
@@ -71,25 +74,16 @@ set(RUST_PLATFORM_TARGET "")
 if("${OS_NAME}" STREQUAL "linux")
   if("${OS_ARCH}" STREQUAL "arm64")
     set(RUST_PLATFORM_TARGET "aarch64-unknown-linux-gnu")
-  elseif("${CMAKE_CXX_COMPILER}" MATCHES "aarch64")
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        CFLAGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu)
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc)
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        OPENSSL_LIB_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib
-    )
-    set(RUST_ENV_VARS
-        ${RUST_ENV_VARS}
-        OPENSSL_INCLUDE_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include
-    )
-    set(RUST_PLATFORM_TARGET "aarch64-unknown-linux-gnu")
   else()
     set(RUST_PLATFORM_TARGET "x86_64-unknown-linux-gnu")
   endif()
+
+  # Point Rust openssl-sys at vcpkg OpenSSL and force static linking
+  set(RUST_ENV_VARS
+      ${RUST_ENV_VARS}
+      OPENSSL_STATIC=1
+      OPENSSL_LIB_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib
+      OPENSSL_INCLUDE_DIR=${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include)
 elseif("${OS_NAME}" STREQUAL "osx")
   if("${OSX_BUILD_ARCH}" STREQUAL "arm64")
     set(RUST_PLATFORM_TARGET "aarch64-apple-darwin")
@@ -140,17 +134,17 @@ set(DELTA_KERNEL_FFI_HEADER_CXX
     "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/target/ffi-headers/delta_kernel_ffi.hpp"
 )
 
+set(DELTA_KERNEL_FFI_HEADER_PATCHED
+    "${CMAKE_BINARY_DIR}/codegen/include/generated_delta_kernel_ffi.hpp"
+)
+
 # Cargo optimization/debug symbol flags
 set(CARGO_PROFILE "$<IF:$<CONFIG:Debug>,dev,release>")
 
 # Add rust_example as a CMake target
 ExternalProject_Add(
   ${KERNEL_NAME}
-  GIT_REPOSITORY "https://github.com/samansmink/delta-kernel-rs"
-  # WARNING: the FFI headers are currently pinned due to the C linkage issue of
-  # the c++ headers. Currently, when bumping the kernel version, the produced
-  # header in ./src/include/delta_kernel_ffi.hpp should be also bumped, applying
-  # the fix
+  GIT_REPOSITORY "https://github.com/benfleis/delta-kernel-rs"
   GIT_TAG snapshot-reuse
   # Prints the env variables passed to the cargo build to the terminal, useful
   # in debugging because passing them through CMake is an error-prone mess
@@ -161,12 +155,19 @@ ExternalProject_Add(
   # Build debug build
   BUILD_COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
-    --package delta_kernel_ffi --workspace --profile=${CARGO_PROFILE} --all-features
-    ${RUST_PLATFORM_PARAM}
+      --package delta_kernel_ffi --profile=${CARGO_PROFILE} --all-features
+      ${RUST_PLATFORM_PARAM}
   # Build DATs
   COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
-    --manifest-path=${CMAKE_BINARY_DIR}/rust/src/delta_kernel/acceptance/Cargo.toml
+      --manifest-path=${CMAKE_BINARY_DIR}/rust/src/delta_kernel/acceptance/Cargo.toml
+  # Copy, patch, and generate the C++ FFI header into codegen/include/.
+  # See scripts/ffi/generate_delta_kernel_ffi_header and cbindgen#402 for details.
+  COMMAND
+    sh ${CMAKE_CURRENT_SOURCE_DIR}/scripts/ffi/generate_delta_kernel_ffi_header
+      ${CMAKE_CURRENT_SOURCE_DIR}/scripts/ffi
+      ${DELTA_KERNEL_FFI_HEADER_CXX}
+      ${CMAKE_BINARY_DIR}/codegen/include
   # Define the byproducts, required for building with Ninja
   BUILD_BYPRODUCTS "${DELTA_KERNEL_LIBPATH}"
   BUILD_BYPRODUCTS "${DELTA_KERNEL_FFI_HEADER_C}"
@@ -177,8 +178,10 @@ ExternalProject_Add(
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-# TODO: when C linkage issue is resolved, we should switch back to using the
-# generated headers include_directories(${DELTA_KERNEL_FFI_HEADER_PATH})
+# The generated FFI header is copied to codegen/include/ and patched at build
+# time (see scripts/ffi/{prefix,suffix}.inc; inline_msvc_compat.inc is generated dynamically).
+# TODO: when cbindgen C-linkage issue is resolved upstream, remove the sed patches.
+include_directories("${CMAKE_BINARY_DIR}/codegen/include")
 
 # Hides annoying linker warnings
 set(CMAKE_OSX_DEPLOYMENT_TARGET
@@ -186,7 +189,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET
     CACHE STRING "Minimum OS X deployment version" FORCE)
 
 # Add the default client
-add_compile_definitions(DEFINE_DEFAULT_ENGINE)
+add_compile_definitions(DEFINE_DEFAULT_ENGINE DEFINE_DEFAULT_ENGINE_BASE)
 
 # Link delta-kernal-rs to static lib
 target_link_libraries(${EXTENSION_NAME} ${DELTA_KERNEL_LIBPATH}

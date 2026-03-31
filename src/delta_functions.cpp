@@ -9,6 +9,11 @@ vector<TableFunctionSet> DeltaFunctions::GetTableFunctions(ExtensionLoader &load
 
 	functions.push_back(GetDeltaScanFunction(loader));
 	functions.push_back(GetDeltaFileListFunction(loader));
+	functions.push_back(GetDeltaDomainMetadataFunction(loader));
+
+	for (const auto &fun : GetTransactionIdempotencyHelpers(loader.GetDatabaseInstance())) {
+		functions.push_back(TableFunctionSet(fun));
+	}
 
 	return functions;
 }
@@ -22,4 +27,4 @@ vector<ScalarFunctionSet> DeltaFunctions::GetScalarFunctions(ExtensionLoader &lo
 	return functions;
 }
 
-}; // namespace duckdb
+} // namespace duckdb

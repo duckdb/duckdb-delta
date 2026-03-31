@@ -1,4 +1,4 @@
-# name: test/sql/hierarchical_namespace.test
+# name: test/sql/cloud/azure/hierarchical_namespace.test
 # description: test azure extension with ADLS GEN2 storage
 # group: [azure]
 
