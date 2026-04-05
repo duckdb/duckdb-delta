@@ -144,8 +144,8 @@ set(CARGO_PROFILE "$<IF:$<CONFIG:Debug>,dev,release>")
 # Add rust_example as a CMake target
 ExternalProject_Add(
   ${KERNEL_NAME}
-  GIT_REPOSITORY "https://github.com/benfleis/delta-kernel-rs"
-  GIT_TAG snapshot-reuse
+  GIT_REPOSITORY "https://github.com/delta-io/delta-kernel-rs"
+  GIT_TAG main # TODO: -> v0.21.0 once released
   # Prints the env variables passed to the cargo build to the terminal, useful
   # in debugging because passing them through CMake is an error-prone mess
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS}
