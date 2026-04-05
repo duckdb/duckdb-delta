@@ -536,7 +536,7 @@ unique_ptr<ExpressionVisitor::FieldList> ExpressionVisitor::TakeFieldList(uintpt
 	return rval;
 }
 
-ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state, bool enable_variant) {
+ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state) {
 	ffi::EngineSchemaVisitor visitor;
 
 	visitor.data = &state;
@@ -565,25 +565,17 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	visitor.visit_date = VisitSimpleType<LogicalType::DATE>();
 	visitor.visit_timestamp = VisitSimpleType<LogicalType::TIMESTAMP_TZ>();
 	visitor.visit_timestamp_ntz = VisitSimpleType<LogicalType::TIMESTAMP>();
-
-	if (enable_variant) {
-		visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
-		                                  bool is_nullable, const ffi::CStringMap *metadata)) &
-		                        VisitVariant<true>;
-	} else {
-		visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
-		                                  bool is_nullable, const ffi::CStringMap *metadata)) &
-		                        VisitVariant<false>;
-	}
+	visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	                                  bool is_nullable, const ffi::CStringMap *metadata)) &
+	                        VisitVariant;
 
 	return visitor;
 }
 
 vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
-                                                                          ffi::SharedSnapshot *snapshot,
-                                                                          bool enable_variant) {
+                                                                          ffi::SharedSnapshot *snapshot) {
 	SchemaVisitor state(engine);
-	auto visitor = CreateSchemaVisitor(state, enable_variant);
+	auto visitor = CreateSchemaVisitor(state);
 
 	auto schema = logical_schema(snapshot);
 	uintptr_t result = visit_schema(schema, &visitor);
@@ -598,9 +590,9 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::H
 
 vector<DeltaMultiFileColumnDefinition>
 SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *scan,
-                                             bool logical, bool enable_variant) {
+                                             bool logical) {
 	SchemaVisitor visitor_state(engine);
-	auto visitor = CreateSchemaVisitor(visitor_state, enable_variant);
+	auto visitor = CreateSchemaVisitor(visitor_state);
 
 	ffi::Handle<ffi::SharedSchema> schema;
 	if (logical) {
@@ -621,9 +613,9 @@ SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine
 
 vector<DeltaMultiFileColumnDefinition>
 SchemaVisitor::VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
-                                       ffi::SharedWriteContext *write_context, bool enable_variant) {
+                                       ffi::SharedWriteContext *write_context) {
 	SchemaVisitor visitor_state(engine);
-	auto visitor = CreateSchemaVisitor(visitor_state, enable_variant);
+	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);
 	free_schema(schema);
@@ -710,6 +702,17 @@ void SchemaVisitor::VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ff
 	ApplyDeltaColumnMapping(state->engine, metadata, map_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(map_def));
+}
+
+void SchemaVisitor::VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+                                 bool is_nullable, const ffi::CStringMap *metadata) {
+	// NOTE: logical type always VARIANT here, backwards compatible parsing from STRUCT(value, metadata) handled in
+	// parquet_read() via IsVariantType function, which is always enabled via the __delta_only_variant_encoding_enabled
+	// global setting.
+	LogicalType type = LogicalType::VARIANT();
+	DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
+	ApplyDeltaColumnMapping(state->engine, metadata, col_def);
+	state->AppendToList(sibling_list_id, name, std::move(col_def));
 }
 
 uintptr_t SchemaVisitor::MakeFieldListImpl(uintptr_t capacity_hint) {

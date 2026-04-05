@@ -533,15 +533,6 @@ DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &p
     : SimpleMultiFileList({ToDeltaPath(path_p)}), version(version_p) {
 	unique_lock<mutex> lck(lock);
 
-	enable_variant = true;
-	Value setting_res;
-	// TODO: remove post merge
-	auto res = context_p.TryGetCurrentSetting("__delta_only_variant_encoding_enabled", setting_res);
-	if (res) {
-		D_ASSERT(setting_res.type() == LogicalType::BOOLEAN);
-		enable_variant = setting_res.GetValue<bool>();
-	}
-
 	if (previous) {
 		old_snapshot = previous->snapshot;
 	}
@@ -633,7 +624,7 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	vector<DeltaMultiFileColumnDefinition> visited_schema;
 	{
 		auto snapshot_ref = snapshot->GetLockingRef();
-		visited_schema = SchemaVisitor::VisitSnapshotSchema(extern_engine.get(), snapshot_ref.GetPtr(), enable_variant);
+		visited_schema = SchemaVisitor::VisitSnapshotSchema(extern_engine.get(), snapshot_ref.GetPtr());
 	}
 
 	for (const auto &field : visited_schema) {
@@ -802,8 +793,7 @@ void DeltaMultiFileList::InitializeScan() const {
 		}
 	}
 
-	lazy_loaded_schema =
-	    SchemaVisitor::VisitSnapshotGlobalReadSchema(extern_engine.get(), scan.get(), true, enable_variant);
+	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(extern_engine.get(), scan.get(), true);
 
 	DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 

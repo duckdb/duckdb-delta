@@ -279,14 +279,11 @@ public:
 	explicit SchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p) : engine(engine_p) {};
 
 	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
-	                                                                  ffi::SharedSnapshot *snapshot,
-	                                                                  bool enable_variant);
+	                                                                  ffi::SharedSnapshot *snapshot);
 	static vector<DeltaMultiFileColumnDefinition>
-	VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *state, bool logical,
-	                              bool enable_variant);
+	VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *state, bool logical);
 	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
-	                                                                      ffi::SharedWriteContext *write_context,
-	                                                                      bool enable_variant);
+	                                                                      ffi::SharedWriteContext *write_context);
 
 private:
 	unordered_map<uintptr_t, vector<DeltaMultiFileColumnDefinition>> inflight_lists;
@@ -295,7 +292,7 @@ private:
 	ffi::SharedExternEngine *engine = nullptr;
 	ErrorData error;
 
-	static ffi::EngineSchemaVisitor CreateSchemaVisitor(SchemaVisitor &state, bool enable_variant);
+	static ffi::EngineSchemaVisitor CreateSchemaVisitor(SchemaVisitor &state);
 
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CStringMap *metadata);
@@ -335,27 +332,8 @@ private:
 	                       bool is_nullable, const ffi::CStringMap *metadata, uintptr_t child_list_id);
 	static void VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name, bool is_nullable,
 	                     const ffi::CStringMap *metadata, uintptr_t child_list_id);
-
-	// TODO: remove the variant switch post-merge, not optional
-	template <bool ENABLE_VARIANT>
 	static void VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
-	                         bool is_nullable, const ffi::CStringMap *metadata) {
-		LogicalType type;
-		if (ENABLE_VARIANT) {
-			type = LogicalType::VARIANT();
-		} else {
-			// NOTE: this code should never be triggered, and ultimately removed. Leaving for later sanity checking.
-			child_list_t<LogicalType> struct_children;
-			struct_children.push_back({"value", LogicalType::BLOB});
-			struct_children.push_back({"metadata", LogicalType::BLOB});
-			type = LogicalType::STRUCT(struct_children);
-		}
-
-		DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
-		ApplyDeltaColumnMapping(state->engine, metadata, col_def);
-
-		state->AppendToList(sibling_list_id, name, std::move(col_def));
-	}
+	                         bool is_nullable, const ffi::CStringMap *metadata);
 
 	uintptr_t MakeFieldListImpl(uintptr_t capacity_hint);
 	void AppendToList(uintptr_t id, ffi::KernelStringSlice name, DeltaMultiFileColumnDefinition &&child);
