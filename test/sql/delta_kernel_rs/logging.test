@@ -9,6 +9,9 @@ require delta
 require-env DELTA_KERNEL_TESTS_PATH
 
 statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
 set enable_logging=true;
 
 statement ok
