@@ -155,15 +155,8 @@ ExternalProject_Add(
   # Build debug build
   BUILD_COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
-      --package delta_kernel_ffi --profile=${CARGO_PROFILE}
-      --features "default-engine-rustls,arrow,catalog-managed,test-ffi,delta-kernel-unity-catalog,tracing"
+      --package delta_kernel_ffi --profile=${CARGO_PROFILE} --all-features
       ${RUST_PLATFORM_PARAM}
-  # acceptance depends on delta_kernel_benchmarks (regular dep, not dev), whose build.rs
-  # downloads benchmark workload data we don't need. Pre-create the .done marker to skip it.
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads"
-  COMMAND ${CMAKE_COMMAND} -E touch
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads/.done"
   # Build DATs
   COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
