@@ -1,0 +1,161 @@
+# name: test/sql/generated/writing/incremental_snapshot.test
+# description: Test that incremental snapshot loading does not re-read previously loaded log files
+# group: [writing]
+
+require parquet
+
+require json
+
+require delta
+
+require-env GENERATED_DATA_AVAILABLE
+
+# Build a writable copy with 3 versions:
+#   v0: initial 10 rows (from simple_table)
+#   v1: +1 row (i=10)
+#   v2: +1 row (i=11)
+statement ok
+FROM copy_dir('data/generated/simple_table', '__TEST_DIR__/incremental_snapshot/simple_table');
+
+statement ok
+ATTACH '__TEST_DIR__/incremental_snapshot/simple_table/delta_lake' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES (10);
+
+statement ok
+INSERT INTO t VALUES (11);
+
+statement ok
+DETACH t;
+
+# Enable DeltaKernel logging to track metadata/log file reads
+statement ok
+SET enable_logging=true;
+
+statement ok
+SET delta_kernel_logging=true;
+
+statement ok
+CALL enable_logging('DeltaKernel', level='trace');
+
+
+####################################################
+# Variant 1: separate ATTACH calls per version
+####################################################
+
+# simple_table already has v0+v1, so our inserts land at v2 and v3, yielding
+# v2=11 and v3=12 rows respectively.
+
+# Cold load at v2: reads log entries 0–2 (emits 'Provisionally selecting' for each)
+statement ok
+ATTACH '__TEST_DIR__/incremental_snapshot/simple_table/delta_lake' AS t1 (TYPE delta, VERSION 2);
+
+query I
+SELECT count() FROM t1;
+----
+11
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# Incremental load at v3 via separate ATTACH: should reuse v2 snapshot, only reading log entry 3.
+# The incremental path does NOT emit 'Provisionally selecting' — it extends the cached snapshot
+# rather than rebuilding the log segment from scratch.
+# TODO: if kernel adds logging for incremental commit reads, add a positive assertion here.
+statement ok
+ATTACH '__TEST_DIR__/incremental_snapshot/simple_table/delta_lake' AS t2 (TYPE delta, VERSION 3);
+
+query I
+SELECT count() FROM t2;
+----
+12
+
+# v0 log file must NOT be re-read
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%00000000000000000000%';
+----
+0
+
+# v1 log file must NOT be re-read
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%00000000000000000001%';
+----
+0
+
+# v2 log file must NOT be re-read
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%00000000000000000002%';
+----
+0
+
+# No full log segment reconstruction happened (incremental path emits zero 'Provisionally selecting' messages)
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%';
+----
+0
+
+statement ok
+CALL truncate_duckdb_logs();
+
+####################################################
+# Variant 2: AT (VERSION => n) on a plain ATTACH
+####################################################
+
+statement ok
+ATTACH '__TEST_DIR__/incremental_snapshot/simple_table/delta_lake' AS t3 (TYPE delta);
+
+# Cold read at v2 via AT clause
+query I
+SELECT count() FROM t3 AT (VERSION => 2);
+----
+11
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# Incremental read at v3 via AT clause: should reuse v2 snapshot
+query I
+SELECT count() FROM t3 AT (VERSION => 3);
+----
+12
+
+# v0 log file must NOT be re-read
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%00000000000000000000%';
+----
+0
+
+# v1 log file must NOT be re-read
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%00000000000000000001%';
+----
+0
+
+# v2 log file must NOT be re-read
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%00000000000000000002%';
+----
+0
+
+# No full log segment reconstruction happened
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%Provisionally selecting%';
+----
+0
