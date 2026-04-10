@@ -14,6 +14,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 
 namespace duckdb {
 
