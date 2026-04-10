@@ -278,7 +278,8 @@ struct WriteMetaData {
 
 		ffi::ArrowFFIData ffi_data;
 		unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
-		ClientProperties props("UTC", ArrowOffsetSize::REGULAR, false, false, false, ArrowFormatVersion::V1_0, context);
+		ClientProperties props("UTC", ArrowOffsetSize::REGULAR, false, false, false, ArrowFormatVersion::V1_0,
+		                       optional_ptr<ClientContext>(&context));
 		ArrowConverter::ToArrowArray(*buffer, (ArrowArray *)(&ffi_data.array), props, extension_types);
 		ArrowConverter::ToArrowSchema((ArrowSchema *)(&ffi_data.schema), buffer_types, GetNames(), props);
 
@@ -412,19 +413,6 @@ void DeltaTransaction::Commit(ClientContext &context) {
 		transaction_state = DeltaTransactionState::TRANSACTION_FINISHED;
 
 		if (!outstanding_appends.empty()) {
-			// Create metadata from the current outstanding appends
-			WriteMetaData write_metadata(*table_entry->snapshot, outstanding_appends);
-			// Convert write metadata to ArrowFFI
-			auto write_metadata_ffi = write_metadata.ToArrow(context);
-
-			// Convert to Delta Kernel EngineData
-			KernelEngineData write_metadata_engine_data =
-			    table_entry->snapshot->TryUnpackKernelResult(ffi::get_engine_data(
-			        write_metadata_ffi.array, &write_metadata_ffi.schema, DuckDBEngineError::AllocateError));
-
-			// Add the write data to the commit
-			ffi::add_files(kernel_transaction.get(), write_metadata_engine_data.release());
-
 			// Finally we add the registered transaction versions
 			for (const auto &app_version : app_versions) {
 				auto app_id = app_version.first;
@@ -565,6 +553,22 @@ void DeltaTransaction::Append(ClientContext &context, const vector<DeltaDataFile
 		auto &fs = FileSystem::GetFileSystem(context);
 		auto f = fs.OpenFile(file.file_name, FileOpenFlags::FILE_FLAGS_READ);
 		file.last_modified_time = f->file_system.GetLastModifiedTime(*f);
+	}
+
+	if (!append_files.empty()) {
+		// Build and add write metadata for new files per append; we do so here instead of in ::Commit
+		// within Commit we no longer have an active transaction, which is required to build the arrow schema. We could
+		// alternatively extend the Arrow API to support pre-build/cache the schema, but writing per append here is
+		// simple.
+		vector<DeltaDataFile> new_files(outstanding_appends.begin() + NumericCast<ptrdiff_t>(start),
+		                                outstanding_appends.end());
+		WriteMetaData write_metadata(*table_entry->snapshot, new_files);
+		auto write_metadata_ffi = write_metadata.ToArrow(context);
+
+		KernelEngineData write_metadata_engine_data = table_entry->snapshot->TryUnpackKernelResult(ffi::get_engine_data(
+		    write_metadata_ffi.array, &write_metadata_ffi.schema, DuckDBEngineError::AllocateError));
+
+		ffi::add_files(kernel_transaction.get(), write_metadata_engine_data.release());
 	}
 }
 

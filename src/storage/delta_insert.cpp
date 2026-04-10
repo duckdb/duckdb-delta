@@ -219,7 +219,8 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			auto &partition_children = MapValue::GetChildren(partition_info);
 			for (idx_t col_idx = 0; col_idx < partition_children.size(); col_idx++) {
 				auto &struct_children = StructValue::GetChildren(partition_children[col_idx]);
-				auto &part_value = StringValue::Get(struct_children[1]);
+				// from PROTOCOL doc, Partition Value Serialization: null values are serialized as "".
+				auto part_value = struct_children[1].IsNull() ? string() : StringValue::Get(struct_children[1]);
 
 				DeltaPartition file_partition_info;
 				file_partition_info.partition_column_idx = col_idx;
