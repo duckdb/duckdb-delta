@@ -159,3 +159,15 @@ WHERE type = 'DeltaKernel'
 AND message LIKE '%Provisionally selecting%';
 ----
 0
+
+# -----------------------------------------------------------------------------
+# cleanup
+#
+statement ok
+RESET delta_kernel_logging;
+
+statement ok
+RESET enable_logging;
+
+statement ok
+CALL truncate_duckdb_logs();
