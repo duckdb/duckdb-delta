@@ -506,6 +506,7 @@ protected:
 
 	mutex lock;
 	weak_ptr<DatabaseInstance> db;
+	atomic<bool> enabled {false};
 };
 
 } // namespace duckdb

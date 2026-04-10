@@ -9,19 +9,22 @@ require delta
 require-env DELTA_KERNEL_TESTS_PATH
 
 statement ok
-CALL truncate_duckdb_logs();
+reset enable_logging;
 
 statement ok
 set enable_logging=true;
 
 statement ok
+call truncate_duckdb_logs();
+
+statement ok
 SELECT * FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
 
 # No kernel logging available yet: we need to set delta_kernel_logging=true
+#SELECT count(*) FROM duckdb_logs WHERE type='DeltaKernel'
 query I
-SELECT count(*) FROM duckdb_logs WHERE type='DeltaKernel'
+SELECT message FROM duckdb_logs WHERE type='DeltaKernel'
 ----
-0
 
 statement ok
 set delta_kernel_logging=true;
@@ -45,7 +48,11 @@ select log_level, target, file, line from duckdb_logs_parsed('DeltaKernel')
 statement ok
 set delta_kernel_logging=true;
 
-statement error
+statement ok
 set delta_kernel_logging=false;
-----
-Invalid Input Error: Can not disable 'delta_kernel_logging' after enabling it
+
+statement ok
+reset delta_kernel_logging;
+
+statement ok
+reset enable_logging;

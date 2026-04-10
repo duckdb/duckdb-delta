@@ -1193,6 +1193,9 @@ bool LoggerCallback::TryLog(const char *name, LogLevel level, const string &msg)
 }
 
 void LoggerCallback::CallbackEvent(ffi::Event event) {
+	if (!GetInstance().enabled) {
+		return;
+	}
 	TryLog(DeltaKernelLogType::NAME, GetDuckDBLogLevel(event.level), DeltaKernelLogType::ConstructLogMessage(event));
 }
 
@@ -1229,15 +1232,12 @@ void LoggerCallback::DuckDBSettingCallBack(ClientContext &context, SetScope scop
 		throw InternalException("Failed to find setting 'delta_kernel_logging'");
 	}
 
-	if (current_setting.GetValue<bool>() && !parameter.GetValue<bool>()) {
-		throw InvalidInputException("Can not disable 'delta_kernel_logging' after enabling it. You can disable DuckDB "
-		                            "logging with SET enable_logging=false, but there will still be some performance "
-		                            "overhead from 'delta_kernel_logging'"
-		                            "that can only be mitigated by restarting DuckDB");
-	}
-
 	if (!current_setting.GetValue<bool>() && parameter.GetValue<bool>()) {
 		ffi::enable_event_tracing(LoggerCallback::CallbackEvent, ffi::Level::TRACE);
 	}
+	// Mirror the setting into the singleton so CallbackEvent can gate on it.
+	// The Rust subscriber cannot be unregistered once installed, so when setting=false we stop
+	// forwarding in CallbackEvent rather than preventing the Rust side from firing.
+	LoggerCallback::GetInstance().enabled = parameter.GetValue<bool>();
 }
 }; // namespace duckdb
