@@ -335,10 +335,6 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 }
 
 struct KernelPartitionVisitorData {
-	KernelPartitionVisitorData(const DeltaMultiFileList &delta_snapshot) : delta_snapshot(delta_snapshot) {
-	}
-
-	const DeltaMultiFileList &delta_snapshot;
 	vector<string> partitions;
 	ErrorData err_data;
 };
@@ -774,7 +770,7 @@ void DeltaMultiFileList::InitializeScan() const {
 	if (partition_count > 0) {
 		auto string_slice_iterator = ffi::get_partition_columns(snapshot_ref.GetPtr());
 
-		KernelPartitionVisitorData data(*this);
+		KernelPartitionVisitorData data;
 		while (string_slice_next(string_slice_iterator, &data, KernelPartitionStringVisitor)) {
 		}
 		partitions = data.partitions;
