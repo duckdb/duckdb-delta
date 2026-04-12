@@ -1,0 +1,168 @@
+# name: test/sql/main/writing/incremental_snapshot.test
+# description: Test that incremental snapshot loading does not re-read previously loaded log files
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# setup
+#
+
+# simple_table copy gives us a v0 with 10 rows
+statement ok
+FROM copy_dir('data/inlined/simple_table', '__TEST_DIR__/main/writing/incremental_snapshot');
+
+statement ok
+ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t (TYPE delta);
+
+# 2 inserts makes v1 and v2
+statement ok
+INSERT INTO t VALUES (10);
+
+statement ok
+INSERT INTO t VALUES (11);
+
+statement ok
+DETACH t;
+
+# Enable DeltaKernel logging to track metadata/log file reads
+statement ok
+CALL enable_logging(level = 'trace');
+
+statement ok
+SET delta_kernel_logging=true;
+
+
+# -----------------------------------------------------------------------------
+# test: Variant 1: separate ATTACH calls per version
+#
+
+# Cold load at v1: reads log entries 0–1
+statement ok
+ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t1 (TYPE delta, VERSION 1);
+
+query I
+SELECT count() FROM t1;
+----
+11
+
+# Clear logs to track the next op; we'll track kernel logs for version file read refs,
+# (e.g. 00000000000000000000.json)
+statement ok
+CALL truncate_duckdb_logs();
+
+# Incremental load at v2 via separate ATTACH: should reuse v1 snapshot, only reading log entry 2.
+statement ok
+ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t2 (TYPE delta, VERSION 2);
+
+query I
+SELECT count() FROM t2;
+----
+12
+
+# v0/v1 log files must NOT be re-read by the incremental path.
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%00000000000000000000.json%';
+----
+0
+
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%00000000000000000001.json%';
+----
+0
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# -----------------------------------------------------------------------------
+# test: Variant 2: AT (VERSION => n) on a plain ATTACH
+#
+
+statement ok
+ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t3 (TYPE delta);
+
+# Cold read at v1 via AT clause
+query I
+SELECT count() FROM t3 AT (VERSION => 1);
+----
+11
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# Incremental read at v2 via AT clause: should reuse v1 snapshot
+query I
+SELECT count() FROM t3 AT (VERSION => 2);
+----
+12
+
+# Same filename-based assertions as Variant 1.
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%00000000000000000000.json%';
+----
+0
+
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'DeltaKernel'
+AND message LIKE '%00000000000000000001.json%';
+----
+0
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# -----------------------------------------------------------------------------
+# test: Variant 3: backward time travel (fresh builder fallback)
+#
+
+statement ok
+ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t4 (TYPE delta);
+
+# Load HEAD to populate the schema-level cached_table at v2 (12 rows)
+query I
+SELECT count() FROM t4;
+----
+12
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# Request v1 (< v2): kernel rejects builder_from for backward travel, so
+# InitializeSnapshot falls back to a fresh builder. Verify data is correct.
+query I
+SELECT count() FROM t4 AT (VERSION => 1);
+----
+11
+
+# Check duckdb delta's own logs for 'incremental=false', to confirm
+# non-incremental load
+query I
+SELECT count() > 0 FROM duckdb_logs
+WHERE type = 'delta.DeltaMultiFileList'
+AND message LIKE '%incremental=false%';
+----
+true
+
+# -----------------------------------------------------------------------------
+# cleanup
+#
+
+statement ok
+RESET delta_kernel_logging;
+
+statement ok
+RESET enable_logging;
+
+statement ok
+CALL truncate_duckdb_logs();

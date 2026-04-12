@@ -701,18 +701,14 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
 
 	if (!snapshot) {
-		DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-		                    "Loading snapshot for '%s': version=%s, log_tail=%s, incremental=%s",
-		                    string(path_slice.ptr, path_slice.len),
-		                    version == DConstants::INVALID_INDEX ? "HEAD" : to_string(version),
-		                    delta_log_path ? "true" : "false", old_snapshot ? "true" : "false");
-
 		ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
+		bool using_incremental = false;
 		if (old_snapshot) {
 			auto old_snapshot_ref = old_snapshot->GetLockingRef();
 			auto old_version = ffi::version(old_snapshot_ref.GetPtr());
 			if (version == DConstants::INVALID_INDEX || version >= old_version) {
 				// Going forward (or HEAD): use old snapshot as hint
+				using_incremental = true;
 				builder = TryUnpackKernelResult(
 				    ffi::get_snapshot_builder_from(old_snapshot_ref.GetPtr(), extern_engine.get()));
 			} else {
@@ -722,6 +718,12 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 		} else {
 			builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
 		}
+
+		DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
+		                    "Loading snapshot for '%s': version=%s, log_tail=%s, incremental=%s",
+		                    string(path_slice.ptr, path_slice.len),
+		                    version == DConstants::INVALID_INDEX ? "HEAD" : to_string(version),
+		                    delta_log_path ? "true" : "false", using_incremental ? "true" : "false");
 		if (version != DConstants::INVALID_INDEX) {
 			ffi::snapshot_builder_set_version(&builder, version);
 		}
