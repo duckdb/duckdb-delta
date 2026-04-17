@@ -145,7 +145,7 @@ set(CARGO_PROFILE "$<IF:$<CONFIG:Debug>,dev,release>")
 ExternalProject_Add(
   ${KERNEL_NAME}
   GIT_REPOSITORY "https://github.com/delta-io/delta-kernel-rs"
-  GIT_TAG 2cdf7333b8e10fb53c053677cd8b436752220188 # aka v0.21.0 but not git tagged
+  GIT_TAG v0.21.0
   # Prints the env variables passed to the cargo build to the terminal, useful
   # in debugging because passing them through CMake is an error-prone mess
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS}
@@ -155,8 +155,15 @@ ExternalProject_Add(
   # Build debug build
   BUILD_COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
-      --package delta_kernel_ffi --workspace --profile=${CARGO_PROFILE} --all-features
+      --package delta_kernel_ffi --profile=${CARGO_PROFILE}
+      --features "default-engine-rustls,arrow,test-ffi,delta-kernel-unity-catalog,tracing"
       ${RUST_PLATFORM_PARAM}
+  # acceptance depends on delta_kernel_benchmarks (regular dep, not dev), whose build.rs
+  # downloads benchmark workload data we don't need. Pre-create the .done marker to skip it.
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads"
+  COMMAND ${CMAKE_COMMAND} -E touch
+    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads/.done"
   # Build DATs
   COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build

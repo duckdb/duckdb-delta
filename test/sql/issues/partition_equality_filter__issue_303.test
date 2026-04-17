@@ -1,0 +1,80 @@
+# name: test/sql/issues/partition_equality_filter__issue_303.test
+# description: equality filter on a partition column must not prune all files
+# group: [issues]
+
+# Repro: WHERE part = <literal> returns 0 rows instead of 5 on a table
+# with a single partition value (v1.5.1 regression).
+# Single-value IN has the same bug; multi-value IN works by accident.
+# Full scan is correct — distinguishes this from snapshot_incomplete__issue_303.
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Setup
+#
+
+statement ok
+FROM copy_dir('data/inlined/issue_303_partitioned/delta_lake', '__TEST_DIR__/issue_303');
+
+# -----------------------------------------------------------------------------
+# delta_scan
+#
+
+# Baseline: full scan must be correct (distinguishes from snapshot_incomplete).
+query I
+SELECT count(*) FROM delta_scan('__TEST_DIR__/issue_303')
+----
+16
+
+# Equality — must return 16, not 0.
+query I
+SELECT count(*) FROM delta_scan('__TEST_DIR__/issue_303') WHERE part = 42
+----
+16
+
+# Single-value IN must behave the same as =.
+query I
+SELECT count(*) FROM delta_scan('__TEST_DIR__/issue_303') WHERE part IN (42)
+----
+16
+
+# Multi-value IN (with a non-existent value) as contrast — worked even when = didn't.
+query I
+SELECT count(*) FROM delta_scan('__TEST_DIR__/issue_303') WHERE part IN (31, 42)
+----
+16
+
+# Range predicate too
+query I
+SELECT count(*) FROM delta_scan('__TEST_DIR__/issue_303') WHERE part > 40
+----
+16
+
+# -----------------------------------------------------------------------------
+# ATTACH
+#
+
+statement ok
+ATTACH '__TEST_DIR__/issue_303' AS issue_303 (TYPE delta)
+
+query I
+SELECT count(*) FROM issue_303
+----
+16
+
+query I
+SELECT count(*) FROM issue_303 WHERE part = 42
+----
+16
+
+query I
+SELECT count(*) FROM issue_303 WHERE part IN (42)
+----
+16
+
+statement ok
+DETACH issue_303
