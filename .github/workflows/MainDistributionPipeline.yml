@@ -14,13 +14,13 @@ concurrency:
 jobs:
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.0 # NOTE: manually update ref :(
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.2 # NOTE: manually update ref :(
     secrets: inherit # required for writing to vcpkg binary cache
     with:
       # Main config
       extension_name: &ext_name delta
-      duckdb_version: &duckdb_ref v1.5.1
-      ci_tools_version: &ci_tools_ref v1.5.0
+      duckdb_version: &duckdb_ref v1.5.2
+      ci_tools_version: &ci_tools_ref v1.5-variegata
       enable_rust: true
       rust_logs: true
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl'
@@ -35,7 +35,7 @@ jobs:
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5.0 # NOTE: manually update ref :(
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5.2 # NOTE: manually update ref :(
     secrets: inherit
     with:
       extension_name: *ext_name
@@ -43,15 +43,15 @@ jobs:
       ci_tools_version: *ci_tools_ref
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl'
       # deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
-      deploy_versioned: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
+      deploy_versioned: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/v1.5-variegata' }}
       reduced_ci_mode: ${{ github.event_name == 'pull_request' && 'enabled' || 'disabled'}}
 
   code-quality-check:
     name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.0 # NOTE: manually update ref :(
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.2 # NOTE: manually update ref :(
     with:
       extension_name: *ext_name
       duckdb_version: *duckdb_ref
       ci_tools_version: *ci_tools_ref
-      format_checks: format 
+      format_checks: format
       extra_toolchains: 'python3'
