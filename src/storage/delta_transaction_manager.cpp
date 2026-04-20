@@ -55,9 +55,16 @@ void DeltaTransactionManager::Checkpoint(ClientContext &context, bool force) {
 	// Fetch the currently active delta transaction
 	auto &delta_transaction = DeltaTransaction::Get(context, delta_catalog);
 
+	auto &schema = delta_catalog.GetMainSchema();
+	optional_ptr<const DeltaMultiFileList> old_snapshot;
+	auto cached = schema.GetCachedTable();
+	if (cached) {
+		old_snapshot = cached->snapshot.get();
+	}
+
 	// Initialize the transaction-local copy of the delta snapshot
 	auto &table_entry = delta_transaction.InitializeTableEntry(context, delta_catalog.GetMainSchema(),
-	                                                           delta_catalog.use_specific_version);
+	                                                           delta_catalog.use_specific_version, old_snapshot);
 
 	// Get a locking ref to the shared ffi snapshot
 	auto snapshot_ref = table_entry.snapshot->snapshot->GetLockingRef();

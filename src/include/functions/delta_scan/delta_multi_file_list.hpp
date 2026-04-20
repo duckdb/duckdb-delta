@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "delta_functions.hpp"
 #include "delta_utils.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 
@@ -56,7 +57,8 @@ class DeltaMultiFileList : public SimpleMultiFileList {
 	friend struct ScanDataCallBack;
 
 public:
-	DeltaMultiFileList(ClientContext &context, const string &path, idx_t version);
+	DeltaMultiFileList(ClientContext &context, const string &path, idx_t version,
+	                   optional_ptr<const DeltaMultiFileList> previous = nullptr);
 	string GetPath() const;
 	static string ToDuckDBPath(const string &raw_path);
 	static string ToDeltaPath(const string &raw_path);
@@ -126,6 +128,7 @@ protected:
 	mutable idx_t version;
 
 	//! Delta Kernel Structures
+	mutable shared_ptr<SharedKernelSnapshot> old_snapshot;
 
 	mutable KernelScan scan;
 	mutable KernelScanDataIterator scan_data_iterator;

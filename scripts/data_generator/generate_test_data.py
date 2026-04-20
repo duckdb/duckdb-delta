@@ -91,6 +91,13 @@ if (not os.path.isdir(BASE_PATH + '/tpch_sf1')):
     for table in ["customer","lineitem","nation","orders","part","partsupp","region","supplier"]:
         con.query(f"create table duckdb_out.{table} as from {table}")
 
+# TPC-H sf with 100 commits
+init = "call dbgen(sf=1);"
+tables = ["customer","lineitem","nation","orders","part","partsupp","region","supplier"]
+queries = [f"from {x}" for x in tables]
+tables = [{'name': x[0], 'query':x[1]} for x in zip(tables,queries)]
+generate_test_data_delta_rs_multi(BASE_PATH, "tpch_sf1_90commits", init, tables, 90)
+
 ################################################
 ### TPC-DS
 ################################################

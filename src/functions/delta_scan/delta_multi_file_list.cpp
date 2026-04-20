@@ -524,10 +524,14 @@ void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context,
 	}
 }
 
-DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path, idx_t version_p)
-    : SimpleMultiFileList({ToDeltaPath(path)}), version(version_p) {
-	Value setting_res;
+DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &path_p, idx_t version_p,
+                                       optional_ptr<const DeltaMultiFileList> previous)
+    : SimpleMultiFileList({ToDeltaPath(path_p)}), version(version_p) {
 	unique_lock<mutex> lck(lock);
+
+	if (previous) {
+		old_snapshot = previous->snapshot;
+	}
 	client_ctx = weak_ptr<ClientContext>(context_p.shared_from_this());
 }
 
@@ -697,40 +701,42 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
 
 	if (!snapshot) {
-		if (version == DConstants::INVALID_INDEX) {
-			// Get latest snapshot
-			auto snap_builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
-			if (delta_log_path) {
-				DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-				                    "Loading snapshot for '%s' with %d log tail entries",
-				                    string(path_slice.ptr, path_slice.len), delta_log_path->log_entries.size());
-				TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&snap_builder, delta_log_path->GetFFIPtr()));
+		ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
+		bool using_incremental = false;
+		if (old_snapshot) {
+			auto old_snapshot_ref = old_snapshot->GetLockingRef();
+			auto old_version = ffi::version(old_snapshot_ref.GetPtr());
+			if (version == DConstants::INVALID_INDEX || version >= old_version) {
+				// Going forward (or HEAD): use old snapshot as hint
+				using_incremental = true;
+				builder = TryUnpackKernelResult(
+				    ffi::get_snapshot_builder_from(old_snapshot_ref.GetPtr(), extern_engine.get()));
 			} else {
-				DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-				                    "Loading snapshot for '%s' at latest version",
-				                    string(path_slice.ptr, path_slice.len));
+				// Going backward: kernel rejects builder_from for older versions
+				builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
 			}
-			snapshot =
-			    make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(ffi::snapshot_builder_build(snap_builder)));
-
-			// Set version
-			auto snapshot_ref = snapshot->GetLockingRef();
-			this->version = ffi::version(snapshot_ref.GetPtr());
 		} else {
-			DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-			                    "Loading snapshot for '%s' at version %d", string(path_slice.ptr, path_slice.len),
-			                    version);
-			// Get specific snapshot
-			auto snap_builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
-			ffi::snapshot_builder_set_version(&snap_builder, version);
-			snapshot =
-			    make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(ffi::snapshot_builder_build(snap_builder)));
+			builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
+		}
 
-			// Double check version
-			auto snapshot_ref = snapshot->GetLockingRef();
-			if (ffi::version(snapshot_ref.GetPtr()) != version) {
-				throw InvalidInputException("Snapshot version does not match requested version");
-			}
+		DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
+		                    "Loading snapshot for '%s': version=%s, log_tail=%s, incremental=%s",
+		                    string(path_slice.ptr, path_slice.len),
+		                    version == DConstants::INVALID_INDEX ? "HEAD" : to_string(version),
+		                    delta_log_path ? "true" : "false", using_incremental ? "true" : "false");
+		if (version != DConstants::INVALID_INDEX) {
+			ffi::snapshot_builder_set_version(&builder, version);
+		}
+		if (delta_log_path) {
+			TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&builder, delta_log_path->GetFFIPtr()));
+		}
+		snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(ffi::snapshot_builder_build(builder)));
+
+		auto snapshot_ref = snapshot->GetLockingRef();
+		if (version == DConstants::INVALID_INDEX) {
+			this->version = ffi::version(snapshot_ref.GetPtr());
+		} else if (ffi::version(snapshot_ref.GetPtr()) != version) {
+			throw InvalidInputException("Snapshot version does not match requested version");
 		}
 	}
 

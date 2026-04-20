@@ -1,0 +1,83 @@
+# name: test/sql/main/writing/transaction_multi_insert.test
+# description: Test multiple INSERTs within a single transaction
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# setup
+#
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '__TEST_DIR__/main/writing/transaction_multi_insert');
+
+statement ok
+ATTACH '__TEST_DIR__/main/writing/transaction_multi_insert/delta_lake' AS t (TYPE delta);
+
+query II
+SELECT count(*), sum(i) FROM t;
+----
+10	45
+
+# -----------------------------------------------------------------------------
+# test: # multiple INSERTs in a single transaction all commit atomically
+#
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+INSERT INTO t VALUES (200);
+
+statement ok
+INSERT INTO t VALUES (201);
+
+statement ok
+INSERT INTO t VALUES (202);
+
+statement ok
+COMMIT
+
+# All 3 rows visible; each INSERT is a separate Append call, all committed together
+query II
+SELECT count(*), sum(i) FROM t;
+----
+13	648
+
+# Each INSERT produced its own parquet file (3 new, 1 original)
+query I
+SELECT count(*) FROM glob('__TEST_DIR__/main/writing/transaction_multi_insert/delta_lake/**/*.parquet')
+----
+4
+
+# -----------------------------------------------------------------------------
+# test: multiple INSERTs in a single transaction all commit atomically
+#
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+INSERT INTO t VALUES (300);
+
+statement ok
+INSERT INTO t VALUES (301);
+
+statement ok
+ROLLBACK
+
+# No rows added
+query II
+SELECT count(*), sum(i) FROM t;
+----
+13	648
+
+# Both staged files cleaned up on rollback
+query I
+SELECT count(*) FROM glob('__TEST_DIR__/main/writing/transaction_multi_insert/delta_lake/**/*.parquet')
+----
+4

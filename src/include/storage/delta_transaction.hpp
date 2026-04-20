@@ -41,7 +41,8 @@ public:
 
 	optional_ptr<DeltaTableEntry> GetTableEntry(idx_t version);
 
-	DeltaTableEntry &InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry, idx_t version);
+	DeltaTableEntry &InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry, idx_t version,
+	                                      optional_ptr<const DeltaMultiFileList> old_snapshot);
 	vector<DeltaMultiFileColumnDefinition> GetWriteSchema(ClientContext &context);
 
 	//! Removes all outstanding appends and removes the files if possible
@@ -64,7 +65,10 @@ private:
 	mutable mutex lock;
 
 	//! Cached table entry (without a specified version)
+	//! Note: this should be the latest version of the table, pinned at the version of first reading it during this
+	//! transaction
 	unique_ptr<DeltaTableEntry> table_entry;
+
 	//! Cached table entries at specific versions
 	unordered_map<idx_t, unique_ptr<DeltaTableEntry>> versioned_table_entries;
 

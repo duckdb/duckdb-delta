@@ -14,6 +14,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -105,6 +106,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// Register the "single table" delta catalog (to ATTACH a single delta table)
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
 	StorageExtension::Register(config, "delta", make_shared_ptr<DeltaStorageExtension>());
+
+	// NOTE: variant_legacy_encoding now refers to __delta_only_variant_encoding_enabled which is strictly internal
+	// and used to signal parquet variant legacy support. It's not fundamentally optional, and thus controlled here
+	// only.
+	config.options.variant_legacy_encoding = true;
 
 	config.AddExtensionOption("delta_scan_explain_files_filtered",
 	                          "Adds the filtered files to the explain output. Warning: this may impact performance of "

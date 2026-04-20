@@ -105,9 +105,10 @@ static bool CatalogTypeIsSupported(CatalogType type) {
 	}
 }
 
-unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version) {
+unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version,
+                                                               optional_ptr<const DeltaMultiFileList> old_snapshot) {
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
-	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version);
+	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version, old_snapshot);
 
 	// Set log_tail for catalog-managed commits (CCV2) if available
 	if (!delta_catalog.catalog_log_tail.IsNull()) {
@@ -200,16 +201,24 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 
 			// If the version being requested is different from the one we have cached, we
 			if (delta_catalog.use_specific_version != version) {
-				return delta_transaction.InitializeTableEntry(context, *this, version);
+				return delta_transaction.InitializeTableEntry(context, *this, version, nullptr);
 			}
 
 			if (!cached_table) {
-				cached_table = CreateTableEntry(context, version);
+				cached_table = CreateTableEntry(context, version, nullptr);
 			}
 			return *cached_table;
-		}
+		} else {
+			unique_lock<mutex> l(lock);
 
-		return delta_transaction.InitializeTableEntry(context, *this, version);
+			if (!cached_table) {
+				cached_table = CreateTableEntry(context, version, nullptr);
+			}
+
+			// Always go through InitializeTableEntry so the transaction's table_entry is set,
+			// using the cached snapshot as base for fast re-initialization.
+			return delta_transaction.InitializeTableEntry(context, *this, version, *cached_table->snapshot);
+		}
 	}
 	return nullptr;
 }

@@ -62,7 +62,7 @@ public:
 };
 
 unique_ptr<GlobalSinkState> DeltaInsert::GetGlobalSinkState(ClientContext &context) const {
-	// TODO: what if table isn't set?
+	// TODO: handle null table once CREATE TABLE (AS SELECT) is supported; columns/constraints come from info->Base()
 	const auto &delta_table = table->Cast<DeltaTableEntry>();
 	return make_uniq<DeltaInsertGlobalState>(delta_table);
 }
@@ -264,6 +264,8 @@ SinkFinalizeType DeltaInsert::Finalize(Pipeline &pipeline, Event &event, ClientC
                                        OperatorSinkFinalizeInput &input) const {
 	auto &global_state = input.global_state.Cast<DeltaInsertGlobalState>();
 
+	// TODO: handle null table once CREATE TABLE (AS SELECT) is supported; create the table first, then use
+	// schema->catalog
 	auto &transaction = DeltaTransaction::Get(context, table->catalog);
 	vector<string> filenames;
 	transaction.Append(context, global_state.written_files);

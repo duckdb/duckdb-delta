@@ -565,17 +565,16 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	visitor.visit_date = VisitSimpleType<LogicalType::DATE>();
 	visitor.visit_timestamp = VisitSimpleType<LogicalType::TIMESTAMP_TZ>();
 	visitor.visit_timestamp_ntz = VisitSimpleType<LogicalType::TIMESTAMP>();
-
-	visitor.visit_variant =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata)) & VisitVariant;
+	visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	                                  bool is_nullable, const ffi::CStringMap *metadata)) &
+	                        VisitVariant;
 
 	return visitor;
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::SharedExternEngine *engine,
+vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
                                                                           ffi::SharedSnapshot *snapshot) {
-	SchemaVisitor state;
-	state.engine = engine;
+	SchemaVisitor state(engine);
 	auto visitor = CreateSchemaVisitor(state);
 
 	auto schema = logical_schema(snapshot);
@@ -590,9 +589,9 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::S
 }
 
 vector<DeltaMultiFileColumnDefinition>
-SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedExternEngine *engine, ffi::SharedScan *scan, bool logical) {
-	SchemaVisitor visitor_state;
-	visitor_state.engine = engine;
+SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *scan,
+                                             bool logical) {
+	SchemaVisitor visitor_state(engine);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 
 	ffi::Handle<ffi::SharedSchema> schema;
@@ -612,10 +611,10 @@ SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedExternEngine *engine, ff
 	return visitor_state.TakeFieldList(result);
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitWriteContextSchema(ffi::SharedExternEngine *engine,
-                                                                              ffi::SharedWriteContext *write_context) {
-	SchemaVisitor visitor_state;
-	visitor_state.engine = engine;
+vector<DeltaMultiFileColumnDefinition>
+SchemaVisitor::VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
+                                       ffi::SharedWriteContext *write_context) {
+	SchemaVisitor visitor_state(engine);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);
@@ -707,11 +706,12 @@ void SchemaVisitor::VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ff
 
 void SchemaVisitor::VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
                                  bool is_nullable, const ffi::CStringMap *metadata) {
+	// NOTE: logical type always VARIANT here, backwards compatible parsing from STRUCT(value, metadata) handled in
+	// parquet_read() via IsVariantType function, which is always enabled via the __delta_only_variant_encoding_enabled
+	// global setting.
 	LogicalType type = LogicalType::VARIANT();
-
 	DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
 	ApplyDeltaColumnMapping(state->engine, metadata, col_def);
-
 	state->AppendToList(sibling_list_id, name, std::move(col_def));
 }
 
@@ -750,14 +750,14 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::TakeFieldList(uintptr_t id
 	return rval;
 }
 
-ffi::EngineError *DuckDBEngineError::AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg) {
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg) {
 	auto error = new DuckDBEngineError;
 	error->etype = etype;
 	error->error_message = string(msg.ptr, msg.len);
 	return error;
 }
 
-ffi::EngineError *DuckDBEngineError::AllocateError(ffi::KernelError etype, const string &msg) {
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, const string &msg) {
 	auto error = new DuckDBEngineError;
 	error->etype = etype;
 	error->error_message = string(msg.data(), msg.length());
@@ -901,15 +901,16 @@ vector<bool> KernelUtils::FromDeltaBoolSlice(const struct ffi::KernelBoolSlice s
 	return result;
 }
 
-string KernelUtils::FetchFromStringMap(ffi::SharedExternEngine *engine, const ffi::CStringMap *str_map,
+string KernelUtils::FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *str_map,
                                        const string &key) {
-	auto maybe_mapped = ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew, engine);
-	ffi::NullableCvoid /* = string* */ map_res = nullptr;
+	void *out;
+	auto res = KernelUtils::TryUnpackResult(
+	    ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew, engine), out);
+
 	string val;
-	auto maybe_err = KernelUtils::TryUnpackResult(maybe_mapped, map_res);
-	if (!maybe_err.HasError() && map_res != nullptr) {
-		val = *(string *)map_res;
-		delete static_cast<string *>(map_res);
+	if (!res.HasError() && out) {
+		val = *(string *)out;
+		delete static_cast<string *>(out);
 	}
 	return val;
 }
@@ -1192,6 +1193,9 @@ bool LoggerCallback::TryLog(const char *name, LogLevel level, const string &msg)
 }
 
 void LoggerCallback::CallbackEvent(ffi::Event event) {
+	if (!GetInstance().enabled) {
+		return;
+	}
 	TryLog(DeltaKernelLogType::NAME, GetDuckDBLogLevel(event.level), DeltaKernelLogType::ConstructLogMessage(event));
 }
 
@@ -1228,16 +1232,12 @@ void LoggerCallback::DuckDBSettingCallBack(ClientContext &context, SetScope scop
 		throw InternalException("Failed to find setting 'delta_kernel_logging'");
 	}
 
-	if (current_setting.GetValue<bool>() && !parameter.GetValue<bool>()) {
-		throw InvalidInputException("Can not disable 'delta_kernel_logging' after enabling it. You can disable DuckDB "
-		                            "logging with SET enable_logging=false, but there will still be some performance "
-		                            "overhead from 'delta_kernel_logging'"
-		                            "that can only be mitigated by restarting DuckDB");
-	}
-
 	if (!current_setting.GetValue<bool>() && parameter.GetValue<bool>()) {
 		ffi::enable_event_tracing(LoggerCallback::CallbackEvent, ffi::Level::TRACE);
 	}
+	// Mirror the setting into the singleton so CallbackEvent can gate on it.
+	// The Rust subscriber cannot be unregistered once installed, so when setting=false we stop
+	// forwarding in CallbackEvent rather than preventing the Rust side from firing.
+	LoggerCallback::GetInstance().enabled = parameter.GetValue<bool>();
 }
-
 }; // namespace duckdb
