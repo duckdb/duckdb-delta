@@ -4,6 +4,8 @@ PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 EXT_NAME=deltatable
 EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
+PIP=python3 -m pip
+
 ifeq ($(SANITIZER_MODE), thread)
 	EXT_DEBUG_FLAGS:=-DENABLE_THREAD_SANITIZER=1
 endif
@@ -47,7 +49,7 @@ include benchmark/benchmark.Makefile
 #   export JAVA_HOME=/opt/homebrew/Cellar/openjdk@11/11.0.27/libexec/openjdk.jdk/Contents/Home
 generate-data:
 	# NOTE: @benfleis - for now pin versions that work, since unversioned/HEAD caused a big JVM stack trace that I couldn't trivially track down;
-	python3 -m pip install delta-spark==4.0.0 deltalake==1.2.1 duckdb==1.4.4 pandas==2.3.3 pyarrow==22.0.0 pyspark==4.0.1 typing-extensions==4.15.0
+	${PIP} install delta-spark==4.0.0 deltalake==1.2.1 duckdb==1.4.4 pandas==2.3.3 pyarrow==22.0.0 pyspark==4.0.1 typing-extensions==4.15.0
 	python3 scripts/data_generator/generate_test_data.py
 	# avoid footguns -- make outputs read only
 	find data/generated -mindepth 1 -print0 | xargs -0 -n 1000 chmod a-w

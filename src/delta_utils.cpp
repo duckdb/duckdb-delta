@@ -76,7 +76,7 @@ ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor 
 	visitor.visit_in = VisitVariadicExpression<ExpressionType::COMPARE_IN, OperatorExpression>();
 
 	visitor.visit_add = VisitAdditionExpression;
-	visitor.visit_minus = VisitSubctractionExpression;
+	visitor.visit_minus = VisitSubtractionExpression;
 	visitor.visit_multiply = VisitMultiplyExpression;
 	visitor.visit_divide = VisitDivideExpression;
 	visitor.visit_coalesce = VisitCoalesceExpression;
@@ -157,7 +157,7 @@ void ExpressionVisitor::VisitAdditionExpression(void *state, uintptr_t sibling_l
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
-void ExpressionVisitor::VisitSubctractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
+void ExpressionVisitor::VisitSubtractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
 	auto state_cast = static_cast<ExpressionVisitor *>(state);
 	auto children = state_cast->TakeFieldList(child_list_id);
 	if (!children) {

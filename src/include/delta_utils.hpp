@@ -188,7 +188,7 @@ private:
 	}
 
 	static void VisitAdditionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
-	static void VisitSubctractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
+	static void VisitSubtractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitDivideExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitCoalesceExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitMultiplyExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
