@@ -10,7 +10,7 @@ require delta
 require parquet
 
 load
-ATTACH './data/generated/delta_rs_tpch_sf1_100_splits/lineitem/delta_lake' as lineitem_pin (TYPE delta, PIN_SNAPSHOT);
+ATTACH './data/generated/tpch_sf1_90commits/lineitem/delta_lake' as lineitem_pin (TYPE delta, PIN_SNAPSHOT);
 
 run
 SELECT COUNT(*) FROM lineitem_pin

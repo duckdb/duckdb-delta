@@ -14,6 +14,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -44,6 +45,32 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		if (StringUtil::Lower(option.first) == "child_catalog_mode") {
 			res->child_catalog_mode = option.second.GetValue<bool>();
 		}
+		if (StringUtil::Lower(option.first) == "parent_catalog") {
+			res->parent_catalog_name = StringValue::Get(option.second);
+		}
+		if (StringUtil::Lower(option.first) == "parent_commit") {
+			res->parent_commit = option.second.GetValue<bool>();
+		}
+		if (StringUtil::Lower(option.first) == "log_tail") {
+			res->catalog_log_tail = option.second;
+		}
+		if (StringUtil::Lower(option.first) == "unity_table_id") {
+			res->unity_table_id = StringValue::Get(option.second);
+		}
+	}
+
+	// If parent_commit is enabled, we need to load the internal commit function of the parent catalog here
+	if (res->parent_commit) {
+		string schema = DEFAULT_SCHEMA;
+		string commit_fun_name = "__internal_delta_ccv2_commit_staged";
+
+		CatalogEntryRetriever retriever(context);
+		EntryLookupInfo lookup_info(CatalogType::TABLE_FUNCTION_ENTRY, commit_fun_name);
+		auto fun = retriever.GetEntry(res->parent_catalog_name, schema, lookup_info, OnEntryNotFound::RETURN_NULL);
+		if (!fun) {
+			throw InternalException("Parent catalog does not have a __internal_delta_ccv2_commit_staged function");
+		}
+		res->commit_function = fun->Cast<TableFunctionCatalogEntry>();
 	}
 
 	res->SetDefaultTable(DEFAULT_SCHEMA, res->GetInternalTableName());
@@ -79,6 +106,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// Register the "single table" delta catalog (to ATTACH a single delta table)
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
 	StorageExtension::Register(config, "delta", make_shared_ptr<DeltaStorageExtension>());
+
+	// NOTE: variant_legacy_encoding now refers to __delta_only_variant_encoding_enabled which is strictly internal
+	// and used to signal parquet variant legacy support. It's not fundamentally optional, and thus controlled here
+	// only.
+	config.options.variant_legacy_encoding = true;
 
 	config.AddExtensionOption("delta_scan_explain_files_filtered",
 	                          "Adds the filtered files to the explain output. Warning: this may impact performance of "

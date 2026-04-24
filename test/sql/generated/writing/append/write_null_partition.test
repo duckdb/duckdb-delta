@@ -1,0 +1,53 @@
+# name: test/sql/generated/writing/append/write_null_partition.test
+# description: null partition values must round-trip: written as "" in the log, read back as NULL
+# group: [append]
+
+require parquet
+
+require delta
+
+require json
+
+require-env GENERATED_DATA_AVAILABLE
+
+statement ok
+from copy_dir('data/generated/simple_partitioned', '__TEST_DIR__/write_null_partition/simple_partitioned');
+
+statement ok
+ATTACH '__TEST_DIR__/write_null_partition/simple_partitioned/delta_lake' AS t (TYPE delta);
+
+# Baseline
+query II
+SELECT count(*), sum(i) FROM t;
+----
+10	45
+
+# Insert a row with NULL for the partition column.
+statement ok
+INSERT INTO t VALUES (99, NULL);
+
+# from protocol's Partition Value Serialization: "An empty string for any
+# type translates to a null partition value" — the written log entry must
+# have "" for the null value.
+query I
+SELECT json_extract_string(add.partitionValues, '$.part')
+FROM read_json('__TEST_DIR__/write_null_partition/simple_partitioned/delta_lake/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+(empty)
+
+# Verify round-trip: 11 rows total, only 10 have a non-null part
+query II
+SELECT count(*), count(part) FROM t;
+----
+11	10
+
+# The inserted row is retrievable via IS NULL
+query I
+SELECT i FROM t WHERE part IS NULL;
+----
+99
+
+# Confirm that part=NULL directory is encoded as part=__HIVE_DEFAULT_PARTITION__
+statement ok
+FROM read_parquet('__TEST_DIR__/write_null_partition/simple_partitioned/delta_lake/part=__HIVE_DEFAULT_PARTITION__/*.parquet');

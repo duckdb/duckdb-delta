@@ -1,5 +1,6 @@
 #include "storage/delta_transaction_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "functions/delta_scan/delta_multi_file_list.hpp"
 
 namespace duckdb {
 
@@ -21,10 +22,10 @@ static ErrorData HandleConflict(DeltaTransaction &transaction, ErrorData &origin
 		transaction.CleanUpFiles();
 	} catch (std::exception &ex) {
 		ErrorData new_error(ex);
-		string new_message =
-		    StringUtil::Format("Multiple exceptions happened. Firstly, the DeltaTransaction failed to commit with "
-		                       "'%s'. Secondly, DuckDB failed to clean up the files produced by this transaction: '%s'",
-		                       original_error.Message());
+		string new_message = StringUtil::Format(
+		    "Multiple exceptions happened. Firstly, the DeltaTransaction failed to commit with "
+		    "'%s'. Secondly, DuckDB failed to clean up the files produced by this transaction, with: '%s'",
+		    original_error.Message(), new_error.Message());
 		return ErrorData(original_error.Type(), new_message);
 	}
 	return original_error;
@@ -54,9 +55,16 @@ void DeltaTransactionManager::Checkpoint(ClientContext &context, bool force) {
 	// Fetch the currently active delta transaction
 	auto &delta_transaction = DeltaTransaction::Get(context, delta_catalog);
 
+	auto &schema = delta_catalog.GetMainSchema();
+	optional_ptr<const DeltaMultiFileList> old_snapshot;
+	auto cached = schema.GetCachedTable();
+	if (cached) {
+		old_snapshot = cached->snapshot.get();
+	}
+
 	// Initialize the transaction-local copy of the delta snapshot
 	auto &table_entry = delta_transaction.InitializeTableEntry(context, delta_catalog.GetMainSchema(),
-	                                                           delta_catalog.use_specific_version);
+	                                                           delta_catalog.use_specific_version, old_snapshot);
 
 	// Get a locking ref to the shared ffi snapshot
 	auto snapshot_ref = table_entry.snapshot->snapshot->GetLockingRef();

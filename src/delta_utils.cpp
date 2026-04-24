@@ -1,4 +1,5 @@
 #include "delta_utils.hpp"
+#include "duckdb/planner/filter/struct_filter.hpp"
 
 #include <list>
 
@@ -75,7 +76,7 @@ ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor 
 	visitor.visit_in = VisitVariadicExpression<ExpressionType::COMPARE_IN, OperatorExpression>();
 
 	visitor.visit_add = VisitAdditionExpression;
-	visitor.visit_minus = VisitSubctractionExpression;
+	visitor.visit_minus = VisitSubtractionExpression;
 	visitor.visit_multiply = VisitMultiplyExpression;
 	visitor.visit_divide = VisitDivideExpression;
 	visitor.visit_coalesce = VisitCoalesceExpression;
@@ -156,7 +157,7 @@ void ExpressionVisitor::VisitAdditionExpression(void *state, uintptr_t sibling_l
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
-void ExpressionVisitor::VisitSubctractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
+void ExpressionVisitor::VisitSubtractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
 	auto state_cast = static_cast<ExpressionVisitor *>(state);
 	auto children = state_cast->TakeFieldList(child_list_id);
 	if (!children) {
@@ -564,17 +565,16 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	visitor.visit_date = VisitSimpleType<LogicalType::DATE>();
 	visitor.visit_timestamp = VisitSimpleType<LogicalType::TIMESTAMP_TZ>();
 	visitor.visit_timestamp_ntz = VisitSimpleType<LogicalType::TIMESTAMP>();
-
-	visitor.visit_variant =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata)) & VisitVariant;
+	visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	                                  bool is_nullable, const ffi::CStringMap *metadata)) &
+	                        VisitVariant;
 
 	return visitor;
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::SharedExternEngine *engine,
+vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
                                                                           ffi::SharedSnapshot *snapshot) {
-	SchemaVisitor state;
-	state.engine = engine;
+	SchemaVisitor state(engine);
 	auto visitor = CreateSchemaVisitor(state);
 
 	auto schema = logical_schema(snapshot);
@@ -589,9 +589,9 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::S
 }
 
 vector<DeltaMultiFileColumnDefinition>
-SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedExternEngine *engine, ffi::SharedScan *scan, bool logical) {
-	SchemaVisitor visitor_state;
-	visitor_state.engine = engine;
+SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *scan,
+                                             bool logical) {
+	SchemaVisitor visitor_state(engine);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 
 	ffi::Handle<ffi::SharedSchema> schema;
@@ -611,10 +611,10 @@ SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::SharedExternEngine *engine, ff
 	return visitor_state.TakeFieldList(result);
 }
 
-vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitWriteContextSchema(ffi::SharedExternEngine *engine,
-                                                                              ffi::SharedWriteContext *write_context) {
-	SchemaVisitor visitor_state;
-	visitor_state.engine = engine;
+vector<DeltaMultiFileColumnDefinition>
+SchemaVisitor::VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
+                                       ffi::SharedWriteContext *write_context) {
+	SchemaVisitor visitor_state(engine);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);
@@ -706,11 +706,12 @@ void SchemaVisitor::VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ff
 
 void SchemaVisitor::VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
                                  bool is_nullable, const ffi::CStringMap *metadata) {
+	// NOTE: logical type always VARIANT here, backwards compatible parsing from STRUCT(value, metadata) handled in
+	// parquet_read() via IsVariantType function, which is always enabled via the __delta_only_variant_encoding_enabled
+	// global setting.
 	LogicalType type = LogicalType::VARIANT();
-
 	DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
 	ApplyDeltaColumnMapping(state->engine, metadata, col_def);
-
 	state->AppendToList(sibling_list_id, name, std::move(col_def));
 }
 
@@ -749,10 +750,17 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::TakeFieldList(uintptr_t id
 	return rval;
 }
 
-ffi::EngineError *DuckDBEngineError::AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg) {
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg) {
 	auto error = new DuckDBEngineError;
 	error->etype = etype;
 	error->error_message = string(msg.ptr, msg.len);
+	return error;
+}
+
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, const string &msg) {
+	auto error = new DuckDBEngineError;
+	error->etype = etype;
+	error->error_message = string(msg.data(), msg.length());
 	return error;
 }
 
@@ -822,6 +830,63 @@ string DuckDBEngineError::IntoString() {
 	return StringUtil::Format("DeltaKernel %s (%u): %s", KernelErrorEnumToString(etype_copy), etype_copy, message_copy);
 }
 
+DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
+	string_heap = make_uniq<StringHeap>();
+
+	if (log_path.type().id() != LogicalTypeId::LIST) {
+		throw InternalException("log_path must be a list");
+	}
+
+	auto list_items = ListValue::GetChildren(log_path);
+	log_entries.reserve(list_items.size());
+
+	for (auto &item : list_items) {
+		if (item.type().id() != LogicalTypeId::STRUCT) {
+			throw InternalException("log_path must be a list of structs");
+		}
+
+		auto &field_types = StructType::GetChildTypes(item.type());
+		auto &field_values = StructValue::GetChildren(item);
+
+		string_t location;
+		int64_t last_modified = NumericLimits<int64_t>::Minimum();
+		uint64_t size = DConstants::INVALID_INDEX;
+		bool has_timestamp = false;
+		for (idx_t i = 0; i < field_values.size(); i++) {
+			auto &field_name = field_types[i].first;
+			auto &field_value = field_values[i];
+			if (field_name == "file_name") {
+				location = string_heap->AddString(field_value.GetValue<string>());
+			} else if (field_name == "timestamp") {
+				last_modified = field_value.GetValue<int64_t>();
+				has_timestamp = true;
+			} else if (field_name == "file_size") {
+				size = field_value.GetValue<uint64_t>();
+			}
+		}
+
+		if (location.Empty() || !has_timestamp || size == DConstants::INVALID_INDEX) {
+			throw InternalException("Invalid log_path struct: " + item.ToString());
+		}
+
+		ffi::KernelStringSlice location_slice = {location.GetData(), location.GetSize()};
+		log_entries.emplace_back(ffi::FfiLogPath {location_slice, last_modified, size});
+	}
+
+	// Note: kernel expects reverse order here, as this is max ~50 entries this is cheap
+	std::reverse(log_entries.begin(), log_entries.end());
+}
+
+ffi::LogPathArray DeltaLogPathArray::GetFFIPtr() {
+	return {log_entries.data(), log_entries.size()};
+}
+
+LogicalType KernelUtils::GetLogPathType() {
+	return LogicalType::LIST(LogicalType::STRUCT({{"file_name", LogicalType::VARCHAR},
+	                                              {"timestamp", LogicalType::BIGINT},
+	                                              {"file_size", LogicalType::UBIGINT}}));
+}
+
 ffi::KernelStringSlice KernelUtils::ToDeltaString(const string &str) {
 	return {str.data(), str.size()};
 }
@@ -836,15 +901,16 @@ vector<bool> KernelUtils::FromDeltaBoolSlice(const struct ffi::KernelBoolSlice s
 	return result;
 }
 
-string KernelUtils::FetchFromStringMap(ffi::SharedExternEngine *engine, const ffi::CStringMap *str_map,
+string KernelUtils::FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *str_map,
                                        const string &key) {
-	auto maybe_mapped = ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew, engine);
-	ffi::NullableCvoid /* = string* */ map_res = nullptr;
+	void *out;
+	auto res = KernelUtils::TryUnpackResult(
+	    ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew, engine), out);
+
 	string val;
-	auto maybe_err = KernelUtils::TryUnpackResult(maybe_mapped, map_res);
-	if (!maybe_err.HasError() && map_res != nullptr) {
-		val = *(string *)map_res;
-		delete static_cast<string *>(map_res);
+	if (!res.HasError() && out) {
+		val = *(string *)out;
+		delete static_cast<string *>(out);
 	}
 	return val;
 }
@@ -964,13 +1030,42 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, const Co
 		}
 		break;
 	}
+	case LogicalTypeId::DECIMAL: {
+		auto precision = DecimalType::GetWidth(value.type());
+		auto scale = DecimalType::GetScale(value.type());
+		uint64_t value_hi, value_lo;
+		auto phys = value.type().InternalType();
+		if (phys == PhysicalType::INT128) {
+			auto h = value.GetValueUnsafe<hugeint_t>();
+			value_hi = (uint64_t)h.upper;
+			value_lo = h.lower;
+		} else {
+			int64_t v;
+			if (phys == PhysicalType::INT16) {
+				v = value.GetValueUnsafe<int16_t>();
+			} else if (phys == PhysicalType::INT32) {
+				v = value.GetValueUnsafe<int32_t>();
+			} else {
+				v = value.GetValueUnsafe<int64_t>();
+			}
+			value_hi = v < 0 ? UINT64_MAX : 0ULL;
+			value_lo = (uint64_t)v;
+		}
+		auto maybe_right = ffi::visit_expression_literal_decimal(state, value_hi, value_lo, precision, scale,
+		                                                         DuckDBEngineError::AllocateError);
+		auto right_res = KernelUtils::TryUnpackResult(maybe_right, right);
+		if (right_res.HasError()) {
+			error_data = right_res;
+			return ~0;
+		}
+		break;
+	}
 	// TODO: implement these types
+	case LogicalTypeId::TIMESTAMP:    // kernel ignores max stats for timestamps (see delta-kernel-rs#1002)
+	case LogicalTypeId::TIMESTAMP_TZ: // kernel ignores max stats for timestamps (see delta-kernel-rs#1002)
 	case LogicalTypeId::STRUCT:
 	case LogicalTypeId::MAP:
 	case LogicalTypeId::LIST:
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::TIMESTAMP_TZ:
-	case LogicalTypeId::DECIMAL:
 	default:
 		break; // unsupported type
 	}
@@ -1035,6 +1130,21 @@ uintptr_t PredicateVisitor::VisitIsNotNull(const string &col_name, ffi::KernelEx
 	return ffi::visit_predicate_not(state, VisitIsNull(col_name, state));
 }
 
+uintptr_t PredicateVisitor::VisitStructExtractFilter(const string &col_name, const StructFilter &filter,
+                                                     ffi::KernelExpressionVisitorState *state) {
+	// Build the full dot-separated path by recursing through nested StructFilters.
+	// E.g. col "i" with StructFilter{child_name="a", child_filter=StructFilter{child_name="b", leaf}}
+	// becomes "i.a.b". visit_expression_column splits on "." to construct the kernel ColumnName.
+	string full_path = col_name + "." + filter.child_name;
+	const TableFilter *child = filter.child_filter.get();
+	while (child->filter_type == TableFilterType::STRUCT_EXTRACT) {
+		const auto &nested = static_cast<const StructFilter &>(*child);
+		full_path += "." + nested.child_name;
+		child = nested.child_filter.get();
+	}
+	return VisitFilter(full_path, *child, state);
+}
+
 uintptr_t PredicateVisitor::VisitFilter(const string &col_name, const TableFilter &filter,
                                         ffi::KernelExpressionVisitorState *state) {
 	switch (filter.filter_type) {
@@ -1046,12 +1156,12 @@ uintptr_t PredicateVisitor::VisitFilter(const string &col_name, const TableFilte
 		return VisitIsNull(col_name, state);
 	case TableFilterType::IS_NOT_NULL:
 		return VisitIsNotNull(col_name, state);
+	case TableFilterType::STRUCT_EXTRACT:
+		return VisitStructExtractFilter(col_name, static_cast<const StructFilter &>(filter), state);
 	// TODO: implement once kernel can do arbitrary expressions
 	case TableFilterType::EXPRESSION_FILTER:
 	// TODO: implement once kernel adds support for IN filters / arbitrary expressions
 	case TableFilterType::IN_FILTER:
-	// TODO: implement once kernel can do struct extract pushdown / arbitrary expressions
-	case TableFilterType::STRUCT_EXTRACT:
 	// TODO: figure out if this is ever useful
 	case TableFilterType::DYNAMIC_FILTER:
 	// TODO: can we even push these down?
@@ -1083,6 +1193,9 @@ bool LoggerCallback::TryLog(const char *name, LogLevel level, const string &msg)
 }
 
 void LoggerCallback::CallbackEvent(ffi::Event event) {
+	if (!GetInstance().enabled) {
+		return;
+	}
 	TryLog(DeltaKernelLogType::NAME, GetDuckDBLogLevel(event.level), DeltaKernelLogType::ConstructLogMessage(event));
 }
 
@@ -1119,16 +1232,12 @@ void LoggerCallback::DuckDBSettingCallBack(ClientContext &context, SetScope scop
 		throw InternalException("Failed to find setting 'delta_kernel_logging'");
 	}
 
-	if (current_setting.GetValue<bool>() && !parameter.GetValue<bool>()) {
-		throw InvalidInputException("Can not disable 'delta_kernel_logging' after enabling it. You can disable DuckDB "
-		                            "logging with SET enable_logging=false, but there will still be some performance "
-		                            "overhead from 'delta_kernel_logging'"
-		                            "that can only be mitigated by restarting DuckDB");
-	}
-
 	if (!current_setting.GetValue<bool>() && parameter.GetValue<bool>()) {
 		ffi::enable_event_tracing(LoggerCallback::CallbackEvent, ffi::Level::TRACE);
 	}
+	// Mirror the setting into the singleton so CallbackEvent can gate on it.
+	// The Rust subscriber cannot be unregistered once installed, so when setting=false we stop
+	// forwarding in CallbackEvent rather than preventing the Rust side from firing.
+	LoggerCallback::GetInstance().enabled = parameter.GetValue<bool>();
 }
-
 }; // namespace duckdb

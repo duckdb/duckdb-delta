@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "delta_functions.hpp"
 #include "delta_utils.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 
@@ -56,7 +57,8 @@ class DeltaMultiFileList : public SimpleMultiFileList {
 	friend struct ScanDataCallBack;
 
 public:
-	DeltaMultiFileList(ClientContext &context, const string &path, idx_t version);
+	DeltaMultiFileList(ClientContext &context, const string &path, idx_t version,
+	                   optional_ptr<const DeltaMultiFileList> previous = nullptr);
 	string GetPath() const;
 	static string ToDuckDBPath(const string &raw_path);
 	static string ToDeltaPath(const string &raw_path);
@@ -117,6 +119,8 @@ public: // TODO: clean up
 	mutable KernelExternEngine extern_engine;
 	mutable shared_ptr<SharedKernelSnapshot> snapshot;
 
+	mutable unique_ptr<DeltaLogPathArray> delta_log_path;
+
 protected:
 	// Note: Nearly this entire class is mutable because it represents a lazily expanded list of files that is logically
 	//       const, but not physically.
@@ -124,6 +128,8 @@ protected:
 	mutable idx_t version;
 
 	//! Delta Kernel Structures
+	mutable shared_ptr<SharedKernelSnapshot> old_snapshot;
+
 	mutable KernelScan scan;
 	mutable KernelScanDataIterator scan_data_iterator;
 
@@ -147,7 +153,7 @@ protected:
 	mutable vector<NestedNotNullConstraint> not_null_constraints;
 	mutable bool has_null_constraints_in_arrays = false;
 
-	//! Global schema: NOTE: this might be missing some sht
+	//! Global schema: NOTE: this might be missing some things
 	vector<DeltaMultiFileColumnDefinition> global_columns;
 
 	bool have_bound = false;

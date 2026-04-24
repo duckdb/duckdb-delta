@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+
+#
+# Usage: generate_delta_kernel_ffi_header <scripts_ffi_dir> <input_header> <output_dir>
+#   scripts_ffi_dir — directory containing prefix.inc and suffix.inc
+#   input_header    — path to generated delta_kernel_ffi.hpp (from Rust build)
+#   output_dir      — directory to write patched header and generated inc file into
+#
+# Copies and patches the delta-kernel FFI C++ header, updating the src from
+# - build/<kind>/rust/src/delta-kernel-rs/target/ffi/delta_kernel_ffi.hpp
+# - build/<kind>/codegen/include/generated_delta_kernel_ffi.hpp
+#
+# Patches applied (see cbindgen#402 for MSVC context):
+#   1. After '#pragma once': inject DEBUG macro undef + clang diagnostic suppression
+#   2. Before 'extern "C"' functions: inject force-instantiated ExternResult<T> struct
+#   3. After closing '} // namespace ffi': inject clang diagnostic pop + macro restore
+#
+
+set -e
+
+SCRIPTS_FFI_DIR="$1"
+INPUT_HEADER="$2"
+OUTPUT_DIR="$3"
+
+if [ -z "$SCRIPTS_FFI_DIR" ] || [ -z "$INPUT_HEADER" ] || [ -z "$OUTPUT_DIR" ]; then
+	echo "Usage: $0 <scripts_ffi_dir> <input_header> <output_dir>" >&2
+	exit 1
+fi
+
+OUTPUT_HEADER="$OUTPUT_DIR/generated_delta_kernel_ffi.hpp"
+MSVC_COMPAT_INC="$OUTPUT_DIR/generated_inline_msvc_compat.inc"
+
+mkdir -p "$OUTPUT_DIR"
+cp "$INPUT_HEADER" "$OUTPUT_HEADER"
+
+# extract all ExternResult<T> and OptionalValue<T> function return types
+# (lines starting with those templates), deduplicate and emit a struct to
+# workaround MSVC C2526
+{
+	printf 'struct msvc_compat_force_instantiate {\n'
+	grep -oE '^(ExternResult|OptionalValue)<[^ ]+' "$OUTPUT_HEADER" | sort -u |
+		awk 'BEGIN{i=0}{printf "  %s _%d;\n", $0, i++}'
+	printf '};\n\n'
+} >"$MSVC_COMPAT_INC"
+
+# Bring together all the patches into generated header:
+#   /^#pragma once$/    -> append prefix.inc
+#   /^extern/           -> append inline_msvc_compat.inc (generated above)
+#   /^}.*namespace ffi/ -> append suffix.inc
+sed -i.bak \
+	-e "/^#pragma once$/r $SCRIPTS_FFI_DIR/prefix.inc" \
+	-e "/^extern/r $MSVC_COMPAT_INC" \
+	-e "/^}.*namespace.ffi/r $SCRIPTS_FFI_DIR/suffix.inc" \
+	"$OUTPUT_HEADER"
+
+rm -f "$OUTPUT_HEADER.bak"

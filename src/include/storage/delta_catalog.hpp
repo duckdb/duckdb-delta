@@ -40,6 +40,14 @@ public:
 
 	string internal_table_name;
 	bool child_catalog_mode = false;
+	string parent_catalog_name;
+	optional_ptr<TableCatalogEntry> parent_table_entry;
+	bool parent_commit = false;
+	optional_ptr<TableFunctionCatalogEntry> commit_function;
+	string unity_table_id;
+
+	// Store the log_tail for catalog-managed commits (CCV2)
+	Value catalog_log_tail;
 
 public:
 	string GetInternalTableName() {

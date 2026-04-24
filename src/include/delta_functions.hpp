@@ -52,7 +52,6 @@ private:
 	static ScalarFunctionSet GetExpressionFunction(ExtensionLoader &loader);
 
 	static ScalarFunctionSet GetWriteFileFunction(ExtensionLoader &loader);
-	static ScalarFunctionSet GetWriteFileFunction(DatabaseInstance &instance);
 
 	static vector<TableFunction> GetTransactionIdempotencyHelpers(DatabaseInstance &instance);
 };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "generated_delta_kernel_ffi.hpp"
 #define DEFINE_DEFAULT_ENGINE_BASE 1
 #include "delta_kernel_ffi.hpp"
 #include "duckdb/common/enum_util.hpp"
@@ -10,8 +11,7 @@
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/common/error_data.hpp"
-#include "duckdb/parser/expression/comparison_expression.hpp"
-#include <duckdb/planner/filter/null_filter.hpp>
+#include "duckdb/planner/filter/struct_filter.hpp"
 #include <iostream>
 
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
@@ -25,6 +25,7 @@ class DatabaseInstance;
 struct DuckDBEngineError : ffi::EngineError {
 	// Allocate a DuckDBEngineError, function ptr passed to kernel for error allocation
 	static ffi::EngineError *AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg);
+	static ffi::EngineError *AllocateError(ffi::KernelError etype, const string &msg);
 	// Convert a kernel error enum to a string
 	static string KernelErrorEnumToString(ffi::KernelError err);
 
@@ -35,11 +36,25 @@ struct DuckDBEngineError : ffi::EngineError {
 	string error_message;
 };
 
+//! Object to pass catalog information about a table's latest log entries to the kernel
+struct DeltaLogPathArray {
+	DeltaLogPathArray(Value val);
+
+	// Construct the FFI safe (non-owning) object for kernel to read the log path
+	ffi::LogPathArray GetFFIPtr();
+
+	// For passing to ffi
+	unique_ptr<StringHeap> string_heap;
+	vector<ffi::FfiLogPath> log_entries;
+};
+
 struct KernelUtils {
+	static LogicalType GetLogPathType();
 	static ffi::KernelStringSlice ToDeltaString(const string &str);
 	static string FromDeltaString(const struct ffi::KernelStringSlice slice);
 	static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
-	static string FetchFromStringMap(ffi::SharedExternEngine *engine, const ffi::CStringMap *map, const string &key);
+	static string FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *map,
+	                                 const string &key);
 
 	static void *StringAllocationNew(const struct ffi::KernelStringSlice slice) {
 		return new string(slice.ptr, slice.len);
@@ -60,6 +75,21 @@ struct KernelUtils {
 			return {};
 		}
 		return ErrorData(ExceptionType::IO, "Invalid Delta kernel ExternResult");
+	}
+
+	template <class T>
+	static ffi::OptionalValue<T> OptionalSome(T &val) {
+		ffi::OptionalValue<T> some = {};
+		some.tag = ffi::OptionalValue<T>::Tag::Some;
+		some.some = {val};
+		return some;
+	}
+
+	template <class T>
+	static ffi::OptionalValue<T> OptionalNone() {
+		ffi::OptionalValue<T> none = {};
+		none.tag = ffi::OptionalValue<T>::Tag::None;
+		return none;
 	}
 
 	static vector<unique_ptr<ParsedExpression>> &
@@ -158,7 +188,7 @@ private:
 	}
 
 	static void VisitAdditionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
-	static void VisitSubctractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
+	static void VisitSubtractionExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitDivideExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitCoalesceExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitMultiplyExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
@@ -246,11 +276,13 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 // SchemaVisitor is used to parse the schema of a Delta table from the Kernel
 class SchemaVisitor {
 public:
-	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::SharedExternEngine *engine,
+	explicit SchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p) : engine(engine_p) {};
+
+	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
 	                                                                  ffi::SharedSnapshot *snapshot);
-	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotGlobalReadSchema(ffi::SharedExternEngine *engine,
-	                                                                            ffi::SharedScan *state, bool logical);
-	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::SharedExternEngine *engine,
+	static vector<DeltaMultiFileColumnDefinition>
+	VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *state, bool logical);
+	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
 	                                                                      ffi::SharedWriteContext *write_context);
 
 private:
@@ -265,7 +297,7 @@ private:
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CStringMap *metadata);
 
-	static void ApplyDeltaColumnMapping(ffi::SharedExternEngine *engine, const ffi::CStringMap *metadata,
+	static void ApplyDeltaColumnMapping(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *metadata,
 	                                    DeltaMultiFileColumnDefinition &col_def) {
 		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
 		if (!id.empty()) {
@@ -300,7 +332,6 @@ private:
 	                       bool is_nullable, const ffi::CStringMap *metadata, uintptr_t child_list_id);
 	static void VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name, bool is_nullable,
 	                     const ffi::CStringMap *metadata, uintptr_t child_list_id);
-
 	static void VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                         bool is_nullable, const ffi::CStringMap *metadata);
 
@@ -449,6 +480,8 @@ private:
 
 	uintptr_t VisitIsNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
 	uintptr_t VisitIsNotNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
+	uintptr_t VisitStructExtractFilter(const string &col_name, const StructFilter &filter,
+	                                   ffi::KernelExpressionVisitorState *state);
 
 	uintptr_t VisitFilter(const string &col_name, const TableFilter &filter, ffi::KernelExpressionVisitorState *state);
 };
@@ -473,6 +506,7 @@ protected:
 
 	mutex lock;
 	weak_ptr<DatabaseInstance> db;
+	atomic<bool> enabled {false};
 };
 
 } // namespace duckdb

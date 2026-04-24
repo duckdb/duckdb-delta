@@ -1,0 +1,116 @@
+# name: test/sql/generated/writing/append/write_stats_nested.test
+# description: verify that stats are correctly written for nested (struct) types and drive file skipping
+# group: [append]
+
+require parquet
+
+require delta
+
+require json
+
+require-env GENERATED_DATA_AVAILABLE
+
+#------------------------------------------------------------------------------
+# simple_table_nested: single deeply-nested column  i: STRUCT({a: STRUCT({b: BIGINT})})
+# Existing data: 1 file, i.a.b in [0, 9]
+# Insert a value above the existing range → check full stats JSON + file skipping
+#------------------------------------------------------------------------------
+
+statement ok
+from copy_dir('data/generated/simple_table_nested', '__TEST_DIR__/write_stats_nested/simple_table_nested');
+
+statement ok
+ATTACH '__TEST_DIR__/write_stats_nested/simple_table_nested/delta_lake' AS t (TYPE delta);
+
+query II
+SELECT count(*), sum(i.a.b) FROM t;
+----
+10	45
+
+statement ok
+INSERT INTO t VALUES ({'a': {'b': 10}});
+
+# Full stats JSON is deterministic for a single-leaf nested column
+query I
+SELECT add.stats
+FROM read_json('__TEST_DIR__/write_stats_nested/simple_table_nested/delta_lake/_delta_log/00000000000000000002.json')
+WHERE add IS NOT NULL
+----
+{"numRecords":1,"nullCount":{"i":{"a":{"b":0}}},"minValues":{"i":{"a":{"b":10}}},"maxValues":{"i":{"a":{"b":10}}},"tightBounds":true}
+
+# Sanity check: results are correct
+query I
+SELECT count(*) FROM t WHERE i.a.b > 10
+----
+0
+
+query I
+SELECT i.a.b FROM t WHERE i.a.b = 10
+----
+10
+
+query II
+EXPLAIN ANALYZE SELECT i.a.b FROM t WHERE i.a.b > 10
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 0/2.*
+
+query II
+EXPLAIN ANALYZE SELECT i.a.b FROM t WHERE i.a.b = 10
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
+
+statement ok
+DETACH t;
+
+#------------------------------------------------------------------------------
+# simple_partitioned_with_structs: struct with multiple sibling fields
+# Schema: value: STRUCT({i: BIGINT, j: BIGINT}), part: BIGINT (partition)
+# Existing data: 2 files — part=0 (i in [0,8], j in [1,9]) and part=1 (i in [1,9], j in [2,10])
+# Insert a row with i=100, j=100 to create a distinct file above the existing range
+#------------------------------------------------------------------------------
+
+statement ok
+from copy_dir('data/generated/simple_partitioned_with_structs', '__TEST_DIR__/write_stats_nested/simple_partitioned_with_structs');
+
+statement ok
+ATTACH '__TEST_DIR__/write_stats_nested/simple_partitioned_with_structs/delta_lake' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES ({'i': 100, 'j': 100}, 99);
+
+# Check stats fields for the new file via json_extract (two sibling fields, ordering non-deterministic)
+query IIIII
+SELECT
+    json_extract_string(add.stats, '$.numRecords'),
+    json_extract_string(add.stats, '$.nullCount.value.i'),
+    json_extract_string(add.stats, '$.minValues.value.i'),
+    json_extract_string(add.stats, '$.maxValues.value.j'),
+    json_extract_string(add.stats, '$.tightBounds')
+FROM read_json('__TEST_DIR__/write_stats_nested/simple_partitioned_with_structs/delta_lake/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL
+----
+1	0	100	100	true
+
+# Sanity check: results are correct
+query I
+SELECT count(*) FROM t WHERE value.i > 100
+----
+0
+
+query I
+SELECT value.i FROM t WHERE value.i = 100
+----
+100
+
+query II
+EXPLAIN ANALYZE SELECT value.i FROM t WHERE value.i > 100
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 0/3.*
+
+query II
+EXPLAIN ANALYZE SELECT value.i FROM t WHERE value.i = 100
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/3.*
+
+statement ok
+DETACH t;

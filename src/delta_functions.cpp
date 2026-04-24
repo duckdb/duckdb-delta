@@ -27,4 +27,4 @@ vector<ScalarFunctionSet> DeltaFunctions::GetScalarFunctions(ExtensionLoader &lo
 	return functions;
 }
 
-}; // namespace duckdb
+} // namespace duckdb

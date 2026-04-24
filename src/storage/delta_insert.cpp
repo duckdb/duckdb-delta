@@ -1,6 +1,7 @@
 #include "storage/delta_insert.hpp"
 
-#include <duckdb/common/sorting/hashed_sort.hpp>
+#include "duckdb/common/sorting/hashed_sort.hpp"
+#include "duckdb/common/path.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp"
@@ -13,6 +14,7 @@
 #include "storage/delta_transaction.hpp"
 #include "duckdb/planner/operator/logical_insert.hpp"
 #include "duckdb/planner/operator/logical_create_table.hpp"
+#include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "storage/delta_table_entry.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/execution/operator/projection/physical_projection.hpp"
@@ -43,11 +45,15 @@ public:
 	explicit DeltaInsertGlobalState(const DeltaTableEntry &table)
 	    : table_name(table.name), not_null_constraints(table.GetNotNullConstraints()) {
 		table.ThrowOnUnsupportedFieldForInserting();
+
+		columns = table.snapshot->GetLazyLoadedGlobalColumns();
 	};
 
 	string table_name;
 
 	vector<DeltaDataFile> written_files;
+
+	vector<DeltaMultiFileColumnDefinition> columns;
 
 	idx_t insert_count = 0;
 
@@ -56,7 +62,7 @@ public:
 };
 
 unique_ptr<GlobalSinkState> DeltaInsert::GetGlobalSinkState(ClientContext &context) const {
-	// TODO: what if table isn't set?
+	// TODO: handle null table once CREATE TABLE (AS SELECT) is supported; columns/constraints come from info->Base()
 	const auto &delta_table = table->Cast<DeltaTableEntry>();
 	return make_uniq<DeltaInsertGlobalState>(delta_table);
 }
@@ -104,23 +110,6 @@ static vector<string> ParseQuotedList(const string &input, char list_separator) 
 	}
 	return result;
 }
-
-struct DeltaColumnStats {
-	explicit DeltaColumnStats() = default;
-
-	string min;
-	string max;
-	idx_t null_count = 0;
-	idx_t num_values = 0;
-	idx_t column_size_bytes = 0;
-	bool contains_nan = false;
-	bool has_null_count = false;
-	bool has_num_values = false;
-	bool has_min = false;
-	bool has_max = false;
-	bool any_valid = true;
-	bool has_contains_nan = false;
-};
 
 static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 	DeltaColumnStats column_stats;
@@ -179,6 +168,21 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			auto column_names = ParseQuotedList(col_name, '.');
 			auto stats = ParseColumnStats(col_stats);
 
+			// Find type of column for stats TODO: column mapped names
+			bool found = false;
+			LogicalType coltype;
+			for (auto &col : global_state.columns) {
+				if (col.name == column_names[0]) {
+					found = true;
+					coltype = col.type;
+					break;
+				}
+			}
+			if (!found) {
+				throw InternalException("Column %s not found in table %s", StringUtil::Join(column_names, "."),
+				                        global_state.table_name);
+			}
+
 			if (stats.has_null_count && stats.null_count > 0) {
 				auto constraint = global_state.not_null_constraints.find(column_names[0]);
 				if (constraint != global_state.not_null_constraints.end()) {
@@ -197,6 +201,16 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 					}
 				}
 			}
+
+			// Skip types whose stats we don't yet support
+			if (coltype.id() == LogicalTypeId::VARIANT || coltype.id() == LogicalTypeId::LIST) {
+				continue;
+			}
+
+			stats.root_type = coltype;
+
+			// Push the columns stats into the datafile
+			data_file.column_stats.push_back({std::move(column_names), std::move(stats)});
 		}
 
 		// extract the partition info
@@ -205,7 +219,8 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			auto &partition_children = MapValue::GetChildren(partition_info);
 			for (idx_t col_idx = 0; col_idx < partition_children.size(); col_idx++) {
 				auto &struct_children = StructValue::GetChildren(partition_children[col_idx]);
-				auto &part_value = StringValue::Get(struct_children[1]);
+				// from PROTOCOL doc, Partition Value Serialization: null values are serialized as "".
+				auto part_value = struct_children[1].IsNull() ? string() : StringValue::Get(struct_children[1]);
 
 				DeltaPartition file_partition_info;
 				file_partition_info.partition_column_idx = col_idx;
@@ -249,6 +264,8 @@ SinkFinalizeType DeltaInsert::Finalize(Pipeline &pipeline, Event &event, ClientC
                                        OperatorSinkFinalizeInput &input) const {
 	auto &global_state = input.global_state.Cast<DeltaInsertGlobalState>();
 
+	// TODO: handle null table once CREATE TABLE (AS SELECT) is supported; create the table first, then use
+	// schema->catalog
 	auto &transaction = DeltaTransaction::Get(context, table->catalog);
 	vector<string> filenames;
 	transaction.Append(context, global_state.written_files);
@@ -296,7 +313,8 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	// Lookup table here:
 	optional_ptr<DeltaTableEntry> table_entry;
 	if (child_catalog_mode) {
-		// We need to fetch the table ourselves
+		// In child catalog mode, the LogicalInsert will not actually contain the table entry, so we need to look it up
+		// here
 		CatalogEntryRetriever retriever(context);
 		EntryLookupInfo lookup_info(CatalogType::TABLE_ENTRY, default_table);
 		auto default_table_entry =
@@ -306,7 +324,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		table_entry = op.table.Cast<DeltaTableEntry>();
 	}
 
-	string delta_path = table_entry->snapshot->GetPath();
+	string delta_path = Path::Normalize(table_entry->snapshot->GetPath());
 
 	// Create Copy Info
 	auto info = make_uniq<CopyInfo>();
@@ -345,6 +363,13 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 
 	auto &insert = planner.Make<DeltaInsert>(op, *table_entry, op.column_index_map);
 
+	// Note: this is quite hacky, in the current setup we are expecting the op.table entry to be the entry in the parent
+	//       catalog. We pass through the pointer to this table entry because we need this on commit.
+	if (parent_commit) {
+		auto &delta_transaction = Transaction::Get(context, table_entry->catalog).Cast<DeltaTransaction>();
+		delta_transaction.SetParentTableEntry(op.table);
+	}
+
 	auto &physical_copy = planner.Make<PhysicalCopyToFile>(
 	    GetCopyFunctionReturnLogicalTypes(CopyFunctionReturnType::WRITTEN_FILE_STATISTICS), copy_fun->function,
 	    std::move(function_data), op.estimated_cardinality);
@@ -360,7 +385,8 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		physical_copy_ref.partition_columns = partition_columns;
 		physical_copy_ref.write_empty_file = true;
 	} else {
-		physical_copy_ref.file_path = delta_path + "/duckdb-" + current_write_uuid + ".parquet";
+		physical_copy_ref.file_path =
+		    Path::FromString(delta_path).Join("duckdb-" + current_write_uuid + ".parquet").ToString();
 		physical_copy_ref.partition_output = false;
 		physical_copy_ref.write_empty_file = false;
 	}
