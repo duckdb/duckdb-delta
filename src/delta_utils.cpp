@@ -17,6 +17,7 @@
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
+#include "duckdb/planner/filter/optional_filter.hpp"
 #include "include/delta_kernel_ffi.hpp"
 
 namespace duckdb {
@@ -1113,6 +1114,18 @@ uintptr_t PredicateVisitor::VisitAndFilter(const string &col_name, const Conjunc
 	return visit_predicate_and(state, &eit);
 }
 
+uintptr_t PredicateVisitor::VisitOrFilter(const string &col_name, const ConjunctionOrFilter &filter,
+                                          ffi::KernelExpressionVisitorState *state) {
+    auto it = filter.child_filters.begin();
+    auto end = filter.child_filters.end();
+    auto get_next = [this, col_name, state, &it, &end]() -> uintptr_t {
+        if (it == end) return 0;
+        return VisitFilter(col_name, *(*it++), state);
+    };
+    auto eit = EngineIteratorFromCallable(get_next);
+    return ffi::visit_predicate_or(state, &eit);
+}
+
 uintptr_t PredicateVisitor::VisitIsNull(const string &col_name, ffi::KernelExpressionVisitorState *state) {
 	auto maybe_inner =
 	    ffi::visit_expression_column(state, KernelUtils::ToDeltaString(col_name), DuckDBEngineError::AllocateError);
@@ -1158,15 +1171,24 @@ uintptr_t PredicateVisitor::VisitFilter(const string &col_name, const TableFilte
 		return VisitIsNotNull(col_name, state);
 	case TableFilterType::STRUCT_EXTRACT:
 		return VisitStructExtractFilter(col_name, static_cast<const StructFilter &>(filter), state);
+	case TableFilterType::OPTIONAL_FILTER:
+	{
+		auto &optional = filter.Cast<OptionalFilter>();
+		if (optional.child_filter->filter_type == TableFilterType::CONJUNCTION_OR) {
+			return VisitOrFilter(col_name, optional.child_filter->Cast<ConjunctionOrFilter>(), state);
+		}
+		return ~0;
+	}
+	// NOTE CONJUNCTION_OR is not actually emitted by FilterCombiner directly, but 
+	// as OPTIONAL_FILTER instead
+	case TableFilterType::CONJUNCTION_OR:
+		return VisitOrFilter(col_name, static_cast<const ConjunctionOrFilter &>(filter), state);
 	// TODO: implement once kernel can do arbitrary expressions
 	case TableFilterType::EXPRESSION_FILTER:
 	// TODO: implement once kernel adds support for IN filters / arbitrary expressions
 	case TableFilterType::IN_FILTER:
 	// TODO: figure out if this is ever useful
 	case TableFilterType::DYNAMIC_FILTER:
-	// TODO: can we even push these down?
-	case TableFilterType::CONJUNCTION_OR:
-	case TableFilterType::OPTIONAL_FILTER:
 	default:
 		return ~0;
 	}
