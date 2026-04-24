@@ -18,6 +18,7 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 #include <regex>
+#include <cstdlib>
 
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 
@@ -255,7 +256,7 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 	} else if (secret_type == "azure") {
 		// azure seems to be super complicated as we need to cover duckdb azure plugin and delta RS builder
 		// and both require different settings
-		string connection_string, account_name, endpoint, client_id, client_secret, tenant_id, chain;
+		string connection_string, account_name, endpoint, client_id, client_secret, tenant_id, chain("default");
 		secret_reader.TryGetSecretKey("connection_string", connection_string);
 		secret_reader.TryGetSecretKey("account_name", account_name);
 		secret_reader.TryGetSecretKey("endpoint", endpoint);
@@ -279,12 +280,29 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			}
 			set_option(builder, "bearer_token", access_token);
 		} else if (provider == "credential_chain") {
-			// Authentication option 1a: using the cli authentication
-			if (chain.find("cli") != std::string::npos) {
+			// NOTE: Azure SDK + DuckDB default chain is "env;workload_id;cli;managed_id"; object_store via
+			// delta-kernel-rs does not have this notion so we look for explicit settings.
+			if (chain.find("default") != string::npos || chain.find("cli") != string::npos) {
 				set_option(builder, "use_azure_cli", "true");
 			}
-			// Authentication option 1b: non-cli credential chains will just "hope for the best" technically since we
-			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
+
+			// Authentication option 1b: explicit handling - Kubernetes Workload Identity
+			// TODO: Eventually prefer moving this case upstream to object_store since we rely on its auth-via-env
+			// defaults already; but this would take multiple hops to land so keep this tidy workaround for now.
+			if (chain.find("default") != string::npos || chain.find("env") != string::npos) {
+				const char *federated_token_file = std::getenv("AZURE_FEDERATED_TOKEN_FILE");
+				const char *azure_client_id = std::getenv("AZURE_CLIENT_ID");
+				const char *azure_tenant_id = std::getenv("AZURE_TENANT_ID");
+				if (federated_token_file && azure_client_id && azure_tenant_id) {
+					set_option(builder, "azure_federated_token_file", federated_token_file);
+					set_option(builder, "azure_client_id", azure_client_id);
+					set_option(builder, "azure_tenant_id", azure_tenant_id);
+				}
+			}
+
+			// Authentication option 1c: non-cli credential chains do nothing; since we are using the default credential
+			// chain provider duckDB and delta-kernel-rs (via object_store) should find the same auth mechanisms.
+
 		} else if (!connection_string.empty() && connection_string != "NULL") {
 			// Authentication option 2: a connection string based on account key
 			auto account_key = parseFromConnectionString(connection_string, "AccountKey");
