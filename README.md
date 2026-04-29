@@ -1,126 +1,45 @@
 # DuckDB Delta Extension
 
-This is the DuckDB extension for [Delta](https://delta.io/), built using the
-[Delta Kernel](https://github.com/delta-incubator/delta-kernel-rs). The extension offers read and limited write (blind insert) support for delta
-tables, both local and remote.
+Read and write support for [Delta Lake](https://delta.io/) tables in DuckDB, built on [delta-kernel-rs](https://github.com/delta-incubator/delta-kernel-rs).
 
-## Supported platforms
+For full documentation, see [duckdb.org/docs/extensions/delta](https://duckdb.org/docs/extensions/delta).
 
-The supported platforms are:
+## Quick Start
 
-- `linux_amd64` and `linux_amd64_gcc4` and `linux_arm64`
-- `osx_amd64` and `osx_arm64`
-- `windows_amd64`
-
-Support for the [other](https://duckdb.org/docs/extensions/working_with_extensions#platforms) DuckDB platforms is
-work-in-progress
-
-## How to use
-
-> [!NOTE]
-> This extension requires the DuckDB v0.10.3 or higher
-
-This extension is distributed as a binary extension. To use it, simply use one of its functions from DuckDB and the extension will be autoloaded:
-
-```SQL
-FROM delta_scan('s3://some/delta/table');
-```
-
-To scan a local table, use the full path prefixes with `file://`
-
-```SQL
-FROM delta_scan('file:///some/path/on/local/machine');
-```
-
-## Cloud Storage authentication
-
-Note that using DuckDB [Secrets](https://duckdb.org/docs/configuration/secrets_manager.html) for Cloud authentication is supported.
-
-### S3 Example
-
-```SQL
+```sql
 CREATE SECRET (
-  TYPE S3,
-  PROVIDER CREDENTIAL_CHAIN
+    TYPE s3,
+    PROVIDER credential_chain
 );
-FROM delta_scan('s3://some/delta/table/with/auth');
+FROM delta_scan('s3://my-bucket/my-delta-table');
 ```
-
-### Azure Example
-
-```SQL
-CREATE SECRET (
-    TYPE AZURE,
-    PROVIDER CREDENTIAL_CHAIN,
-    CHAIN 'cli',
-    ACCOUNT_NAME 'mystorageaccount'
-);
-FROM delta_scan('abfss://some/delta/table/with/auth');
-```
-
-### GCS Example
-
-<https://duckdb.org/docs/guides/network_cloud_storage/gcs_import.html>
-You need to create [HMAC keys](https://console.cloud.google.com/storage/settings;tab=interoperability) and declare a secret.
-
-```SQL
-CREATE SECRET (
-    TYPE GCS,
-    KEY_ID 'xxxx',
-    SECRET 'yyy'
-);
-```
-
-## Features
-
-Many features/optimizations are supported in this extension as it reuses most of DuckDB's
-regular parquet scanning logic:
-
-- multithreaded scans and parquet metadata reading
-- data skipping/filter pushdown
-  - skipping row-groups in file (based on parquet metadata)
-  - skipping complete files (based on delta partition info)
-- projection pushdown
-- blind inserts
-- scanning tables with deletion vectors
-- all primitive types
-- structs
-- VARIANT type support
-- Cloud storage (AWS, Azure, GCP) support with secrets
 
 ## Building
 
-See the [Extension Template](https://github.com/duckdb/extension-template) for generic build instructions
+See the [Extension Template](https://github.com/duckdb/extension-template) for generic build instructions.
 
-## Running tests
+## Running Tests
 
-There are various tests available for the delta extension:
+Tests use DuckDB's sqllogictest framework. Test categories:
 
-1. Delta Acceptence Test (DAT) based tests in `/test/sql/dat`
-2. delta-kernel-rs based tests in `/test/sql/delta_kernel_rs`
-3. Generated data based tests in `tests/sql/generated` (generated using [delta-rs](https://delta-io.github.io/delta-rs/), [PySpark](https://spark.apache.org/docs/latest/api/python/index.html), and DuckDB)
-
-To run the first 2 sets of tests:
+- `test/sql/dat/` — Delta Acceptance Tests (DAT)
+- `test/sql/delta_kernel_rs/` — kernel-specific tests
+- `test/sql/generated/` — generated data tests (requires `GENERATED_DATA_AVAILABLE=1`)
+- `test/sql/golden_tests/` — golden table regression tests
+- `test/sql/main/` — core functionality tests
 
 ```shell
+# debug
 make test_debug
-```
 
-or in release mode
-
-```shell
+# release
 make test
-```
 
-To also run the tests on generated data:
-
-```shell
+# with generated data
 make generate-data
 GENERATED_DATA_AVAILABLE=1 make test
 ```
 
 # Updating delta-kernel-rs / FFI version
 
-Simply update the `GIT_TAG` definition found in `./CMakeLists.txt` and (re-)run
-`make clean <debug|release>`. The FFI header is included directly from the
-cargo build, and any breakage from the update should show up immediately.
+Update the `GIT_TAG` in `./CMakeLists.txt` and re-run `make clean <debug|release>`. The FFI header is included directly from the cargo build.
