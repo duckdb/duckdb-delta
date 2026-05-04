@@ -620,7 +620,8 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	vector<DeltaMultiFileColumnDefinition> visited_schema;
 	{
 		auto snapshot_ref = snapshot->GetLockingRef();
-		visited_schema = SchemaVisitor::VisitSnapshotSchema(extern_engine.get(), snapshot_ref.GetPtr());
+		auto mapping_mode = KernelUtils::ReadColumnMappingMode(snapshot_ref.GetPtr());
+		visited_schema = SchemaVisitor::VisitSnapshotSchema(extern_engine.get(), snapshot_ref.GetPtr(), mapping_mode);
 	}
 
 	for (const auto &field : visited_schema) {
@@ -791,7 +792,9 @@ void DeltaMultiFileList::InitializeScan() const {
 		}
 	}
 
-	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(extern_engine.get(), scan.get(), true);
+	auto mapping_mode = KernelUtils::ReadColumnMappingMode(snapshot_ref.GetPtr());
+	lazy_loaded_schema =
+	    SchemaVisitor::VisitSnapshotGlobalReadSchema(extern_engine.get(), scan.get(), true, mapping_mode);
 
 	DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 
