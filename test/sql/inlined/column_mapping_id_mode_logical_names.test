@@ -1,0 +1,22 @@
+# name: test/sql/inlined/column_mapping_id_mode_logical_names.test
+# description: id-mode tables whose parquet files carry logical column names plus
+#              PARQUET:field_id metadata must resolve by field_id, not by name.
+# group: [inlined]
+
+require parquet
+
+require delta
+
+statement ok
+from copy_dir('data/inlined/column_mapping_id_mode_logical_names',
+              '__TEST_DIR__/data/inlined/column_mapping_id_mode_logical_names');
+
+# Bug repro: the parquet file's columns are named "a"/"b" (the logical names)
+# and carry field_ids 1/2. The Delta log declares id-mode column mapping with
+# physical names "col-a-uuid"/"col-b-uuid". Resolving by physical name produces
+# all-NULL rows. Resolving by field_id (per the protocol) returns the data.
+query II
+from delta_scan('__TEST_DIR__/data/inlined/column_mapping_id_mode_logical_names/delta_lake') order by a
+----
+1	alice
+2	bob

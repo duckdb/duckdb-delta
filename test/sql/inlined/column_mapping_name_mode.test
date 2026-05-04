@@ -1,0 +1,22 @@
+# name: test/sql/inlined/column_mapping_name_mode.test
+# description: name-mode tables resolve parquet columns by physical name. The
+#              parquet file's columns are named with the physical names (the
+#              spec-conformant layout for name mode).
+# group: [inlined]
+
+require parquet
+
+require delta
+
+statement ok
+from copy_dir('data/inlined/column_mapping_name_mode',
+              '__TEST_DIR__/data/inlined/column_mapping_name_mode');
+
+# Logical schema is (a, b); parquet columns are ("col-a-uuid", "col-b-uuid"),
+# matched via the physicalName metadata. Verifies that the post-fix dispatch
+# still produces a VARCHAR identifier in NAME mode and the read returns rows.
+query II
+from delta_scan('__TEST_DIR__/data/inlined/column_mapping_name_mode/delta_lake') order by a
+----
+1	alice
+2	bob

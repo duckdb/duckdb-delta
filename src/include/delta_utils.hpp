@@ -48,6 +48,13 @@ struct DeltaLogPathArray {
 	vector<ffi::FfiLogPath> log_entries;
 };
 
+// Mirrors the Delta protocol's `delta.columnMapping.mode` table property.
+// Determines how readers resolve logical columns to parquet columns:
+//   ID   -> resolve by parquet field_id
+//   NAME -> resolve by physical name
+//   NONE -> resolve by display (logical) name
+enum class DeltaColumnMappingMode { NONE, ID, NAME };
+
 struct KernelUtils {
 	// LogicalType of the delta_scan `log_tail` parameter: the catalog's ratified-but-unbackfilled commits.
 	static LogicalType GetLogPathType();
@@ -56,6 +63,9 @@ struct KernelUtils {
 	static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
 	static string FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *map,
 	                                 const string &key);
+	// Read `delta.columnMapping.mode` from the snapshot's table-property
+	// configuration. Returns NONE when the property is absent or `"none"`.
+	static DeltaColumnMappingMode ReadColumnMappingMode(ffi::SharedSnapshot *snapshot);
 
 	static void *StringAllocationNew(const struct ffi::KernelStringSlice slice) {
 		return new string(slice.ptr, slice.len);
@@ -294,12 +304,15 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 // KernelSchemaVisitor is used to parse the schema of a Delta table from the Kernel
 class KernelSchemaVisitor {
 public:
-	explicit KernelSchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p) : engine(engine_p) {};
+	KernelSchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p, DeltaColumnMappingMode mapping_mode_p)
+	    : engine(engine_p), mapping_mode(mapping_mode_p) {};
 
 	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
-	                                                                  ffi::SharedSnapshot *snapshot);
+	                                                                  ffi::SharedSnapshot *snapshot,
+	                                                                  DeltaColumnMappingMode mapping_mode);
 	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
-	                                                                  ffi::SharedScan *state, bool logical);
+	                                                                  ffi::SharedScan *state, bool logical,
+	                                                                  DeltaColumnMappingMode mapping_mode);
 	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
 	                                                                  ffi::SharedWriteContext *write_context);
 
@@ -308,6 +321,7 @@ private:
 	uintptr_t next_id = 1;
 
 	ffi::SharedExternEngine *engine = nullptr;
+	DeltaColumnMappingMode mapping_mode = DeltaColumnMappingMode::NONE;
 	ErrorData error;
 
 	static ffi::EngineSchemaVisitor CreateSchemaVisitor(KernelSchemaVisitor &state);
@@ -315,26 +329,45 @@ private:
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CStringMap *metadata);
 
-	static void ApplyDeltaColumnMapping(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *metadata,
+	// Set `col_def.identifier` so DuckDB's MultiFileReader resolves the column
+	// the way the Delta protocol's "Reader Requirements for Column Mapping"
+	// require for the active mode. Identifier type drives the dispatch:
+	// BIGINT -> match by parquet field_id, VARCHAR -> match by name. Leaving
+	// it unset matches by display (logical) name.
+	static void ApplyDeltaColumnMapping(KernelSchemaVisitor &state, const ffi::CStringMap *metadata,
 	                                    DeltaMultiFileColumnDefinition &col_def) {
 		// The two keys carry the same number: the kernel derives `parquet.field.id` from
 		// `delta.columnMapping.id` when it builds a physical schema. Read whichever the schema at hand
 		// spells it with.
-		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.id");
+		auto id = KernelUtils::FetchFromStringMap(state.engine, metadata, "delta.columnMapping.id");
 		if (id.empty()) {
-			id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
+			id = KernelUtils::FetchFromStringMap(state.engine, metadata, "parquet.field.id");
 		}
 		if (!id.empty()) {
 			col_def.field_id = optional_idx(Value(id).DefaultCastAs(LogicalType::UBIGINT).GetValue<uint64_t>());
 		}
-		auto name = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.physicalName");
+		auto name = KernelUtils::FetchFromStringMap(state.engine, metadata, "delta.columnMapping.physicalName");
 		if (!name.empty()) {
-			// Always the name, never the id: nothing sets MultiFileColumnMappingMode, so it stays BY_NAME
-			// and a table declaring `mode = id` is still resolved by physical name.
-			col_def.identifier = Value(name);
 			col_def.physical_name = name;
 		}
-		col_def.char_varchar_type = KernelUtils::FetchFromStringMap(engine, metadata, "__CHAR_VARCHAR_TYPE_STRING");
+
+		// Resolve `col_def.identifier` per the active mode, not just whichever metadata key happens to be
+		// present -- the kernel emits both id and physicalName whenever column mapping is enabled at all.
+		switch (state.mapping_mode) {
+		case DeltaColumnMappingMode::ID:
+			if (!id.empty()) {
+				col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
+			}
+			break;
+		case DeltaColumnMappingMode::NAME:
+			if (!name.empty()) {
+				col_def.identifier = Value(name);
+			}
+			break;
+		case DeltaColumnMappingMode::NONE:
+			break;
+		}
+		col_def.char_varchar_type = KernelUtils::FetchFromStringMap(state.engine, metadata, "__CHAR_VARCHAR_TYPE_STRING");
 		col_def.default_expression = make_uniq<ConstantExpression>(Value(col_def.type));
 	}
 
@@ -346,7 +379,7 @@ private:
 	static void VisitSimpleTypeImpl(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                                bool is_nullable, const ffi::CStringMap *metadata) {
 		DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), TypeId, is_nullable);
-		ApplyDeltaColumnMapping(state->engine, metadata, col_def);
+		ApplyDeltaColumnMapping(*state, metadata, col_def);
 
 		state->AppendToList(sibling_list_id, name, std::move(col_def));
 	}
