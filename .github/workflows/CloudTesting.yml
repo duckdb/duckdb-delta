@@ -95,4 +95,4 @@ jobs:
           AZURE_STORAGE_ACCOUNT: ${{secrets.AZURE_STORAGE_ACCOUNT}}
           DUCKDB_AZURE_PUBLIC_CONTAINER_AVAILABLE: 1
         run: |
-          python3 duckdb/scripts/run_tests_one_by_one.py ./build/release/test/unittest `pwd`/test/sql/cloud/*
+          python3 duckdb/scripts/ci/run_tests.py ./build/release/test/unittest "$PWD/test/sql/cloud/*"
