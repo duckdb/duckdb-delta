@@ -76,8 +76,10 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 	// Propagate settings
 	param_map.insert({"pushdown_partition_info", delta_catalog.pushdown_partition_info});
 	param_map.insert({"pushdown_filters", DeltaEnumUtils::ToString(delta_catalog.filter_pushdown_mode)});
-	if (delta_catalog.use_specific_version != DConstants::INVALID_INDEX) {
-		param_map.insert({"version", Value::UBIGINT(delta_catalog.use_specific_version)});
+	idx_t param_version =
+	    version != DConstants::INVALID_INDEX ? version : delta_catalog.use_specific_version;
+	if (param_version != DConstants::INVALID_INDEX) {
+		param_map.insert({"version", Value::UBIGINT(param_version)});
 	}
 
 	TableFunctionBindInput bind_input(inputs, param_map, return_types, names, nullptr, nullptr, delta_scan_function,
