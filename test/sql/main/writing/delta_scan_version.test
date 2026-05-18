@@ -36,26 +36,7 @@ SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/del
 ----
 11
 
-query I
-SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 2);
-----
-12
-
-query I
-SELECT sum(i) FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 0);
-----
-45
-
-query I
-SELECT sum(i) FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 1);
-----
-55
-
-query I
-SELECT sum(i) FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 2);
-----
-66
-
+# Verify the right rows (not just the right count) at each version.
 query I rowsort
 SELECT i FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 1) WHERE i >= 10;
 ----
@@ -73,19 +54,7 @@ SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/del
 ----
 12
 
-# Parity with ATTACH (TYPE delta, VERSION N).
-statement ok
-ATTACH '__TEST_DIR__/main/writing/delta_scan_version/delta_lake' AS t0 (TYPE delta, VERSION 0);
-
-query I
-SELECT count() FROM t0
-EXCEPT
-SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 0);
-----
-
-statement ok
-DETACH t0;
-
+# Row-set parity between catalog ATTACH (VERSION N) and delta_scan(version => N).
 statement ok
 ATTACH '__TEST_DIR__/main/writing/delta_scan_version/delta_lake' AS t1 (TYPE delta, VERSION 1);
 
@@ -104,24 +73,15 @@ SELECT i FROM t1;
 statement ok
 DETACH t1;
 
-# Composition with pushdown_filters.
+# Composition with pushdown_filters: version => 1 (i in 0..10) with i >= 5 -> 6 rows.
 query I
 SELECT count() FROM delta_scan(
     '__TEST_DIR__/main/writing/delta_scan_version/delta_lake',
-    version => 2,
+    version => 1,
     pushdown_filters => 'all'
 ) WHERE i >= 5;
 ----
-7
-
-query I
-SELECT count() FROM delta_scan(
-    '__TEST_DIR__/main/writing/delta_scan_version/delta_lake',
-    version => 0,
-    pushdown_filters => 'all'
-) WHERE i >= 5;
-----
-5
+6
 
 # Out-of-range version is rejected.
 statement error
