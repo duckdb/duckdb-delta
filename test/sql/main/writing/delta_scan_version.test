@@ -1,0 +1,161 @@
+# name: test/sql/main/writing/delta_scan_version.test
+# description: Test that delta_scan('path', version => N) pins to the requested snapshot version
+#              when invoked directly as a table function (no DeltaCatalog injecting a snapshot).
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# setup: build a delta lake with versions 0/1/2 by INSERTing into a copy of
+# simple_table (v0 contains values 0..9). We then DETACH so that subsequent
+# reads must rebuild a snapshot from scratch.
+#
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '__TEST_DIR__/main/writing/delta_scan_version');
+
+statement ok
+ATTACH '__TEST_DIR__/main/writing/delta_scan_version/delta_lake' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES (10);
+
+statement ok
+INSERT INTO t VALUES (11);
+
+statement ok
+DETACH t;
+
+# -----------------------------------------------------------------------------
+# Variant 1: direct delta_scan call with `version => N` named parameter.
+#
+
+query I
+SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 0);
+----
+10
+
+query I
+SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 1);
+----
+11
+
+query I
+SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 2);
+----
+12
+
+# Sum sanity-check at each version (v0=0..9=45, v1 adds 10 -> 55, v2 adds 11 -> 66)
+query I
+SELECT sum(i) FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 0);
+----
+45
+
+query I
+SELECT sum(i) FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 1);
+----
+55
+
+query I
+SELECT sum(i) FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 2);
+----
+66
+
+# Values that only exist at >= v1 / v2
+query I rowsort
+SELECT i FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 1) WHERE i >= 10;
+----
+10
+
+query I rowsort
+SELECT i FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 2) WHERE i >= 10;
+----
+10
+11
+
+# -----------------------------------------------------------------------------
+# Variant 2: no version => HEAD (= v2 here).
+#
+
+query I
+SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake');
+----
+12
+
+# -----------------------------------------------------------------------------
+# Variant 3: parity with the catalog-level ATTACH (TYPE delta, VERSION N).
+#
+
+statement ok
+ATTACH '__TEST_DIR__/main/writing/delta_scan_version/delta_lake' AS t0 (TYPE delta, VERSION 0);
+
+query I
+SELECT count() FROM t0;
+----
+10
+
+query I
+SELECT count() FROM t0
+EXCEPT
+SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 0);
+----
+
+statement ok
+DETACH t0;
+
+statement ok
+ATTACH '__TEST_DIR__/main/writing/delta_scan_version/delta_lake' AS t1 (TYPE delta, VERSION 1);
+
+query I
+SELECT count() FROM t1;
+----
+11
+
+query I rowsort
+SELECT i FROM t1
+EXCEPT
+SELECT i FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 1);
+----
+
+query I rowsort
+SELECT i FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 1)
+EXCEPT
+SELECT i FROM t1;
+----
+
+statement ok
+DETACH t1;
+
+# -----------------------------------------------------------------------------
+# Variant 4: version composes with other named parameters (filter pushdown).
+#
+
+query I
+SELECT count() FROM delta_scan(
+    '__TEST_DIR__/main/writing/delta_scan_version/delta_lake',
+    version => 2,
+    pushdown_filters => 'all'
+) WHERE i >= 5;
+----
+7
+
+query I
+SELECT count() FROM delta_scan(
+    '__TEST_DIR__/main/writing/delta_scan_version/delta_lake',
+    version => 0,
+    pushdown_filters => 'all'
+) WHERE i >= 5;
+----
+5
+
+# -----------------------------------------------------------------------------
+# Variant 5: out-of-range version is rejected by the kernel.
+#
+
+statement error
+SELECT count() FROM delta_scan('__TEST_DIR__/main/writing/delta_scan_version/delta_lake', version => 999);
+----

@@ -1076,6 +1076,14 @@ idx_t DeltaMultiFileList::GetVersion() {
 	return version;
 }
 
+void DeltaMultiFileList::PinVersion(idx_t v) {
+	unique_lock<mutex> lck(lock);
+	if (initialized_snapshot) {
+		throw InternalException("DeltaMultiFileList::PinVersion called after the snapshot was initialized");
+	}
+	version = v;
+}
+
 DeltaFileMetaData &DeltaMultiFileList::GetMetaData(idx_t index) const {
 	unique_lock<mutex> lck(lock);
 	if (index >= metadata.size()) {

@@ -112,6 +112,15 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 		delta_snapshot.delta_log_path = make_uniq<DeltaLogPathArray>(log_tail_setting->second);
 	}
 
+	// MultiFileBind constructs the file list before parsing named parameters, so a `version => N`
+	// captured by ParseOption (and stashed on the reader as `requested_version`) cannot be passed
+	// to DeltaMultiFileList's constructor. Transfer it here, before delta_snapshot.Bind() triggers
+	// snapshot initialization. If a snapshot was injected via function_info (catalog-driven path),
+	// `snapshot` is non-null and PinVersion would have nothing to do, so we skip it.
+	if (!snapshot && requested_version != DConstants::INVALID_INDEX) {
+		delta_snapshot.PinVersion(requested_version);
+	}
+
 	delta_snapshot.Bind(return_types, names);
 
 	return true;
@@ -238,9 +247,7 @@ shared_ptr<MultiFileList> DeltaMultiFileReader::CreateFileList(ClientContext &co
 	if (snapshot) {
 		// TODO: assert that we are querying the same path as this injected snapshot
 		// This takes the kernel snapshot from the delta snapshot and ensures we use that snapshot for reading
-		if (snapshot) {
-			return snapshot;
-		}
+		return snapshot;
 	}
 
 	return make_shared_ptr<DeltaMultiFileList>(context, paths[0], DConstants::INVALID_INDEX);
@@ -302,6 +309,11 @@ bool DeltaMultiFileReader::ParseOption(const string &key, const Value &val, Mult
 	// We need to capture this one to know whether to emit
 	if (loption == "pushdown_filters") {
 		options.custom_options["pushdown_filters"] = val;
+		return true;
+	}
+
+	if (loption == "version") {
+		requested_version = val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>();
 		return true;
 	}
 

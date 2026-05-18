@@ -83,6 +83,9 @@ public:
 	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const override;
 	DeltaFileMetaData &GetMetaData(idx_t index) const;
 	idx_t GetVersion();
+	//! Pin a specific version on a not-yet-initialized snapshot. Must be called before any operation
+	//! that would trigger InitializeSnapshot (e.g. Bind, GetAllFiles).
+	void PinVersion(idx_t v);
 	vector<string> GetPartitionColumns();
 
 	vector<DeltaMultiFileColumnDefinition> &GetLazyLoadedGlobalColumns() const;
