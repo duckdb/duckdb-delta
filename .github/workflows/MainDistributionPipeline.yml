@@ -19,7 +19,7 @@ jobs:
     with:
       # Main config
       extension_name: &ext_name delta
-      duckdb_version: &duckdb_ref v1.5.2
+      duckdb_version: &duckdb_ref v1.5-variegata
       ci_tools_version: &ci_tools_ref v1.5-variegata
       enable_rust: true
       rust_logs: true
