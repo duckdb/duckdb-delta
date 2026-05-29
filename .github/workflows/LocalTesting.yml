@@ -91,11 +91,6 @@ jobs:
 
     steps:
       - *checkout
-      - name: Checkout DuckDB to version
-        if: ${{ matrix.duckdb_version != '<submodule_version>'}}
-        run: |
-          cd duckdb
-          git checkout ${{ matrix.duckdb_version }}
       - *python
       - *ninja
       - *ccache
@@ -146,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD_BENCHMARK: 1
-    if: false # FIXME: @benfleis - disabling to unblock v1.5 progress - https://github.com/duckdblabs/duckdb-internal/issues/7233
+    if: github.event_name == 'skip' # FIXME: @benfleis - disabling to unblock v1.5 progress - https://github.com/duckdblabs/duckdb-internal/issues/7233
 
     steps:
       - *checkout

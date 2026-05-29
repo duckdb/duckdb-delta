@@ -43,11 +43,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: 'true'
+          submodules: true
 
       - uses: hendrikmuhs/ccache-action@main
         with:
-          key: ${{ github.job }}-${{ matrix.duckdb_arch }}
+          key: ${{ github.job }}
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
@@ -83,7 +83,7 @@ jobs:
       - name: Test with Access Token in env vars
         run: |
           export AZURE_ACCESS_TOKEN=`az account get-access-token --resource https://storage.azure.com --query accessToken --output tsv`        
-          ${ENV_AZURE} env -u AZURE_CLIENT_SECRET ./build/release/test/unittest `pwd`/test/sql/cloud/*          
+          ${ENV_AZURE} env -u AZURE_CLIENT_SECRET ./build/release/test/unittest `pwd`/test/sql/cloud/*
 
       - name: Log out azure-cli
         if: always()
