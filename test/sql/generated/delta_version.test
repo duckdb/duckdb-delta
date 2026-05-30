@@ -1,0 +1,21 @@
+# name: test/sql/generated/delta_version.test
+# description: Test delta_version function
+# group: [generated]
+
+require parquet
+
+require delta
+
+require-env GENERATED_DATA_AVAILABLE
+
+query IIIIII
+DESCRIBE FROM delta_version('./data/generated/evolution_simple/delta_lake');
+----
+version	UBIGINT	YES	NULL	NULL	NULL
+
+# evolution_simple is generated as: base write (v0), ADD COLUMN (v1), INSERT (v2)
+# -> see scripts/data_generator/generate_test_data.py, so HEAD is version 2
+query I
+SELECT version FROM delta_version('./data/generated/evolution_simple/delta_lake');
+----
+2
