@@ -46,8 +46,9 @@ public:
 	optional_ptr<TableFunctionCatalogEntry> commit_function;
 	string unity_table_id;
 
-	// Store the log_tail for catalog-managed commits (CCV2)
+	// Store the log_tail and max_catalog_version for CMTs
 	Value catalog_log_tail;
+	int64_t max_catalog_version = -1;
 
 public:
 	string GetInternalTableName() {
