@@ -10,7 +10,6 @@ vector<TableFunctionSet> DeltaFunctions::GetTableFunctions(ExtensionLoader &load
 	functions.push_back(GetDeltaScanFunction(loader));
 	functions.push_back(GetDeltaFileListFunction(loader));
 	functions.push_back(GetDeltaDomainMetadataFunction(loader));
-	functions.push_back(GetDeltaVersionFunction(loader));
 
 	for (const auto &fun : GetTransactionIdempotencyHelpers(loader.GetDatabaseInstance())) {
 		functions.push_back(TableFunctionSet(fun));
@@ -22,6 +21,7 @@ vector<TableFunctionSet> DeltaFunctions::GetTableFunctions(ExtensionLoader &load
 vector<ScalarFunctionSet> DeltaFunctions::GetScalarFunctions(ExtensionLoader &loader) {
 	vector<ScalarFunctionSet> functions;
 
+	functions.push_back(GetDeltaTableVersionFunction(loader));
 	functions.push_back(GetExpressionFunction(loader));
 	functions.push_back(GetWriteFileFunction(loader));
 

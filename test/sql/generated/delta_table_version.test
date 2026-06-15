@@ -1,0 +1,45 @@
+# name: test/sql/generated/delta_table_version.test
+# description: Test delta_table_version function
+# group: [generated]
+
+require parquet
+
+require delta
+
+require-env GENERATED_DATA_AVAILABLE
+
+# -----------------------------------------------------------------------------
+# Test 3 variants: none attached, attached+no-version, attached+earlier-version
+# All 3 should return latest version
+#
+# evolution_simple is generated as: base write (v0), ADD COLUMN (v1), INSERT (v2)
+#
+
+query I
+SELECT delta_table_version('./data/generated/evolution_simple/delta_lake');
+----
+2
+
+# attach no version
+statement ok
+ATTACH './data/generated/evolution_simple/delta_lake' AS ev_unversioned (TYPE delta);
+
+query I
+SELECT delta_table_version('./data/generated/evolution_simple/delta_lake');
+----
+2
+
+statement ok
+DETACH ev_unversioned;
+
+# attach earlier version
+statement ok
+ATTACH './data/generated/evolution_simple/delta_lake' AS ev_versioned (TYPE delta, VERSION 1);
+
+query I
+SELECT delta_table_version('./data/generated/evolution_simple/delta_lake');
+----
+2
+
+statement ok
+DETACH ev_versioned;

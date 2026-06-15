@@ -23,7 +23,7 @@ set(EXTENSION_SOURCES
     src/functions/delta_domain_metadata.cpp
     src/functions/delta_metadata_scan.cpp
     src/functions/metadata_functions.cpp
-    src/functions/delta_version.cpp
+    src/functions/delta_table_version.cpp
     src/functions/expression_functions.cpp
     src/functions/util_functions.cpp
     src/functions/delta_transaction_utils/idempotency_helpers.cpp
