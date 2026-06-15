@@ -42,8 +42,8 @@ static void DeltaTableVersionExecute(DataChunk &input, ExpressionState &state, V
 ScalarFunctionSet DeltaFunctions::GetDeltaTableVersionFunction(ExtensionLoader &loader) {
 	ScalarFunctionSet result;
 	result.name = "delta_table_version";
-	result.AddFunction(ScalarFunction({LogicalType::VARCHAR}, LogicalType::UBIGINT, DeltaTableVersionExecute,
-	                                  DeltaTableVersionBind));
+	result.AddFunction(
+	    ScalarFunction({LogicalType::VARCHAR}, LogicalType::UBIGINT, DeltaTableVersionExecute, DeltaTableVersionBind));
 	return result;
 }
 
