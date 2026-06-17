@@ -55,6 +55,9 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		if (StringUtil::Lower(option.first) == "log_tail") {
 			res->catalog_log_tail = option.second;
 		}
+		if (StringUtil::Lower(option.first) == "max_catalog_version") {
+			res->max_catalog_version = option.second.GetValue<int64_t>();
+		}
 		if (StringUtil::Lower(option.first) == "unity_table_id") {
 			res->unity_table_id = StringValue::Get(option.second);
 		}

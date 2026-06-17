@@ -123,6 +123,7 @@ public: // TODO: clean up
 	mutable shared_ptr<SharedKernelSnapshot> snapshot;
 
 	mutable unique_ptr<DeltaLogPathArray> delta_log_path;
+	mutable int64_t max_catalog_version = -1;
 
 protected:
 	// Note: Nearly this entire class is mutable because it represents a lazily expanded list of files that is logically
