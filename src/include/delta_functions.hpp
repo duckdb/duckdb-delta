@@ -47,8 +47,8 @@ private:
 	static TableFunctionSet GetDeltaScanFunction(ExtensionLoader &loader);
 	static TableFunctionSet GetDeltaFileListFunction(ExtensionLoader &loader);
 	static TableFunctionSet GetDeltaDomainMetadataFunction(ExtensionLoader &loader);
-
 	//! Scalar Functions
+	static ScalarFunctionSet GetDeltaTableVersionFunction(ExtensionLoader &loader);
 	static ScalarFunctionSet GetExpressionFunction(ExtensionLoader &loader);
 
 	static ScalarFunctionSet GetWriteFileFunction(ExtensionLoader &loader);

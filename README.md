@@ -88,6 +88,21 @@ regular parquet scanning logic:
 - VARIANT type support
 - Cloud storage (AWS, Azure, GCP) support with secrets
 
+## Utility Functions
+
+### `delta_table_version(path)`
+
+Returns the current (HEAD) version number of a Delta table as a `UBIGINT`.
+
+```sql
+SELECT delta_table_version('s3://some/delta/table');
+-- or
+SELECT delta_table_version('file:///some/path/on/local/machine');
+```
+
+The version is always read from the latest snapshot regardless of any time-travel
+context in the session (e.g. an `ATTACH … (VERSION N)` on the same path).
+
 ## Building
 
 See the [Extension Template](https://github.com/duckdb/extension-template) for generic build instructions

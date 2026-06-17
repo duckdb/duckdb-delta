@@ -21,6 +21,7 @@ vector<TableFunctionSet> DeltaFunctions::GetTableFunctions(ExtensionLoader &load
 vector<ScalarFunctionSet> DeltaFunctions::GetScalarFunctions(ExtensionLoader &loader) {
 	vector<ScalarFunctionSet> functions;
 
+	functions.push_back(GetDeltaTableVersionFunction(loader));
 	functions.push_back(GetExpressionFunction(loader));
 	functions.push_back(GetWriteFileFunction(loader));
 
