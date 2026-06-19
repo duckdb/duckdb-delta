@@ -477,7 +477,8 @@ private:
 	                              ffi::KernelExpressionVisitorState *state);
 	uintptr_t VisitAndFilter(const string &col_name, const ConjunctionAndFilter &filter,
 	                         ffi::KernelExpressionVisitorState *state);
-
+	uintptr_t VisitOrFilter(const string &col_name, const ConjunctionOrFilter &filter,
+	                         ffi::KernelExpressionVisitorState *state);
 	uintptr_t VisitIsNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
 	uintptr_t VisitIsNotNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
 	uintptr_t VisitStructExtractFilter(const string &col_name, const StructFilter &filter,

@@ -63,7 +63,7 @@ def generate_test_data_delta_rs_multi(base_path, path, init, tables, splits = 1)
             shutil.rmtree(generated_path)
         raise
 
-def generate_test_data_delta_rs(base_path, path, query, part_column=False, add_golden_table=True):
+def generate_test_data_delta_rs(base_path, path, query, part_column=False, add_golden_table=True, cluster_column=False):
     """
     generate_test_data_delta_rs generates some test data using delta-rs and duckdb
 
@@ -86,11 +86,15 @@ def generate_test_data_delta_rs(base_path, path, query, part_column=False, add_g
 
         # Write delta table data
         test_table_arrow = con.sql("FROM test_table;").arrow()
-
-        if (part_column):
-            write_deltalake(f"{generated_path}/delta_lake", test_table_arrow,  partition_by=[part_column])
-        else:
-            write_deltalake(f"{generated_path}/delta_lake", test_table_arrow)
+        partition_arg = {"partition_by": [part_column]} if isinstance(part_column, str) else {}
+        if (cluster_column):
+            # one write per cluster
+            values = con.sql(f"select distinct {cluster_column} from test_table").fetchall()
+            for val, in values:
+                test_table_arrow = con.execute(f"FROM test_table where {cluster_column} = ?", (val,)).arrow()
+                write_deltalake(f"{generated_path}/delta_lake", test_table_arrow, mode="append", **partition_arg)
+        elif (part_column):
+            write_deltalake(f"{generated_path}/delta_lake", test_table_arrow, **partition_arg)
 
         if add_golden_table:
             # Write DuckDB's reference data

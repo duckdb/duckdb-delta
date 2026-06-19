@@ -145,6 +145,10 @@ query = "call dbgen(sf=0.01);"
 query += "CREATE table test_table AS SELECT *, l_orderkey%10 as part from lineitem;"
 generate_test_data_delta_rs(BASE_PATH,"lineitem_sf0_01_10part", query, "part")
 
+################################################
+### Partitioned file skipping
+################################################
+
 ## Partitioned table with all types we can file skip on
 for type in ["bool", "int", "tinyint", "smallint", "bigint", "float", "double", "varchar"]:
     query = f"CREATE table test_table as select i::{type} as value1, (i)::{type} as value2, (i)::{type} as value3, i::{type} as part from range(0,5) tbl(i)"
@@ -171,6 +175,35 @@ for type in ["int"]:
     generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping_2/{type}", query, "part")
 
 ################################################
+### Clustered file skipping
+################################################
+
+## Clustered table with all types we can file skip on
+for type in ["bool", "int", "tinyint", "smallint", "bigint", "float", "double", "varchar"]:
+    query = f"CREATE table test_table as select i::{type} as value1, (i)::{type} as value2, (i)::{type} as value3, i::{type} as part from range(0,5) tbl(i)"
+    generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping_clustered/{type}", query, cluster_column="part")
+
+## Clustered table with date type
+type = "date"
+query = f"CREATE table test_table as select ('1994-01-0' || i::VARCHAR)::DATE as value1, ('1994-01-0' || i::VARCHAR)::DATE as part from range(1,6) tbl(i)"
+generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping_clustered/{type}", query, cluster_column="part")
+
+## Clustered table with timestamp type
+type = "timestamp"
+query = f"CREATE table test_table as select ('2024-01-0' || i::VARCHAR || ' 00:00:00')::TIMESTAMP as value1, ('2024-01-0' || i::VARCHAR || ' 00:00:00')::TIMESTAMP as part from range(1,6) tbl(i)"
+generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping_clustered/{type}", query, cluster_column="part")
+
+## Clustered table with decimal type
+type = "decimal"
+query = f"CREATE table test_table as select i::DECIMAL(10,2) as value1, i::DECIMAL(10,2) as part from range(1,6) tbl(i)"
+generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping_clustered/{type}", query, cluster_column="part")
+
+## Clustered table with all types we can file skip on
+for type in ["int"]:
+    query = f"CREATE table test_table as select i::{type}+10 as value1, (i)::{type}+100 as value2, (i)::{type}+1000 as value3, i::{type} as part from range(0,5) tbl(i)"
+    generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping_clustered_2/{type}", query, cluster_column="part")
+
+################################################
 ### Testing specific data types
 ################################################
 
@@ -181,6 +214,10 @@ generate_test_data_delta_rs(BASE_PATH,"simple_blob_table", query, "blob_part", a
 ## Simple partitioned table with structs
 query = "CREATE table test_table AS SELECT {'i':i, 'j':i+1} as value, i%2 as part from range(0,10) tbl(i);"
 generate_test_data_delta_rs(BASE_PATH,"simple_partitioned_with_structs", query, "part")
+
+## Simple clustered table with structs
+query = "CREATE table test_table AS SELECT {'i':i, 'j':i+1} as value, i%2 as part from range(0,10) tbl(i);"
+generate_test_data_delta_rs(BASE_PATH,"simple_clustered_with_structs", query, cluster_column="part")
 
 ################################################
 ### Deletion vectors

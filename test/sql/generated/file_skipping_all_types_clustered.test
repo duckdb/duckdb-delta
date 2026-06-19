@@ -1,4 +1,4 @@
-# name: test/sql/generated/file_skipping_all_types.test
+# name: test/sql/generated/file_skipping_all_types_clustered.test
 # description: Test filter pushdown succeeds on all file types we can push down
 # group: [generated]
 
@@ -13,7 +13,7 @@ foreach type float double
 # using <type> column to skip files
 query II
 EXPLAIN ANALYZE SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/${type}/delta_lake')
 WHERE
     value1 > 0.5 and
     value2 > 2.5 and
@@ -23,7 +23,7 @@ analyzed_plan	<REGEX>:.*File Filters:.*value1>0.5.*value2>2.5.*value3<3.5.*Scann
 
 query III
 SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/${type}/delta_lake')
 WHERE
     value1 > 0.5 and
     value2 > 2.5 and
@@ -33,7 +33,7 @@ WHERE
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/${type}/delta_lake')
 WHERE part > 0.5
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 4/5.*
@@ -43,14 +43,14 @@ endloop
 # use bool column to skip files
 query II
 EXPLAIN ANALYZE SELECT *
-FROM delta_scan('./data/generated/test_file_skipping/bool/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/bool/delta_lake')
 WHERE value1=false
 ----
 analyzed_plan	<REGEX>:.*File Filters:.*value1=false.*Scanning Files: 1/2.*
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/bool/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/bool/delta_lake')
 WHERE part=false
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/2.*
@@ -60,7 +60,7 @@ foreach type int tinyint smallint bigint
 # using <type> column to skip files
 query II
 EXPLAIN ANALYZE SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/${type}/delta_lake')
 WHERE
     value1 > 1 and
     value2 > 2 and
@@ -70,7 +70,7 @@ analyzed_plan	<REGEX>:.*File Filters:.*value1>1.*value2>2.*value3<4.*Scanning Fi
 
 query III
 SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/${type}/delta_lake')
 WHERE
     value1 > 1 and
     value2 > 2 and
@@ -80,7 +80,7 @@ WHERE
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/${type}/delta_lake')
 WHERE part = 0
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
@@ -90,7 +90,7 @@ endloop
 # using <type> column to skip files
 query II
 EXPLAIN ANALYZE SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/varchar/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/varchar/delta_lake')
 WHERE
     value1 = '2' and
     value2 = '2' and
@@ -100,7 +100,7 @@ analyzed_plan	<REGEX>:.*File Filters:.*value1='2'.*value2='2'.*value3='2'.*Scann
 
 query III
 SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/varchar/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/varchar/delta_lake')
 WHERE
     value1 = '2' and
     value2 = '2' and
@@ -110,7 +110,7 @@ WHERE
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/varchar/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/varchar/delta_lake')
 WHERE part = '0'
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
@@ -120,7 +120,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
 # using date column to skip files
 query II
 EXPLAIN ANALYZE SELECT value1, part
-FROM delta_scan('./data/generated/test_file_skipping/date/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/date/delta_lake')
 WHERE
     value1 = '1994-01-01'::DATE
 ----
@@ -128,14 +128,14 @@ analyzed_plan	<REGEX>:.*File Filters:.*value1='1994-01-01'.*Scanning Files: 1/5.
 
 query II
 SELECT value1, part
-FROM delta_scan('./data/generated/test_file_skipping/date/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/date/delta_lake')
 WHERE value1 = '1994-01-01'
 ----
 1994-01-01	1994-01-01
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/date/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/date/delta_lake')
 WHERE part = '1994-01-01'
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
@@ -145,21 +145,21 @@ analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
 # using decimal column to skip files
 query II
 EXPLAIN ANALYZE SELECT value1, part
-FROM delta_scan('./data/generated/test_file_skipping/decimal/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/decimal/delta_lake')
 WHERE value1 = 3.00::DECIMAL(10,2)
 ----
 analyzed_plan	<REGEX>:.*File Filters:.*value1=3.*Scanning Files: 1/5.*
 
 query II
 SELECT value1, part
-FROM delta_scan('./data/generated/test_file_skipping/decimal/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/decimal/delta_lake')
 WHERE value1 = 3.00::DECIMAL(10,2)
 ----
 3.00	3.00
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/decimal/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/decimal/delta_lake')
 WHERE part = 3.00::DECIMAL(10,2)
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
@@ -169,35 +169,35 @@ analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
 # using struct field column to skip files
 query II
 EXPLAIN ANALYZE SELECT value.i
-FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+FROM delta_scan('./data/generated/simple_clustered_with_structs/delta_lake')
 WHERE value.i > 8
 ----
 analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
 
 query I
 SELECT value.i
-FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+FROM delta_scan('./data/generated/simple_clustered_with_structs/delta_lake')
 WHERE value.i > 8
 ----
 9
 
 query II
 EXPLAIN ANALYZE SELECT value.i
-FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+FROM delta_scan('./data/generated/simple_clustered_with_structs/delta_lake')
 WHERE value.j > 10
 ----
 analyzed_plan	<REGEX>:.*Scanning Files: 0/2.*
 
 query II
 EXPLAIN ANALYZE SELECT value.i
-FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+FROM delta_scan('./data/generated/simple_clustered_with_structs/delta_lake')
 WHERE value.i = 0
 ----
 analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
 
 query I
 SELECT value.i
-FROM delta_scan('./data/generated/simple_partitioned_with_structs/delta_lake')
+FROM delta_scan('./data/generated/simple_clustered_with_structs/delta_lake')
 WHERE value.i = 0
 ----
 0
@@ -208,12 +208,12 @@ WHERE value.i = 0
 # - TIMESTAMP
 # - TIMESTAMP_TZ
 
-### Now test all Comparators are fileskipping
+### Now test all Comparators are fileskipping, for partitions
 
 # test: '>'
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part > 2
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
@@ -221,7 +221,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
 # test: '<'
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part < 2
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
@@ -229,7 +229,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
 # test: '<='
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part <= 2
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
@@ -237,7 +237,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
 # test: '>='
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part >= 2
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
@@ -245,7 +245,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
 # test: '='
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part = 2
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
@@ -253,7 +253,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
 # test: '!='
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part != 2
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 4/5.*
@@ -261,7 +261,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 4/5.*
 # test: 'BETWEEN'
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part between 2 and 4
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
@@ -269,10 +269,18 @@ analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
 # NOTE: count triggers profiler
 query II
 EXPLAIN ANALYZE SELECT count(1)
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part = 2 OR part = 4
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
+
+# null causes full scan
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
+WHERE part = 2 OR part is null
+----
+analyzed_plan	<REGEX>:.* Total Files Read: 5.*
 
 # TODO: fix unsupported comparators
 mode skip
@@ -281,7 +289,7 @@ mode skip
 # NOTE: requires 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part not between 2 and 4
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
@@ -289,7 +297,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
 # test: 'IN'
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part in [2, 3]
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
@@ -297,7 +305,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
 # test: 'NOT IN'
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part not in [2, 3]
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
@@ -305,7 +313,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 3/5.*
 # IS DISTINCT FROM 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part is distinct from null
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 0/5.*
@@ -313,7 +321,7 @@ analyzed_plan	<REGEX>:.* Scanning Files: 0/5.*
 # IS NOT DISTINCT FROM 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/int/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/int/delta_lake')
 WHERE part is not distinct from null
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 5/5.*
@@ -326,7 +334,7 @@ set delta_scan_explain_files_filtered = false;
 
 query II
 EXPLAIN ANALYZE SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/varchar/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping_clustered/varchar/delta_lake')
 WHERE
     value1 = '2' and
     value2 = '2' and

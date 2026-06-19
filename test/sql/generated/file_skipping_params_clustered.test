@@ -1,0 +1,118 @@
+# name: test/sql/generated/file_skipping_params_clustered.test
+# description: Test filter pushdown parameters
+# group: [generated]
+
+require parquet
+
+require delta
+
+require-env GENERATED_DATA_AVAILABLE
+
+statement ok
+set enable_logging=true;
+
+statement ok
+set logging_level = 'INFO';
+
+# delta_scan: ALL filters
+query IIII
+SELECT value1, value3, value2 as v2, part
+FROM delta_scan('./data/generated/test_file_skipping_clustered_2/int/delta_lake', pushdown_filters='all')
+WHERE value1=13 AND v2=(select 103)
+----
+13	1003	103	3
+
+query I
+SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
+----
+constant
+dynamic
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# delta_scan: constant only filters
+query IIII
+SELECT value1, value3, value2 as v2, part
+FROM delta_scan('./data/generated/test_file_skipping_clustered_2/int/delta_lake', pushdown_filters='constant_only')
+WHERE value1=13 AND v2=(select 103)
+----
+13	1003	103	3
+
+query I
+SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
+----
+constant
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# delta_scan: dynamic only filters
+query IIII
+SELECT value1, value3, value2 as v2, part
+FROM delta_scan('./data/generated/test_file_skipping_clustered_2/int/delta_lake', pushdown_filters='dynamic_only')
+WHERE value1=13 AND v2=(select 103)
+----
+13	1003	103	3
+
+query I
+SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
+----
+dynamic
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# delta_scan: no filters
+query IIII
+SELECT value1, value3, value2 as v2, part
+FROM delta_scan('./data/generated/test_file_skipping_clustered_2/int/delta_lake', pushdown_filters='none')
+WHERE value1=13 AND v2=(select 103)
+----
+13	1003	103	3
+
+query I
+SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
+----
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# attach: default = all filters
+statement ok
+ATTACH './data/generated/test_file_skipping_clustered_2/int/delta_lake' as dt1 (TYPE delta)
+
+query IIII
+SELECT value1, value3, value2 as v2, part
+FROM dt1
+WHERE value1=13 AND v2=(select 103)
+----
+13	1003	103	3
+
+query I
+SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
+----
+constant
+dynamic
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# attach: pushdown mode can be configured
+statement ok
+ATTACH './data/generated/test_file_skipping_clustered_2/int/delta_lake' as dt2 (TYPE delta, PUSHDOWN_FILTERS 'dynamic_only')
+
+query IIII
+SELECT value1, value3, value2 as v2, part
+FROM dt2
+WHERE value1=13 AND v2=(select 103)
+----
+13	1003	103	3
+
+query I
+SELECT filter_type FROM delta_filter_pushdown_log() ORDER BY filter_type
+----
+dynamic
+
+statement ok
+CALL truncate_duckdb_logs();
