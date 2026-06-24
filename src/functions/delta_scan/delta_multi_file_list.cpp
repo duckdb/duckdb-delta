@@ -18,6 +18,7 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 #include <regex>
+#include <cstdlib>
 
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 
@@ -283,7 +284,22 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			if (chain.find("cli") != std::string::npos) {
 				set_option(builder, "use_azure_cli", "true");
 			}
-			// Authentication option 1b: non-cli credential chains will just "hope for the best" technically since we
+			// Authentication option 1b: using a workload_identity
+			// Explicitly forward workload identity vars so object_store selects
+			// WorkloadIdentityOAuthProvider instead of falling back to IMDS
+			if (chain.find("workload_identity") != std::string::npos) {
+				// federated_token_file has no DuckDB secret key analog — always read from env
+				const char* fed_token = getenv("AZURE_FEDERATED_TOKEN_FILE");
+				if (fed_token) set_option(builder, "federated_token_file", fed_token);
+				// Prefer secret-sourced values; fall back to env vars if not set in the secret
+				const char* env_client_id = getenv("AZURE_CLIENT_ID");
+				const char* env_tenant_id = getenv("AZURE_TENANT_ID");
+				const string resolved_client_id = !client_id.empty() ? client_id : (env_client_id ? env_client_id : "");
+				const string resolved_tenant_id = !tenant_id.empty() ? tenant_id : (env_tenant_id ? env_tenant_id : "");
+				if (!resolved_client_id.empty()) set_option(builder, "azure_client_id", resolved_client_id);
+				if (!resolved_tenant_id.empty()) set_option(builder, "azure_tenant_id", resolved_tenant_id);
+			}
+			// Authentication option 1c: non-cli credential chains will just "hope for the best" technically since we
 			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
 		} else if (!connection_string.empty() && connection_string != "NULL") {
 			// Authentication option 2: a connection string based on account key

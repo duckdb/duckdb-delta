@@ -1,0 +1,41 @@
+# name: test/sql/cloud/azure/workload_identity_auth.test
+# description: test azure delta_scan with workload_identity credential chain (common in AKS)
+# group: [azure]
+
+require azure
+
+require parquet
+
+require delta
+
+require-env AZURE_CLIENT_ID
+
+require-env AZURE_TENANT_ID
+
+require-env AZURE_FEDERATED_TOKEN_FILE
+
+require-env AZURE_STORAGE_ACCOUNT
+
+statement ok
+set allow_persistent_secrets=false
+
+statement ok
+CREATE SECRET az_wi (
+    TYPE AZURE,
+    PROVIDER CREDENTIAL_CHAIN,
+    CHAIN 'workload_identity',
+    ACCOUNT_NAME '${AZURE_STORAGE_ACCOUNT}'
+)
+
+mode output_result
+
+# Run a remote DAT test
+query I rowsort all_primitive_types
+SELECT *
+FROM delta_scan('azure://delta-testing-private/dat/all_primitive_types/delta')
+----
+
+query I rowsort all_primitive_types
+SELECT *
+FROM parquet_scan('azure://delta-testing-private/dat/all_primitive_types/expected/latest/**/*.parquet')
+----
