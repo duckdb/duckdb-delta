@@ -465,12 +465,16 @@ struct DeltaTableFilters;
 
 class PredicateVisitor : public ffi::EnginePredicate {
 public:
-	PredicateVisitor(const vector<DeltaMultiFileColumnDefinition> &columns, optional_ptr<const DeltaTableFilters> filters);
+	PredicateVisitor(const vector<DeltaMultiFileColumnDefinition> &columns,
+	                 optional_ptr<const DeltaTableFilters> filters);
 
 	ErrorData error_data;
 
 private:
 	unordered_map<string, optional_ptr<const ExpressionFilter>> column_filters;
+	// Top-level column types, keyed by the same name as column_filters, used to reject filters whose subject is a bare
+	// reference to a nested (struct/list/map) column - the path to the scalar leaf is not recoverable in that form.
+	unordered_map<string, LogicalType> column_types;
 
 	static uintptr_t VisitPredicate(PredicateVisitor *predicate, ffi::KernelExpressionVisitorState *state);
 

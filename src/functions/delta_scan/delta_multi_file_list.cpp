@@ -926,19 +926,17 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 		new_total = new_list.GetTotalFileCount();
 
 		if (should_report_explain_output) {
-			if (!mfr_info->extra_info.total_files.IsValid()) {
+			// Filter pushdown can run multiple times for one query (e.g. RemoveUnusedColumns re-runs it on the
+			// already-filtered list), so old_total shrinks across passes. Keep the largest (the true pre-filter total).
+			if (!mfr_info->extra_info.total_files.IsValid() ||
+			    old_total > mfr_info->extra_info.total_files.GetIndex()) {
 				mfr_info->extra_info.total_files = old_total;
-			} else if (mfr_info->extra_info.total_files.GetIndex() != old_total) {
-				throw InternalException(
-				    "Error encountered when analyzing filtered out files for delta scan: total_files inconsistent!");
 			}
 
+			// Likewise keep the smallest post-filter count across passes (the most files skipped).
 			if (!mfr_info->extra_info.filtered_files.IsValid() ||
-			    mfr_info->extra_info.filtered_files.GetIndex() >= new_total) {
+			    new_total < mfr_info->extra_info.filtered_files.GetIndex()) {
 				mfr_info->extra_info.filtered_files = new_total;
-			} else {
-				throw InternalException(
-				    "Error encountered when analyzing filtered out files for delta scan: filtered_files inconsistent!");
 			}
 		}
 	}

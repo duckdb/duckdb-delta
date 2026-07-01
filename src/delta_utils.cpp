@@ -14,6 +14,7 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/function/scalar/struct_utils.hpp"
 #include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/main/database.hpp"
@@ -47,7 +48,7 @@ ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor 
 	ffi::EngineExpressionVisitor visitor;
 
 	visitor.data = &state;
-	visitor.make_field_list = (uintptr_t (*)(void *, uintptr_t))&MakeFieldList;
+	visitor.make_field_list = (uintptr_t(*)(void *, uintptr_t)) & MakeFieldList;
 
 	// Templated primitive functions
 	visitor.visit_literal_bool = VisitPrimitiveLiteralBool;
@@ -547,15 +548,19 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	ffi::EngineSchemaVisitor visitor;
 
 	visitor.data = &state;
-	visitor.make_field_list = (uintptr_t (*)(void *, uintptr_t))&MakeFieldList;
-	visitor.visit_struct = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
-	                                 uintptr_t))&VisitStruct;
-	visitor.visit_array = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
-	                                uintptr_t))&VisitArray;
-	visitor.visit_map = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
-	                              uintptr_t))&VisitMap;
-	visitor.visit_decimal = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata,
-	                                  uint8_t, uint8_t))&VisitDecimal;
+	visitor.make_field_list = (uintptr_t(*)(void *, uintptr_t)) & MakeFieldList;
+	visitor.visit_struct =
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
+	    VisitStruct;
+	visitor.visit_array =
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
+	    VisitArray;
+	visitor.visit_map =
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
+	    VisitMap;
+	visitor.visit_decimal =
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uint8_t, uint8_t)) &
+	    VisitDecimal;
 	visitor.visit_string = VisitSimpleType<LogicalType::VARCHAR>();
 	visitor.visit_long = VisitSimpleType<LogicalType::BIGINT>();
 	visitor.visit_integer = VisitSimpleType<LogicalType::INTEGER>();
@@ -569,7 +574,8 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	visitor.visit_timestamp = VisitSimpleType<LogicalType::TIMESTAMP_TZ>();
 	visitor.visit_timestamp_ntz = VisitSimpleType<LogicalType::TIMESTAMP>();
 	visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
-	                                  bool is_nullable, const ffi::CStringMap *metadata))&VisitVariant;
+	                                  bool is_nullable, const ffi::CStringMap *metadata)) &
+	                        VisitVariant;
 
 	return visitor;
 }
@@ -945,11 +951,13 @@ KernelUtils::UnpackTransformExpression(const vector<unique_ptr<ParsedExpression>
 PredicateVisitor::PredicateVisitor(const vector<DeltaMultiFileColumnDefinition> &columns,
                                    optional_ptr<const DeltaTableFilters> filters) {
 	predicate = this;
-	visitor = (uintptr_t (*)(void *, ffi::KernelExpressionVisitorState *))&VisitPredicate;
+	visitor = (uintptr_t(*)(void *, ffi::KernelExpressionVisitorState *)) & VisitPredicate;
 
 	if (filters) {
 		for (auto &entry : *filters) {
-			column_filters[columns[entry.first].name.GetIdentifierName()] = entry.second.get();
+			auto &column = columns[entry.first];
+			column_filters[column.name.GetIdentifierName()] = entry.second.get();
+			column_types[column.name.GetIdentifierName()] = column.type;
 		}
 	}
 }
@@ -1103,11 +1111,37 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, Expressi
 	}
 }
 
-static bool IsSupportedFilterSubject(const Expression &expr) {
+// Resolves the (possibly struct-nested) column being filtered to the dot-separated path the kernel
+// expects. `base` is the top-level column name this filter is keyed on: a bare column subject yields
+// `base`, while struct field access (struct_extract / struct_extract_at) appends the nested field
+// names, e.g. base "i" with subject i.a.b -> "i.a.b". Returns false for unsupported subjects.
+static bool ResolveFilterColumnPath(const Expression &expr, const string &base, string &result) {
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::BOUND_REF:
 	case ExpressionClass::BOUND_COLUMN_REF:
+		result = base;
 		return true;
+	case ExpressionClass::BOUND_FUNCTION: {
+		auto &func = expr.Cast<BoundFunctionExpression>();
+		const auto &name = func.Function().GetName();
+		if (name != "struct_extract" && name != "struct_extract_at") {
+			return false;
+		}
+		if (func.GetChildren().empty()) {
+			return false;
+		}
+		auto &struct_type = func.GetChildren()[0]->GetReturnType();
+		idx_t child_idx;
+		if (struct_type.id() != LogicalTypeId::STRUCT || !TryGetStructExtractChildIndex(func, child_idx)) {
+			return false;
+		}
+		string parent;
+		if (!ResolveFilterColumnPath(*func.GetChildren()[0], base, parent)) {
+			return false;
+		}
+		result = parent + "." + StructType::GetChildName(struct_type, child_idx).GetIdentifierName();
+		return true;
+	}
 	default:
 		return false;
 	}
@@ -1132,18 +1166,26 @@ uintptr_t PredicateVisitor::VisitIsNotNull(const string &col_name, ffi::KernelEx
 
 uintptr_t PredicateVisitor::VisitFilterExpression(const string &col_name, const Expression &expr,
                                                   ffi::KernelExpressionVisitorState *state) {
+	// A filter subject that is a bare reference to a nested (struct/list/map) column can't be expressed to the kernel:
+	// the same predicate also arrives in struct_extract form (which resolves to the full leaf path, e.g. i.a.b), so
+	// the bare form (resolving only to the top-level column) is skipped.
+	auto type_entry = column_types.find(col_name);
+	bool base_is_nested = type_entry != column_types.end() && type_entry->second.IsNested();
+
 	if (BoundComparisonExpression::IsComparison(expr)) {
 		auto &comparison = expr.Cast<BoundFunctionExpression>();
 		auto comparison_type = comparison.GetExpressionType();
 		auto &left = BoundComparisonExpression::Left(comparison);
 		auto &right = BoundComparisonExpression::Right(comparison);
-		if (left.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT && IsSupportedFilterSubject(right)) {
-			return VisitConstantFilter(col_name, FlipComparisonExpression(comparison_type),
+		string path;
+		if (left.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
+		    ResolveFilterColumnPath(right, col_name, path) && !(path == col_name && base_is_nested)) {
+			return VisitConstantFilter(path, FlipComparisonExpression(comparison_type),
 			                           left.Cast<BoundConstantExpression>().GetValue(), state);
 		}
-		if (right.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT && IsSupportedFilterSubject(left)) {
-			return VisitConstantFilter(col_name, comparison_type, right.Cast<BoundConstantExpression>().GetValue(),
-			                           state);
+		if (right.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
+		    ResolveFilterColumnPath(left, col_name, path) && !(path == col_name && base_is_nested)) {
+			return VisitConstantFilter(path, comparison_type, right.Cast<BoundConstantExpression>().GetValue(), state);
 		}
 		return ~0;
 	}
@@ -1167,14 +1209,16 @@ uintptr_t PredicateVisitor::VisitFilterExpression(const string &col_name, const 
 	}
 	case ExpressionClass::BOUND_OPERATOR: {
 		auto &op = expr.Cast<BoundOperatorExpression>();
-		if (op.GetChildren().size() != 1 || !IsSupportedFilterSubject(*op.GetChildren()[0])) {
+		string path;
+		if (op.GetChildren().size() != 1 || !ResolveFilterColumnPath(*op.GetChildren()[0], col_name, path) ||
+		    (path == col_name && base_is_nested)) {
 			return ~0;
 		}
 		if (op.GetExpressionType() == ExpressionType::OPERATOR_IS_NULL) {
-			return VisitIsNull(col_name, state);
+			return VisitIsNull(path, state);
 		}
 		if (op.GetExpressionType() == ExpressionType::OPERATOR_IS_NOT_NULL) {
-			return VisitIsNotNull(col_name, state);
+			return VisitIsNotNull(path, state);
 		}
 		return ~0;
 	}
