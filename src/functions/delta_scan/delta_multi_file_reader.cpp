@@ -147,6 +147,9 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 				throw IOException("Delta Snapshot returned partition column that is not present in the schema");
 			}
 			bind_data.hive_partitioning_indexes.emplace_back(part, hive_partitioning_index);
+			// Register the partition column's type so pre-open filter skipping resolves the partition value as the
+			// column type instead of defaulting to VARCHAR (which crashes typed ExpressionFilter evaluation).
+			options.hive_types_schema[part] = return_types[hive_partitioning_index];
 		}
 	}
 
