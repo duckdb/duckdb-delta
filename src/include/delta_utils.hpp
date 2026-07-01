@@ -4,8 +4,8 @@
 #define DEFINE_DEFAULT_ENGINE_BASE 1
 #include "delta_kernel_ffi.hpp"
 #include "duckdb/common/enum_util.hpp"
-#include "duckdb/planner/filter/conjunction_filter.hpp"
-#include "duckdb/planner/filter/constant_filter.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
+#include "duckdb/planner/filter/table_filter_functions.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/common/multi_file/multi_file_data.hpp"
@@ -92,7 +92,7 @@ struct KernelUtils {
 		return none;
 	}
 
-	static vector<unique_ptr<ParsedExpression>> &
+	static vector<unique_ptr<ParsedExpression>>
 	UnpackTransformExpression(const vector<unique_ptr<ParsedExpression>> &parsed_expression);
 };
 
@@ -461,29 +461,29 @@ protected:
 };
 
 typedef SharedKernelPointer<ffi::SharedSnapshot, ffi::free_snapshot> SharedKernelSnapshot;
+struct DeltaTableFilters;
 
 class PredicateVisitor : public ffi::EnginePredicate {
 public:
-	PredicateVisitor(const vector<DeltaMultiFileColumnDefinition> &columns, optional_ptr<const TableFilterSet> filters);
+	PredicateVisitor(const vector<DeltaMultiFileColumnDefinition> &columns, optional_ptr<const DeltaTableFilters> filters);
 
 	ErrorData error_data;
 
 private:
-	unordered_map<string, TableFilter *> column_filters;
+	unordered_map<string, optional_ptr<const ExpressionFilter>> column_filters;
 
 	static uintptr_t VisitPredicate(PredicateVisitor *predicate, ffi::KernelExpressionVisitorState *state);
 
-	uintptr_t VisitConstantFilter(const string &col_name, const ConstantFilter &filter,
+	uintptr_t VisitConstantFilter(const string &col_name, ExpressionType comparison_type, const Value &value,
 	                              ffi::KernelExpressionVisitorState *state);
-	uintptr_t VisitAndFilter(const string &col_name, const ConjunctionAndFilter &filter,
-	                         ffi::KernelExpressionVisitorState *state);
+	uintptr_t VisitFilterExpression(const string &col_name, const Expression &expr,
+	                                ffi::KernelExpressionVisitorState *state);
 
 	uintptr_t VisitIsNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
 	uintptr_t VisitIsNotNull(const string &col_name, ffi::KernelExpressionVisitorState *state);
-	uintptr_t VisitStructExtractFilter(const string &col_name, const StructFilter &filter,
-	                                   ffi::KernelExpressionVisitorState *state);
 
-	uintptr_t VisitFilter(const string &col_name, const TableFilter &filter, ffi::KernelExpressionVisitorState *state);
+	uintptr_t VisitFilter(const string &col_name, const ExpressionFilter &filter,
+	                      ffi::KernelExpressionVisitorState *state);
 };
 
 // Singleton class to forward logs to DuckDB

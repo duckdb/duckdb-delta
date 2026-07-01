@@ -65,15 +65,17 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		string commit_fun_name = "__internal_delta_ccv2_commit_staged";
 
 		CatalogEntryRetriever retriever(context);
-		EntryLookupInfo lookup_info(CatalogType::TABLE_FUNCTION_ENTRY, commit_fun_name);
-		auto fun = retriever.GetEntry(res->parent_catalog_name, schema, lookup_info, OnEntryNotFound::RETURN_NULL);
+		EntryLookupInfo lookup_info(
+		    CatalogType::TABLE_FUNCTION_ENTRY,
+		    QualifiedName(Identifier(res->parent_catalog_name), Identifier(schema), Identifier(commit_fun_name)));
+		auto fun = retriever.GetEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
 		if (!fun) {
 			throw InternalException("Parent catalog does not have a __internal_delta_ccv2_commit_staged function");
 		}
 		res->commit_function = fun->Cast<TableFunctionCatalogEntry>();
 	}
 
-	res->SetDefaultTable(DEFAULT_SCHEMA, res->GetInternalTableName());
+	res->SetDefaultTable(Identifier::DefaultSchema(), Identifier(res->GetInternalTableName()));
 
 	return std::move(res);
 }

@@ -33,7 +33,7 @@ static void GetWriteDataFunction(DataChunk &input, ExpressionState &state, Vecto
 
 ScalarFunctionSet DeltaFunctions::GetWriteFileFunction(ExtensionLoader &loader) {
 	ScalarFunctionSet result;
-	result.name = "write_blob";
+	result.SetName("write_blob");
 
 	ScalarFunction write_file({LogicalType::VARCHAR, LogicalType::BLOB}, {LogicalType::BOOLEAN}, GetWriteDataFunction,
 	                          nullptr, nullptr);

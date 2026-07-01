@@ -55,7 +55,7 @@ void FinalizeBindBaseOverride(MultiFileReaderData &reader_data, const MultiFileO
 	// create a map of name -> column index
 	auto &local_columns = reader_data.reader->GetColumns();
 	auto &filename = reader_data.reader->GetFileName();
-	case_insensitive_map_t<idx_t> name_map;
+	identifier_map_t<idx_t> name_map;
 	if (file_options.union_by_name) {
 		for (idx_t col_idx = 0; col_idx < local_columns.size(); col_idx++) {
 			auto &column = local_columns[col_idx];
@@ -104,7 +104,7 @@ void FinalizeBindBaseOverride(MultiFileReaderData &reader_data, const MultiFileO
 }
 
 bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files, vector<LogicalType> &return_types,
-                                vector<string> &names, MultiFileReaderBindData &bind_data) {
+                                vector<Identifier> &names, MultiFileReaderBindData &bind_data) {
 	auto &delta_snapshot = dynamic_cast<DeltaMultiFileList &>(files);
 
 	auto log_tail_setting = options.custom_options.find("log_tail");
@@ -118,7 +118,7 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 }
 
 void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList &files,
-                                       vector<LogicalType> &return_types, vector<string> &names,
+                                       vector<LogicalType> &return_types, vector<Identifier> &names,
                                        MultiFileReaderBindData &bind_data) {
 	// Disable all other multifilereader options
 	options.auto_detect_hive_partitioning = false;
@@ -138,7 +138,7 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 		for (auto &part : partitions) {
 			idx_t hive_partitioning_index;
 			auto lookup = std::find_if(names.begin(), names.end(),
-			                           [&](const string &col_name) { return StringUtil::CIEquals(col_name, part); });
+			                           [&](const Identifier &col_name) { return col_name == part; });
 			if (lookup != names.end()) {
 				// hive partitioning column also exists in file - override
 				auto idx = NumericCast<idx_t>(lookup - names.begin());
@@ -264,7 +264,7 @@ DeltaMultiFileReader::InitializeGlobalState(ClientContext &context, const MultiF
 		}
 
 		auto global_name = global_columns[global_id].name;
-		selected_columns.insert({global_name, i});
+		selected_columns.insert({global_name.GetIdentifierName(), i});
 	}
 
 	auto res = make_uniq<DeltaMultiFileReaderGlobalState>(extra_columns, &file_list);

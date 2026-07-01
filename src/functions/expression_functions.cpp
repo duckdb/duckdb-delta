@@ -15,11 +15,11 @@ static void AddTestExpressions(vector<Value> &result, vector<unique_ptr<ParsedEx
 
 	auto &expression = parsed_expressions.back();
 	if (expression->GetExpressionType() == ExpressionType::FUNCTION) {
-		for (auto &expr : expression->Cast<FunctionExpression>().children) {
-			result.push_back(expr->ToString());
+		for (auto &arg : expression->Cast<FunctionExpression>().GetArguments()) {
+			result.push_back(arg.GetExpression().ToString());
 		}
 	} else if (expression->GetExpressionType() == ExpressionType::CONJUNCTION_AND) {
-		for (auto &expr : expression->Cast<ConjunctionExpression>().children) {
+		for (auto &expr : expression->Cast<ConjunctionExpression>().GetChildren()) {
 			result.push_back(expr->ToString());
 		}
 	} else {
@@ -46,7 +46,7 @@ static void GetDeltaTestExpression(DataChunk &input, ExpressionState &state, Vec
 
 ScalarFunctionSet DeltaFunctions::GetExpressionFunction(ExtensionLoader &loader) {
 	ScalarFunctionSet result;
-	result.name = "get_delta_test_expression";
+	result.SetName("get_delta_test_expression");
 
 	ScalarFunction getvar({}, LogicalType::LIST(LogicalType::VARCHAR), GetDeltaTestExpression, nullptr, nullptr);
 	result.AddFunction(getvar);
