@@ -146,22 +146,25 @@ static Value CreateValueLogicalTypeFromStatNode(const unordered_map<string, Stat
 	for (const auto &node : tree) {
 		if (node.second.children.size() == 0) {
 			if (field == "min") {
-				children.push_back({Identifier(node.first), node.second.stats.has_min
-				                                    ? Value(node.second.stats.min).DefaultCastAs(node.second.type)
-				                                    : Value(node.second.type)});
+				children.push_back(
+				    {Identifier(node.first), node.second.stats.has_min
+				                                 ? Value(node.second.stats.min).DefaultCastAs(node.second.type)
+				                                 : Value(node.second.type)});
 			} else if (field == "max") {
-				children.push_back({Identifier(node.first), node.second.stats.has_max
-				                                    ? Value(node.second.stats.max).DefaultCastAs(node.second.type)
-				                                    : Value(node.second.type)});
+				children.push_back(
+				    {Identifier(node.first), node.second.stats.has_max
+				                                 ? Value(node.second.stats.max).DefaultCastAs(node.second.type)
+				                                 : Value(node.second.type)});
 			} else if (field == "null_count") {
 				children.push_back({Identifier(node.first), node.second.stats.has_null_count
-				                                    ? Value::BIGINT(node.second.stats.null_count)
-				                                    : Value(LogicalType::BIGINT)});
+				                                                ? Value::BIGINT(node.second.stats.null_count)
+				                                                : Value(LogicalType::BIGINT)});
 			} else {
 				throw InternalException("Invalid field: %s", field.c_str());
 			}
 		} else {
-			children.push_back({Identifier(node.first), CreateValueLogicalTypeFromStatNode(node.second.children, field)});
+			children.push_back(
+			    {Identifier(node.first), CreateValueLogicalTypeFromStatNode(node.second.children, field)});
 		}
 	}
 

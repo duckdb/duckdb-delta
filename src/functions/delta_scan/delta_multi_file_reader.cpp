@@ -137,8 +137,8 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 		auto partitions = snapshot.GetPartitionColumns();
 		for (auto &part : partitions) {
 			idx_t hive_partitioning_index;
-			auto lookup = std::find_if(names.begin(), names.end(),
-			                           [&](const Identifier &col_name) { return col_name == part; });
+			auto lookup =
+			    std::find_if(names.begin(), names.end(), [&](const Identifier &col_name) { return col_name == part; });
 			if (lookup != names.end()) {
 				// hive partitioning column also exists in file - override
 				auto idx = NumericCast<idx_t>(lookup - names.begin());

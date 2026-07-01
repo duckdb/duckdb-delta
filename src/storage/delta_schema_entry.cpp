@@ -127,7 +127,7 @@ unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &co
 		table_info.columns.AddColumn(ColumnDefinition(Identifier(names[i]), return_types[i]));
 	}
 	table_info.SetTableName(!delta_catalog.internal_table_name.empty() ? Identifier(delta_catalog.internal_table_name)
-	                                                               : catalog.GetName());
+	                                                                   : catalog.GetName());
 
 	// Copy over constraints to table info TODO: these are incompatible currently
 	// table_info.constraints = snapshot->not_null_constraints;}

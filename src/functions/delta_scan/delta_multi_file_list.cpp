@@ -367,9 +367,16 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 
 		for (auto &transform_op_child : transform_op.GetArguments()) {
 			if (transform_op_child.GetExpression().GetExpressionType() == ExpressionType::COMPARE_EQUAL) {
-				auto name =
-				    transform_op_child.GetExpression().Cast<ComparisonExpression>().Left().Cast<ColumnRefExpression>().GetName();
-				auto value = transform_op_child.GetExpression().Cast<ComparisonExpression>().Right().Cast<ConstantExpression>().GetValue();
+				auto name = transform_op_child.GetExpression()
+				                .Cast<ComparisonExpression>()
+				                .Left()
+				                .Cast<ColumnRefExpression>()
+				                .GetName();
+				auto value = transform_op_child.GetExpression()
+				                 .Cast<ComparisonExpression>()
+				                 .Right()
+				                 .Cast<ConstantExpression>()
+				                 .GetValue();
 
 				if (name == "is_replace") {
 					is_replace = value.GetValue<bool>();
@@ -811,8 +818,7 @@ void DeltaMultiFileList::EnsureScanInitialized() const {
 	}
 }
 
-unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContext &context,
-                                                                    TableFilterSet &new_filters,
+unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContext &context, TableFilterSet &new_filters,
                                                                     vector<column_t> column_indexes) const {
 	auto filtered_list = make_uniq<DeltaMultiFileList>(context, paths[0].path, version);
 
@@ -827,8 +833,8 @@ unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContex
 	for (auto &entry : new_filters) {
 		auto &column_id = column_indexes[entry.GetIndex()];
 		if (column_id < global_columns.size()) {
-			auto &filter = ExpressionFilter::GetExpressionFilter(entry.Filter(),
-			                                                    "DeltaMultiFileList::PushdownInternal");
+			auto &filter =
+			    ExpressionFilter::GetExpressionFilter(entry.Filter(), "DeltaMultiFileList::PushdownInternal");
 			result_filter_set.PushFilter(column_id, filter.Copy());
 		}
 	}
