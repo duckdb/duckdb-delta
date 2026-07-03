@@ -42,5 +42,5 @@ WHERE filename != 'henk' and letter = 'd'
 query IIIII
 SELECT filter_type, files_before, files_after, filters_before, filters_after FROM delta_filter_pushdown_log() order by filter_type;
 ----
-constant	2	1	[]	['letter=\'d\'']
-dynamic	1	1	['letter=\'d\'']	['letter=\'d\'']
+constant	2	1	[]	['(letter = \'d\')']
+dynamic	1	1	['(letter = \'d\')']	['(letter = \'d\')']

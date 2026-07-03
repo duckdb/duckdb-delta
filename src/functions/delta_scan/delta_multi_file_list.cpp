@@ -18,6 +18,7 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 #include <regex>
+#include <algorithm>
 
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 
@@ -947,34 +948,36 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 		}
 	}
 
-	// Report the new filters
-	vector<Value> old_filters_value_list;
-	for (auto &entry : table_filters) {
-		auto &filter = *entry.second;
-		auto column_id = entry.first;
-		if (column_id < global_columns.size()) {
-			auto &col_name = global_columns[column_id].name;
-			old_filters_value_list.push_back(filter.ToString(col_name.GetIdentifierName()));
+	// Collect a filter set's rendered strings, sorted for deterministic output (the underlying map is unordered).
+	auto collect_filter_strings = [&](const DeltaTableFilters &tf) {
+		vector<string> result;
+		for (auto &entry : tf) {
+			auto column_id = entry.first;
+			if (column_id < global_columns.size()) {
+				result.push_back(entry.second->ToString(global_columns[column_id].name.GetIdentifierName()));
+			}
 		}
-	}
-	auto old_filters_value = Value::LIST(LogicalType::VARCHAR, old_filters_value_list);
+		std::sort(result.begin(), result.end());
+		return result;
+	};
 
-	// Report the new filters
-	vector<Value> filters_value_list;
-	for (auto &entry : new_list.table_filters) {
-		auto column_id = entry.first;
-		auto &filter = *entry.second;
-		if (column_id < global_columns.size()) {
-			auto &col_name = global_columns[column_id].name;
-			filters_value_list.push_back(filter.ToString(col_name.GetIdentifierName()));
+	auto to_value_list = [](const vector<string> &strings) {
+		vector<Value> values;
+		for (auto &s : strings) {
+			values.push_back(Value(s));
 		}
-	}
-	auto filters_value = Value::LIST(LogicalType::VARCHAR, filters_value_list);
+		return Value::LIST(LogicalType::VARCHAR, values);
+	};
+
+	// Report the pre- and post-pushdown filters
+	auto old_filters_value = to_value_list(collect_filter_strings(table_filters));
+	auto new_filter_strings = collect_filter_strings(new_list.table_filters);
+	auto filters_value = to_value_list(new_filter_strings);
 
 	if (should_report_explain_output) {
 		string files_string;
-		for (auto &filter : filters_value_list) {
-			files_string += filter.ToString() + "\n";
+		for (auto &filter : new_filter_strings) {
+			files_string += filter + "\n";
 		}
 		mfr_info->extra_info.file_filters = files_string.substr(0, files_string.size() - 1);
 	}

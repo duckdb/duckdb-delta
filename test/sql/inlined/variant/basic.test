@@ -28,7 +28,7 @@ select * from delta_table;
 query I
 select stats(data) from delta_table;
 ----
-shredding_state: INCONSISTENT[Has Null: true, Has No Null: true]
+{'has_no_null': true, 'has_null': true, 'shredding_state': INCONSISTENT}
 
 query I
 select variant_typeof(data) from delta_table;
