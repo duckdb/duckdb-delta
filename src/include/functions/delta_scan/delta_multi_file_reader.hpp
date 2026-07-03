@@ -68,6 +68,9 @@ struct DeltaMultiFileReader : public MultiFileReader {
 	// A snapshot can be injected into the multifilereader, this ensures the GetMultiFileList can return this snapshot
 	// (note that the path should match the one passed to CreateFileList)
 	shared_ptr<DeltaMultiFileList> snapshot;
+
+	//! Time-travel target set via the `version` named parameter (INVALID_INDEX = latest).
+	idx_t delta_version = DConstants::INVALID_INDEX;
 };
 
 } // namespace duckdb

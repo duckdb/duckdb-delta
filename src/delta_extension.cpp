@@ -4,6 +4,7 @@
 #include "delta_functions.hpp"
 #include "delta_log_types.hpp"
 #include "delta_macros.hpp"
+#include "functions/delta_scan/physical_delta_scan.hpp"
 #include "storage/delta_catalog.hpp"
 #include "storage/delta_transaction_manager.hpp"
 
@@ -122,6 +123,10 @@ static void LoadInternal(ExtensionLoader &loader) {
 	    "Forwards the internal logging of the Delta Kernel to the duckdb logger. Warning: this may impact "
 	    "performance even with DuckDB logging disabled.",
 	    LogicalType::BOOLEAN, Value(false), LoggerCallback::DuckDBSettingCallBack);
+
+	// Restore filter pushdown for the custom-operator scan path (DELTA_KERNEL_PLAN_OP /
+	// DELTA_KERNEL_PLAN_SM_ASYNC); no-op for every other query.
+	RegisterDeltaScanOptimizer(config);
 
 	DeltaMacros::RegisterMacros(loader);
 

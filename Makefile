@@ -63,3 +63,17 @@ kernel_debug:
 
 kernel_release:
 	cd build/release && cmake --build . --config Release --target extension/delta/CMakeFiles/delta_kernel
+
+# Standalone native acceptance-test harness (test/acceptance_harness.cpp).
+# Builds an in-process C++ executable that runs the delta-kernel-rs
+# acceptance/workloads read specs through delta_scan and compares to the golden
+# parquet -- the C++ analogue of ~/duckdb/plan-based-scan/workloads_harness.py,
+# but able to run under real intra-process concurrency (--concurrency N) to
+# exercise the async scan path (DELTA_KERNEL_PLAN_SM_ASYNC). Requires `make
+# release`/`make debug` to have configured the build first.
+# Binary lands at build/<cfg>/extension/delta/acceptance_harness.
+acceptance_harness_release:
+	cd build/release && cmake . >/dev/null && cmake --build . --target acceptance_harness
+
+acceptance_harness_debug:
+	cd build/debug && cmake . >/dev/null && cmake --build . --target acceptance_harness

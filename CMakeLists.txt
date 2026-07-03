@@ -144,8 +144,8 @@ set(CARGO_PROFILE "$<IF:$<CONFIG:Debug>,dev,release>")
 # Add rust_example as a CMake target
 ExternalProject_Add(
   ${KERNEL_NAME}
-  GIT_REPOSITORY "https://github.com/delta-io/delta-kernel-rs"
-  GIT_TAG v0.21.0
+  GIT_REPOSITORY "https://github.com/OussamaSaoudi/delta-kernel-rs"
+  GIT_TAG prototype/duckdb-plan-based-scan
   # Prints the env variables passed to the cargo build to the terminal, useful
   # in debugging because passing them through CMake is an error-prone mess
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS}
@@ -156,7 +156,7 @@ ExternalProject_Add(
   BUILD_COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
       --package delta_kernel_ffi --profile=${CARGO_PROFILE}
-      --features "default-engine-rustls,arrow,test-ffi,delta-kernel-unity-catalog,tracing"
+      --features "default-engine-rustls,arrow,test-ffi,delta-kernel-unity-catalog,tracing,duckdb"
       ${RUST_PLATFORM_PARAM}
   # acceptance depends on delta_kernel_benchmarks (regular dep, not dev), whose build.rs
   # downloads benchmark workload data we don't need. Pre-create the .done marker to skip it.
@@ -216,3 +216,39 @@ install(
   EXPORT "${DUCKDB_EXPORT_SET}"
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+
+# Standalone native acceptance-test harness (test/acceptance_harness.cpp).
+#
+# A self-contained C++ executable (NOT a Catch2 unittest -- those are disabled
+# for extension builds) that embeds DuckDB in-process, LOADs the built delta
+# extension by path, and runs the delta-kernel-rs acceptance/workloads read
+# specs, comparing delta_scan vs the golden parquet exactly like the external
+# Python harness. Because it runs many Connections on one DuckDB across
+# std::threads, it can exercise the async scan path (DELTA_KERNEL_PLAN_SM_ASYNC)
+# under real intra-process concurrency -- which the process-per-shard Python
+# driver cannot.
+#
+# Guarded on the DuckDB source tree being present (it is, since this file is
+# included from within DuckDB's own build). Links the SHARED `duckdb` target
+# (libduckdb.so) -- a self-contained lib with all core+builtin extensions
+# already resolved, so we avoid dragging in the static extension loader chain.
+# yyjson (spec JSON parsing) headers are on the include path; the symbols are
+# header-only inline so no separate lib is needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/include/duckdb.hpp")
+  add_executable(acceptance_harness
+                 ${CMAKE_CURRENT_SOURCE_DIR}/test/acceptance_harness.cpp)
+  target_include_directories(
+    acceptance_harness
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/include
+            ${CMAKE_SOURCE_DIR}/third_party/yyjson/include)
+  find_package(Threads REQUIRED)
+  target_link_libraries(acceptance_harness duckdb Threads::Threads
+                        ${PLATFORM_LIBS})
+  # Embed an rpath to the built libduckdb.so so the harness runs from anywhere.
+  set_target_properties(
+    acceptance_harness PROPERTIES
+    BUILD_RPATH "${CMAKE_BINARY_DIR}/src"
+    INSTALL_RPATH "${CMAKE_BINARY_DIR}/src")
+  # The harness LOADs the delta extension at runtime; make sure it's built.
+  add_dependencies(acceptance_harness ${LOADABLE_EXTENSION_NAME})
+endif()

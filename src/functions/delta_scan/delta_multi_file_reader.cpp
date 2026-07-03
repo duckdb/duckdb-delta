@@ -19,6 +19,51 @@
 
 namespace duckdb {
 
+// Rewrite a column (and its struct/list/map children, recursively) to use PHYSICAL field names: the
+// Delta columnMapping.physicalName lives in `identifier` (a VARCHAR Value); promote it to the field
+// name at every level and rebuild the nested LogicalType so its struct field names are physical too.
+// Leaf types are left exactly as bound (they match the parquet), so no spurious casts are introduced.
+// Used only in streaming (delta_load) mode, so the reader emits physical-named structs that the
+// kernel's terminal Transform can address; the Transform performs the physical->logical rename.
+static void MakeColumnPhysical(MultiFileColumnDefinition &col) {
+	if (!col.identifier.IsNull() && col.identifier.type().id() == LogicalTypeId::VARCHAR) {
+		col.name = col.identifier.GetValue<string>();
+	}
+	// Recurse through STRUCTs only. The kernel's terminal Transform rebuilds nested structs (struct_pack,
+	// physical->logical) but passes LIST/MAP columns through unchanged — it does not rename their element
+	// fields. So we must NOT physicalize anything under a list/map: the reader emits those elements with
+	// the logical names the Transform expects to pass through. (The list/map *column itself* still gets a
+	// physical name above, which is what the Transform addresses.)
+	if (col.type.id() == LogicalTypeId::STRUCT) {
+		child_list_t<LogicalType> new_children;
+		for (auto &child : col.children) {
+			MakeColumnPhysical(child);
+			new_children.emplace_back(child.name, child.type);
+		}
+		col.type = LogicalType::STRUCT(std::move(new_children));
+	}
+}
+
+// Copy the INTEGER Delta field-id identifier from the aligned bound column `src` onto `dst` (and its
+// struct children), for BY_FIELD_ID_OR_NAME mapping. Columns/levels without a field id are left
+// untouched: they keep the physical-name identifier from MakeColumnPhysical and fall through to the
+// name match. The column `name` (the physical name) is preserved for that fallback. Recurses structs in
+// lockstep with `src`; stops at list/map (their elements aren't field-id mapped — they name-match).
+static void OverlayFieldIds(MultiFileColumnDefinition &dst, optional_ptr<const MultiFileColumnDefinition> src) {
+	if (src && !src->identifier.IsNull() && src->identifier.type().id() == LogicalTypeId::INTEGER) {
+		dst.identifier = src->identifier;
+	}
+	if (dst.type.id() == LogicalTypeId::STRUCT) {
+		for (idx_t c = 0; c < dst.children.size(); c++) {
+			optional_ptr<const MultiFileColumnDefinition> sc;
+			if (src && c < src->children.size()) {
+				sc = &src->children[c];
+			}
+			OverlayFieldIds(dst.children[c], sc);
+		}
+	}
+}
+
 constexpr column_t DeltaMultiFileReader::DELTA_FILE_NUMBER_COLUMN_ID;
 
 struct DeltaDeleteFilter : public DeleteFilter {
@@ -107,6 +152,12 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
                                 vector<string> &names, MultiFileReaderBindData &bind_data) {
 	auto &delta_snapshot = dynamic_cast<DeltaMultiFileList &>(files);
 
+	// `version` (time travel) is parsed via ParseOption, which runs *after* CreateFileList constructs the
+	// file list. Apply it here, before schema/snapshot resolution (delta_snapshot.Bind below) consumes it.
+	if (delta_version != DConstants::INVALID_INDEX) {
+		delta_snapshot.SetVersion(delta_version);
+	}
+
 	auto log_tail_setting = options.custom_options.find("log_tail");
 	if (log_tail_setting != options.custom_options.end()) {
 		delta_snapshot.delta_log_path = make_uniq<DeltaLogPathArray>(log_tail_setting->second);
@@ -171,6 +222,43 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	auto &snapshot = delta_global_state.file_list->Cast<DeltaMultiFileList>();
 
 	auto &scan_columns = snapshot.GetLazyLoadedGlobalColumns();
+
+	// Streaming (delta_load TVF) mode: the reader must emit the *physical* read schema so the kernel's
+	// terminal Transform can address columns by physical name and do the physical->logical rename. We
+	// reuse the snapshot's lazy_loaded_schema (correct column mapping by columnMapping.physicalName
+	// identifier, correct leaf types matching the parquet) but rewrite every field NAME (top-level AND
+	// nested struct/list/map) to its physical identifier. That makes the produced struct types carry
+	// physical nested field names without disturbing the mapping or leaf types. Regular delta_scan keeps
+	// the logical names (not applied here).
+	if (snapshot.IsStreamingPopulated()) {
+		vector<MultiFileColumnDefinition> physical_columns =
+		    DeltaMultiFileColumnDefinition::ConvertToBase(scan_columns);
+		for (auto &col : physical_columns) {
+			MakeColumnPhysical(col);
+		}
+		if (physical_columns.size() < global_columns.size()) {
+			for (idx_t i = physical_columns.size(); i < global_columns.size(); i++) {
+				physical_columns.push_back(global_columns[i]);
+			}
+		}
+		// BY_FIELD_ID_OR_NAME: stamp the Delta field ids (INTEGER) the bind put on the bound
+		// `global_columns` onto our physical columns so the mapper can match by field id first. Columns
+		// without a field id keep their physical-name identifier and fall through to the name match. The
+		// column's `name` stays the physical name (set by MakeColumnPhysical) for that fallback.
+		if (bind_data.reader_bind.mapping == MultiFileColumnMappingMode::BY_FIELD_ID_OR_NAME) {
+			for (idx_t i = 0; i < physical_columns.size(); i++) {
+				optional_ptr<const MultiFileColumnDefinition> src;
+				if (i < global_columns.size()) {
+					src = &global_columns[i];
+				}
+				OverlayFieldIds(physical_columns[i], src);
+			}
+		}
+		FinalizeBind(reader_data, bind_data.file_options, bind_data.reader_bind, physical_columns, global_column_ids,
+		             context, global_state);
+		return CreateMapping(context, reader_data, physical_columns, global_column_ids, table_filters,
+		                     gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns);
+	}
 
 	// We need to override the global columns, because only now we have the correct column mapping information
 	vector<MultiFileColumnDefinition> overridden_global_columns =
@@ -243,7 +331,7 @@ shared_ptr<MultiFileList> DeltaMultiFileReader::CreateFileList(ClientContext &co
 		}
 	}
 
-	return make_shared_ptr<DeltaMultiFileList>(context, paths[0], DConstants::INVALID_INDEX);
+	return make_shared_ptr<DeltaMultiFileList>(context, paths[0], delta_version);
 }
 
 unique_ptr<MultiFileReaderGlobalState>
@@ -296,6 +384,13 @@ bool DeltaMultiFileReader::ParseOption(const string &key, const Value &val, Mult
 
 	if (loption == "log_tail") {
 		options.custom_options["log_tail"] = val;
+		return true;
+	}
+
+	// Time-travel target for the scan (acceptance-workload read specs read at a version).
+	if (loption == "version") {
+		auto v = val.GetValue<int64_t>();
+		delta_version = (v < 0) ? DConstants::INVALID_INDEX : (idx_t)v;
 		return true;
 	}
 

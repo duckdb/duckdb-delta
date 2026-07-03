@@ -15,9 +15,13 @@
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 namespace duckdb {
+
+class StateWithBlockableTasks;
+class DeltaScanSMDriver;
 
 struct DeltaFileMetaData {
 	DeltaFileMetaData() {};
@@ -59,6 +63,8 @@ class DeltaMultiFileList : public SimpleMultiFileList {
 public:
 	DeltaMultiFileList(ClientContext &context, const string &path, idx_t version,
 	                   optional_ptr<const DeltaMultiFileList> previous = nullptr);
+	//! Out-of-line so the unique_ptr<DeltaScanSMDriver> (incomplete here) is destroyed where it is complete.
+	~DeltaMultiFileList();
 	string GetPath() const;
 	static string ToDuckDBPath(const string &raw_path);
 	static string ToDeltaPath(const string &raw_path);
@@ -83,7 +89,62 @@ public:
 	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const override;
 	DeltaFileMetaData &GetMetaData(idx_t index) const;
 	idx_t GetVersion();
+	//! Set the time-travel target version before the snapshot is lazily resolved. Used by the reader's
+	//! Bind(), since the `version` named parameter is parsed after the file list is constructed.
+	void SetVersion(idx_t v) {
+		version = v;
+	}
 	vector<string> GetPartitionColumns();
+
+	//! One resolved file + its metadata, built independently of the shared list (lock-free).
+	struct ResolvedFileEntry {
+		OpenFileInfo file;
+		unique_ptr<DeltaFileMetaData> meta;
+	};
+
+	//! Plan-based scan (design C′ build pipeline): build the resolved file + metadata for one surviving
+	//! scan_file_row WITHOUT touching the shared list — no lock taken. `path_val` is the file path;
+	//! `fcv_val` is the fileConstantValues struct (partition values / row tracking) or NULL; `dv_val` is
+	//! the deletionVector struct or NULL. The (expensive) deletion-vector resolution happens here, so
+	//! the build sink can run it lock-free across many threads. Returns an entry with an empty
+	//! `file.path` when `path_val` is NULL (caller skips it).
+	ResolvedFileEntry BuildFileEntry(const Value &path_val, const Value &fcv_val, const Value &dv_val) const;
+	//! Append a batch of pre-built entries to the shared list under a single lock (one lock per build
+	//! thread, not per row), assigning each its file_number.
+	void AppendResolvedEntries(vector<ResolvedFileEntry> &&entries);
+	//! Mark the build-pipeline-fed file list complete; the source side then serves resolved_files
+	//! directly (no lazy nested-query path, no kernel iterator) and, since the list is now immutable,
+	//! lock-free. Also sets the listing closed and wakes any source blocked at the list tail.
+	void MarkExternallyPopulated();
+
+	//! Streaming-sink mode (concurrent sink+source PhysicalDeltaLoad): the sink appends resolved
+	//! entries via AppendResolvedEntries WHILE the source scans, instead of fully building before the
+	//! source runs. Enables the GetFileInternal "serve resolved_files directly" path before the list is
+	//! closed, and makes the list report itself as not-yet-finalized so the source BLOCKs (rather than
+	//! finishing) when it catches up to the tail.
+	void MarkStreamingPopulated();
+	//! True once MarkStreamingPopulated ran: this list is fed by PhysicalDeltaLoad's sink (delta_load
+	//! TVF). In this mode the reader must output the *physical* read schema (field-id mapped) — the
+	//! kernel's terminal Transform does the physical->logical rename — so InitializeReader must NOT
+	//! override the bound (physical) global columns with the snapshot's logical lazy_loaded_schema.
+	bool IsStreamingPopulated() const {
+		return streaming_populated;
+	}
+
+	//! Faithful Load (delta_load TVF): supply the read schema explicitly instead of resolving it from a
+	//! kernel snapshot. The lowering (plan_to_sql) passes `file_schema`(+`field_ids`) and `base_url` as
+	//! named params, so a Load over an arbitrary file set (commit/checkpoint/sidecar/data) never needs a
+	//! Delta snapshot. `columns` are the physical read columns (names from file_schema, INTEGER field-id
+	//! identifiers from field_ids) plus the appended metadata_derived broadcast columns. `partition_cols`
+	//! are the declared broadcast/partition column names (usually empty — partitions are extracted from
+	//! the broadcast fileConstantValues by the terminal Transform). When set, Bind /
+	//! GetLazyLoadedGlobalColumns / GetPartitionColumns return these WITHOUT initializing any snapshot.
+	void SetProvidedSchema(vector<DeltaMultiFileColumnDefinition> columns, vector<string> partition_cols);
+	//! Register the source operator's blockable global state so the sink can wake it on append/close.
+	//! Called once at source initialization. Set to null to clear.
+	void SetBlockedSourceState(StateWithBlockableTasks *state);
+	//! MultiFileList API: the streaming list is final only once the sink's Finalize has closed it.
+	bool IsFinalizedListing() const override;
 
 	vector<DeltaMultiFileColumnDefinition> &GetLazyLoadedGlobalColumns() const;
 	vector<NestedNotNullConstraint> GetNestedNotNullConstraints() const;
@@ -98,6 +159,53 @@ protected:
 	idx_t GetTotalFileCountInternal() const;
 	void InitializeSnapshot() const;
 	void InitializeScan() const;
+
+	//! Execution-time, dynamic-predicate path (gated by DELTA_KERNEL_PLAN_SM). Drives the kernel's
+	//! metadata-only scan state machine — instead of the internal kernel scan iterator — feeding the
+	//! pushed-down `table_filters` to the kernel as a data-skipping predicate so it emits its
+	//! stats-based file-skip filter. Runs the resulting reconciliation SQL and populates
+	//! `resolved_files`/`metadata`. Caller must hold `lock`. Idempotent (no-op if already populated).
+	void PopulateFromScanSM() const;
+
+public:
+	//! Visible-subplan (DELTA_KERNEL_PLAN_SM) path: lower the kernel's metadata-only scan SM to the
+	//! file-list reconciliation SQL — WITH the pushed-down `table_filters` threaded in as the kernel's
+	//! data-skipping predicate, so the emitted SQL contains the stats-based file-skip FILTER (over
+	//! `add.stats_parsed`) exactly as PopulateFromScanSM would run internally. Unlike PopulateFromScanSM,
+	//! this does NOT execute the SQL: the optimizer parses+binds it into a VISIBLE child subplan of the
+	//! delta_scan operator (READ_JSON/UNION/arg_max/FILTER... appear in EXPLAIN), and PhysicalDeltaLoad's
+	//! streaming sink populates the file list from that subplan's rows. No lock required (reads only the
+	//! immutable-after-bind GetPath()/version/global_columns/table_filters).
+	string BuildReconciliationSQL(ClientContext &context) const;
+
+	//! Async (execution-time, Option B) metadata-scan SM support. Same kernel SM as PopulateFromScanSM,
+	//! but driven step-by-step as scheduler-integrated work (the source yields its thread per Reduce
+	//! instead of blocking). These three helpers expose what the driver in PhysicalDeltaLoad needs while
+	//! keeping the predicate construction / file-list ingestion (which touch the protected `table_filters`
+	//! / `global_columns` / `BuildFileEntry`) inside this class.
+	//!
+	//! Open the kernel metadata-only scan SM with a data-skipping predicate built from the pushed-down
+	//! `table_filters` (exactly as PopulateFromScanSM). The kernel visits the predicate ONCE, synchronously,
+	//! inside kdf_scan_open, so the borrowed engine state need only outlive this call. Returns the owning
+	//! KdfSM* (the caller — the driver — frees it with ffi::kdf_sm_free). Throws on open/predicate failure.
+	void *OpenScanSMForAsync();
+	//! The SM reached Done: lower its terminal ResultPlan to the file-list SQL, run it, and append the
+	//! surviving files into the shared list, then close the listing (MarkExternallyPopulated). After this
+	//! the streaming/data source serves resolved_files directly. `sm` is NOT freed here.
+	void FinalizeScanSMResult(void *sm);
+
+	//! The async metadata-scan SM driver for this scan (created lazily, owned by this list). Gives both
+	//! the source-state setup and GetData a stable per-scan home for the driver. Guarded by `lock`.
+	DeltaScanSMDriver &GetOrCreateSMDriver(ClientContext &context);
+	//! Public wake (the async reduce task wakes the blocked source from a scheduler thread). Caller must
+	//! NOT hold `lock` (the wake takes the source-state lock; see WakeBlockedSource).
+	void WakeBlockedSourceFromTask() const {
+		WakeBlockedSource();
+	}
+
+	//! Shared per-row ingestion of a surviving scan_file_row; caller must hold `lock`. Used by the
+	//! C′ build sink.
+	void IngestScanFileRowLocked(const Value &path_val, const Value &fcv_val, const Value &dv_val) const;
 
 	void EnsureSnapshotInitialized() const;
 	void EnsureScanInitialized() const;
@@ -143,6 +251,30 @@ protected:
 	mutable bool initialized_snapshot = false;
 	mutable bool initialized_scan = false;
 	mutable bool files_exhausted = false;
+	//! Set once the file list for this list has been fully populated (by MarkExternallyPopulated).
+	mutable bool plan_sql_done = false;
+
+	//! Set when the file list was populated externally by the C′ build pipeline (PhysicalDeltaScan's
+	//! sink). GetFileInternal then serves resolved_files directly.
+	mutable bool externally_populated = false;
+
+	//! Streaming sink+source mode: the sink appends to resolved_files concurrently with the source
+	//! scanning. GetFileInternal serves resolved_files directly (like externally_populated) but the
+	//! list is NOT immutable/closed until streaming_closed.
+	mutable bool streaming_populated = false;
+	//! Set by the sink's Finalize: no more files will be appended. Until then IsFinalizedListing()
+	//! reports false so a source that catches up to the tail BLOCKs instead of finishing.
+	mutable atomic<bool> streaming_closed {false};
+	//! The source operator's blockable global state, registered once at source init, woken by the sink
+	//! on each append and on close. Guarded by `lock` for set/clear; wake takes the state's own lock.
+	mutable StateWithBlockableTasks *blocked_source_state = nullptr;
+	//! Wake the registered source (if any) — takes the source state's own lock. Lock-order: callers
+	//! must NOT hold `lock` while calling this (avoids inversion with the source-state lock).
+	void WakeBlockedSource() const;
+
+	//! Async metadata-scan SM driver (Option B). Created lazily by GetOrCreateSMDriver under `lock`; owns
+	//! the KdfSM* for the scan's lifetime. Only set when DELTA_KERNEL_PLAN_SM_ASYNC drives this scan.
+	mutable unique_ptr<DeltaScanSMDriver> sm_driver;
 
 	//! Metadata map for files
 	mutable vector<unique_ptr<DeltaFileMetaData>> metadata;
@@ -157,6 +289,15 @@ protected:
 	vector<DeltaMultiFileColumnDefinition> global_columns;
 
 	bool have_bound = false;
+
+	//! Set by SetProvidedSchema: this list serves a delta_load (faithful Load node), so its bind schema,
+	//! read schema (lazy_loaded_schema) and partition columns come from the explicitly-provided
+	//! file_schema/field_ids/metadata_derived — NOT from a kernel snapshot. Plain delta_scan leaves this
+	//! false and keeps the snapshot-driven path.
+	bool schema_provided = false;
+	//! Declared partition/broadcast column names for a delta_load (returned by GetPartitionColumns when
+	//! schema_provided). Usually empty: partitions are extracted from the broadcast fileConstantValues.
+	vector<string> provided_partitions;
 
 	weak_ptr<ClientContext> client_ctx;
 
