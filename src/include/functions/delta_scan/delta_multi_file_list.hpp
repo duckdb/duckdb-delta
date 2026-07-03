@@ -155,7 +155,7 @@ public: // TODO: clean up
 		return return_value;
 	}
 
-	mutable KernelExternEngine extern_engine;
+	mutable SharedKernelExternEngine extern_engine;
 	mutable shared_ptr<SharedKernelSnapshot> snapshot;
 
 	mutable unique_ptr<DeltaLogPathArray> delta_log_path;
@@ -168,6 +168,8 @@ protected:
 
 	//! Delta Kernel Structures
 	mutable shared_ptr<SharedKernelSnapshot> old_snapshot;
+	// PROTOTYPE: previous list's engine, shared so it (and its _delta_log cache) can be reused incrementally
+	mutable SharedKernelExternEngine old_engine;
 
 	mutable KernelScan scan;
 	mutable KernelScanDataIterator scan_data_iterator;
