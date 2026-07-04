@@ -79,8 +79,8 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		if (res.HasError()) {
 			res.Throw();
 		}
-		// Use multi-threaded tokio executor (required for checkpoint support)
-		ffi::set_builder_with_multithreaded_executor(return_value, 0, 0);
+		// DIAGNOSTIC (revert before merge): single-threaded (default) executor to test the Windows tokio hang
+		// ffi::set_builder_with_multithreaded_executor(return_value, 0, 0);
 		return return_value;
 	}
 
@@ -187,8 +187,8 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			    "create an R2 or GCS secret containing the credentials for this endpoint and try again.");
 		}
 
-		// Use multi-threaded tokio executor (required for checkpoint support)
-		ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
+		// DIAGNOSTIC (revert before merge): single-threaded (default) executor to test the Windows tokio hang
+		// ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
 		return builder;
 	}
 	const auto &kv_secret = dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
@@ -330,8 +330,8 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		}
 		set_option(builder, "container_name", bucket);
 	}
-	// Use multi-threaded tokio executor (required for checkpoint support)
-	ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
+	// DIAGNOSTIC (revert before merge): single-threaded (default) executor to test the Windows tokio hang
+	// ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
 	return builder;
 }
 
