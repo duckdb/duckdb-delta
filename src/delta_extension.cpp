@@ -38,6 +38,7 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		if (StringUtil::Lower(option.first) == "version") {
 			res->use_cache = true;
 			res->use_specific_version = UBigIntValue::Get(option.second.DefaultCastAs(LogicalType::UBIGINT));
+			res->access_mode = AccessMode::READ_ONLY;
 		}
 		if (StringUtil::Lower(option.first) == "internal_table_name") {
 			res->internal_table_name = StringValue::Get(option.second);
@@ -53,6 +54,9 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		}
 		if (StringUtil::Lower(option.first) == "log_tail") {
 			res->catalog_log_tail = option.second;
+		}
+		if (StringUtil::Lower(option.first) == "max_catalog_version") {
+			res->max_catalog_version = option.second.GetValue<int64_t>();
 		}
 		if (StringUtil::Lower(option.first) == "unity_table_id") {
 			res->unity_table_id = StringValue::Get(option.second);

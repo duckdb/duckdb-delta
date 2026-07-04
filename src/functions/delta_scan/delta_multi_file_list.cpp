@@ -756,6 +756,9 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 		if (delta_log_path) {
 			TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&builder, delta_log_path->GetFFIPtr()));
 		}
+		if (max_catalog_version >= 0) {
+			ffi::snapshot_builder_set_max_catalog_version(&builder, static_cast<uint64_t>(max_catalog_version));
+		}
 		snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(ffi::snapshot_builder_build(builder)));
 
 		auto snapshot_ref = snapshot->GetLockingRef();
@@ -1105,6 +1108,14 @@ idx_t DeltaMultiFileList::GetVersion() {
 	unique_lock<mutex> lck(lock);
 	EnsureSnapshotInitialized();
 	return version;
+}
+
+void DeltaMultiFileList::PinVersion(idx_t v) {
+	unique_lock<mutex> lck(lock);
+	if (initialized_snapshot) {
+		throw InternalException("DeltaMultiFileList::PinVersion called after the snapshot was initialized");
+	}
+	version = v;
 }
 
 DeltaFileMetaData &DeltaMultiFileList::GetMetaData(idx_t index) const {

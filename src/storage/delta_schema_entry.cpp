@@ -110,9 +110,12 @@ unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &co
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version, old_snapshot);
 
-	// Set log_tail for catalog-managed commits (CCV2) if available
+	// Set log_tail and max_catalog_version for catalog-managed commits (CCV2) if available
 	if (!delta_catalog.catalog_log_tail.IsNull()) {
 		snapshot->delta_log_path = make_uniq<DeltaLogPathArray>(delta_catalog.catalog_log_tail);
+	}
+	if (delta_catalog.max_catalog_version >= 0) {
+		snapshot->max_catalog_version = delta_catalog.max_catalog_version;
 	}
 
 	// Get the names and types from the delta snapshot
