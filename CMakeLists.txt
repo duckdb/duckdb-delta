@@ -20,6 +20,7 @@ set(EXTENSION_SOURCES
     src/functions/delta_scan/delta_scan.cpp
     src/functions/delta_scan/delta_multi_file_list.cpp
     src/functions/delta_scan/delta_multi_file_reader.cpp
+    src/functions/delta_scan/physical_delta_scan.cpp
     src/functions/delta_domain_metadata.cpp
     src/functions/delta_metadata_scan.cpp
     src/functions/metadata_functions.cpp
@@ -122,8 +123,17 @@ set(RUST_UNSET_ENV_VARS --unset=CC --unset=CXX --unset=LD)
 set(DELTA_KERNEL_LIBNAME
     "${CMAKE_STATIC_LIBRARY_PREFIX}delta_kernel_ffi${CMAKE_STATIC_LIBRARY_SUFFIX}"
 )
+# Cargo's output subdir as a PLAIN configure-time string (not a generator expression). It feeds
+# ExternalProject_Add's BUILD_BYPRODUCTS below, and CMake 3.16's ExternalProject rejects a
+# generator expression there ("BYPRODUCTS containing a <"). CMAKE_BUILD_TYPE is known at configure
+# time, so compute the subdir directly.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(CARGO_BUILD_SUBDIR "debug")
+else()
+  set(CARGO_BUILD_SUBDIR "release")
+endif()
 set(DELTA_KERNEL_LIBPATH
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/target/${RUST_PLATFORM_TARGET}/$<IF:$<CONFIG:Debug>,debug,release>/${DELTA_KERNEL_LIBNAME}"
+    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/target/${RUST_PLATFORM_TARGET}/${CARGO_BUILD_SUBDIR}/${DELTA_KERNEL_LIBNAME}"
 )
 set(DELTA_KERNEL_FFI_HEADER_PATH
     "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/target/ffi-headers")
@@ -158,16 +168,12 @@ ExternalProject_Add(
       --package delta_kernel_ffi --profile=${CARGO_PROFILE}
       --features "default-engine-rustls,arrow,test-ffi,delta-kernel-unity-catalog,tracing,duckdb"
       ${RUST_PLATFORM_PARAM}
-  # acceptance depends on delta_kernel_benchmarks (regular dep, not dev), whose build.rs
-  # downloads benchmark workload data we don't need. Pre-create the .done marker to skip it.
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads"
-  COMMAND ${CMAKE_COMMAND} -E touch
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads/.done"
-  # Build DATs
-  COMMAND
-    ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
-      --manifest-path=${CMAKE_BINARY_DIR}/rust/src/delta_kernel/acceptance/Cargo.toml
+  # NOTE: we intentionally build ONLY the `delta_kernel_ffi` package (above), not the kernel's
+  # `acceptance` / `benchmarks` crates. Those are for kernel-internal testing and their build.rs
+  # scripts download DAT / benchmark tarballs over TLS at build time — an unnecessary network
+  # dependency that also fails on hosts whose cert store can't verify the release URL. The extension
+  # does not link or use them; the native acceptance_harness reads workloads from a runtime path,
+  # not from this build tree. (Upstream builds the acceptance crate here for its own DAT tests.)
   # Copy, patch, and generate the C++ FFI header into codegen/include/.
   # See scripts/ffi/generate_delta_kernel_ffi_header and cbindgen#402 for details.
   COMMAND
