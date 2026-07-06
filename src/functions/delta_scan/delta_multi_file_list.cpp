@@ -1,6 +1,13 @@
 #include "functions/delta_scan/delta_scan.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
+#include "functions/delta_scan/sm_sdk.hpp"
+
+#include "duckdb/main/connection.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/parallel/interrupt.hpp"
+
+#include <cstdlib>
 
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -535,6 +542,8 @@ DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &p
 	client_ctx = weak_ptr<ClientContext>(context_p.shared_from_this());
 }
 
+DeltaMultiFileList::~DeltaMultiFileList() = default;
+
 string DeltaMultiFileList::GetPath() const {
 	return paths[0].path;
 }
@@ -604,6 +613,28 @@ static bool ExtractHasNullConstraintsInArrays(const vector<DeltaMultiFileColumnD
 	return false;
 }
 
+// Populate the bind/read schema and partition columns from the explicitly-provided file_schema instead
+// of a kernel snapshot. `columns` is the physical read schema (file_schema columns with INTEGER field-id
+// identifiers) plus the appended metadata_derived broadcast columns. We seed BOTH global_columns (the
+// bind schema) and lazy_loaded_schema (the read schema InitializeReader uses) so the whole bind path is
+// snapshot-free. have_bound/initialized_scan are set so EnsureSnapshotInitialized/EnsureScanInitialized
+// are never reached for this list.
+void DeltaMultiFileList::SetProvidedSchema(vector<DeltaMultiFileColumnDefinition> columns,
+                                           vector<string> partition_cols) {
+	unique_lock<mutex> lck(lock);
+	schema_provided = true;
+	provided_partitions = std::move(partition_cols);
+	global_columns = columns;
+	lazy_loaded_schema = columns;
+	ExtractNotNullConstraints(this->not_null_constraints, global_columns);
+	has_null_constraints_in_arrays = ExtractHasNullConstraintsInArrays(global_columns);
+	have_bound = true;
+	// No kernel snapshot/scan to initialize for a faithful Load; mark both done so the Ensure* guards
+	// are no-ops if ever reached.
+	initialized_snapshot = true;
+	initialized_scan = true;
+}
+
 void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> &names) {
 	unique_lock<mutex> lck(lock);
 
@@ -638,7 +669,188 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	this->global_columns = std::move(visited_schema);
 }
 
+// Build the resolved file + metadata for one surviving scan_file_row, WITHOUT touching the shared
+// list and WITHOUT taking any lock. This is the faithful realization of the kernel `Load` node's
+// per-file work: resolve the path against the table root, broadcast the metadata-derived columns
+// (partition values from fileConstantValues), and resolve the deletion vector (dv_ref). All inputs
+// it reads (GetPath()/root/version) are immutable after bind, so many build threads can call this
+// concurrently — including the expensive kdf_resolve_dv — with no contention.
+DeltaMultiFileList::ResolvedFileEntry DeltaMultiFileList::BuildFileEntry(const Value &path_val, const Value &fcv_val,
+                                                                        const Value &dv_val) const {
+	ResolvedFileEntry entry;
+	if (path_val.IsNull()) {
+		return entry; // empty file.path -> caller skips
+	}
+	string sub_path = path_val.ToString();
+
+	string path_string = GetPath();
+	if (StringUtil::StartsWith(sub_path, "/") && sub_path.find('/', 1) != std::string::npos) {
+		path_string = sub_path;
+	} else {
+		StringUtil::RTrim(path_string, "/");
+		path_string += "/" + sub_path;
+	}
+	path_string = url_decode(path_string);
+
+	entry.file = OpenFileInfo(DeltaMultiFileList::ToDuckDBPath(path_string));
+	entry.meta = make_uniq<DeltaFileMetaData>();
+	entry.meta->delta_snapshot_version = version;
+
+	// Faithful Load metadata_derived broadcast: store the raw per-file descriptor values so the reader
+	// can emit them as constant output columns (the kernel data Load broadcasts `fileConstantValues`
+	// and `path`; the terminal projection then extracts partitions from fileConstantValues). Stored
+	// unconditionally; only columns actually present in the bound schema are broadcast.
+	if (!fcv_val.IsNull()) {
+		entry.meta->partition_map["fileConstantValues"] = fcv_val;
+	}
+	if (!path_val.IsNull()) {
+		entry.meta->partition_map["path"] = path_val;
+	}
+
+	// Inject partition values from fileConstantValues.partitionValues_parsed into the file's
+	// partition_map (the DeltaMultiFileReader applies these as constant columns).
+	if (!fcv_val.IsNull() && fcv_val.type().id() == LogicalTypeId::STRUCT) {
+		auto &fcv_types = StructType::GetChildTypes(fcv_val.type());
+		auto &fcv_children = StructValue::GetChildren(fcv_val);
+		for (idx_t k = 0; k < fcv_types.size(); k++) {
+			if (fcv_types[k].first != "partitionValues_parsed") {
+				continue;
+			}
+			Value pv = fcv_children[k];
+			if (pv.IsNull() || pv.type().id() != LogicalTypeId::STRUCT) {
+				break;
+			}
+			auto &pv_types = StructType::GetChildTypes(pv.type());
+			auto &pv_children = StructValue::GetChildren(pv);
+			for (idx_t j = 0; j < pv_types.size(); j++) {
+				entry.meta->partition_map[pv_types[j].first] = pv_children[j];
+			}
+			break;
+		}
+	}
+
+	// Resolve a deletion vector (if any) into a selection vector for the DeltaDeleteFilter.
+	if (!dv_val.IsNull() && dv_val.type().id() == LogicalTypeId::STRUCT) {
+		auto &dv_types = StructType::GetChildTypes(dv_val.type());
+		auto &dv_children = StructValue::GetChildren(dv_val);
+		string storage_type, path_or_inline;
+		bool has_offset = false;
+		int32_t offset = 0, size_in_bytes = 0;
+		int64_t cardinality = 0;
+		for (idx_t k = 0; k < dv_types.size(); k++) {
+			const auto &fname = dv_types[k].first;
+			const Value &cv = dv_children[k];
+			if (cv.IsNull()) {
+				continue;
+			}
+			if (fname == "storageType") {
+				storage_type = cv.ToString();
+			} else if (fname == "pathOrInlineDv") {
+				path_or_inline = cv.ToString();
+			} else if (fname == "offset") {
+				has_offset = true;
+				offset = cv.GetValue<int32_t>();
+			} else if (fname == "sizeInBytes") {
+				size_in_bytes = cv.GetValue<int32_t>();
+			} else if (fname == "cardinality") {
+				cardinality = cv.GetValue<int64_t>();
+			}
+		}
+		if (!storage_type.empty()) {
+			char *dverr = nullptr;
+			const string &root = paths[0].path;
+			ffi::KernelBoolSlice sv =
+			    ffi::kdf_resolve_dv(root.c_str(), root.size(), storage_type.c_str(), storage_type.size(),
+			                        path_or_inline.c_str(), path_or_inline.size(), has_offset, offset, size_in_bytes,
+			                        cardinality, &dverr);
+			if (dverr) {
+				string msg(dverr);
+				ffi::kdf_string_free(dverr);
+				throw IOException("Plan-SQL delta scan: deletion-vector resolution failed: %s", msg);
+			}
+			if (sv.ptr) {
+				entry.meta->selection_vector = sv;
+			}
+		}
+	}
+	return entry;
+}
+
+void DeltaMultiFileList::AppendResolvedEntries(vector<ResolvedFileEntry> &&entries) {
+	{
+		unique_lock<mutex> lck(lock);
+		for (auto &entry : entries) {
+			if (entry.file.path.empty()) {
+				continue;
+			}
+			entry.meta->file_number = resolved_files.size();
+			resolved_files.push_back(std::move(entry.file));
+			metadata.push_back(std::move(entry.meta));
+		}
+	}
+	// Wake a source blocked at the tail — new files are now available. Done outside `lock`: the wake
+	// takes the source-state's own lock, and holding both in opposite orders would invert.
+	WakeBlockedSource();
+}
+
+void DeltaMultiFileList::MarkExternallyPopulated() {
+	{
+		unique_lock<mutex> lck(lock);
+		externally_populated = true;
+		plan_sql_done = true;
+		files_exhausted = true;
+		streaming_closed = true;
+	}
+	// Final wake: the listing is now closed. A blocked source resumes, sees no more files + closed, and
+	// finishes. Guarantees no permanent hang even if an earlier append-wake was missed.
+	WakeBlockedSource();
+}
+
+void DeltaMultiFileList::MarkStreamingPopulated() {
+	unique_lock<mutex> lck(lock);
+	streaming_populated = true;
+}
+
+bool DeltaMultiFileList::IsFinalizedListing() const {
+	// In streaming mode the listing is final only once the sink closed it. Otherwise (legacy kernel /
+	// fully-materialized paths) it is always final — a Scan miss is true EOF.
+	if (streaming_populated) {
+		return streaming_closed.load();
+	}
+	return true;
+}
+
+void DeltaMultiFileList::SetBlockedSourceState(StateWithBlockableTasks *state) {
+	unique_lock<mutex> lck(lock);
+	blocked_source_state = state;
+}
+
+void DeltaMultiFileList::WakeBlockedSource() const {
+	StateWithBlockableTasks *state;
+	{
+		unique_lock<mutex> lck(lock);
+		state = blocked_source_state;
+	}
+	if (state) {
+		auto guard = state->Lock();
+		state->UnblockTasks(guard);
+	}
+}
+
 OpenFileInfo DeltaMultiFileList::GetFileInternal(idx_t i) const {
+	// C′ build pipeline (barriered) or streaming sink (concurrent): the file list is produced by
+	// PhysicalDeltaLoad's sink. Serve resolved_files directly — no kernel snapshot/scan init, no lazy
+	// nested query, no kernel iterator. Checked BEFORE EnsureScanInitialized so a sink-driven scan
+	// never pays for (or depends on) the kernel scan-metadata machinery. In streaming mode `i >= size`
+	// means "caught up to the tail": returning an empty OpenFileInfo makes Scan miss, and
+	// IsFinalizedListing() decides BLOCK (still open) vs EOF (closed).
+	if (externally_populated || streaming_populated) {
+		if (i < resolved_files.size()) {
+			return resolved_files[i];
+		}
+		return OpenFileInfo();
+	}
+
 	EnsureScanInitialized();
 
 	// We already have this file
@@ -685,6 +897,13 @@ idx_t DeltaMultiFileList::GetTotalFileCountInternal() const {
 }
 
 OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) const {
+	// C′ build/probe: once the build pipeline's Finalize marks the list externally-populated, it is
+	// immutable for the rest of the query, and the JOIN_BUILD pipeline dependency already established
+	// happens-before between the build's Finalize and the source running. So the parallel scan threads
+	// can read resolved_files lock-free — no per-file mutex contention.
+	if (externally_populated) {
+		return i < resolved_files.size() ? resolved_files[i] : OpenFileInfo();
+	}
 	// TODO: profile this: we should be able to use atomics here to optimize
 	unique_lock<mutex> lck(lock);
 	return GetFileInternal(i);
@@ -796,6 +1015,29 @@ void DeltaMultiFileList::InitializeScan() const {
 	DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 
 	initialized_scan = true;
+}
+
+string DeltaMultiFileList::BuildReconciliationSQL(ClientContext &context) const {
+	// Build the data-skipping predicate from the pushed-down filters (same translation the kernel
+	// iterator path uses). The kernel visits it ONCE inside kdf_scan_open while this PredicateVisitor
+	// (which borrows table_filters) is alive — DriveScan is synchronous.
+	optional_ptr<ffi::EnginePredicate> predicate;
+	PredicateVisitor visitor(global_columns, &table_filters);
+	if (!table_filters.filters.empty()) {
+		predicate = &visitor;
+	}
+
+	int64_t sm_version = (version == DConstants::INVALID_INDEX) ? -1 : static_cast<int64_t>(version);
+
+	// Drive the kernel's metadata-only scan SM to the file-list reconciliation SQL (DuckDB executes
+	// every Reduce inside DriveScan). The returned SQL contains the stats-based file-skip FILTER when a
+	// predicate was threaded in — we hand it back for the caller to bind as a visible child subplan.
+	string sql = delta_sdk::DriveScan(GetPath(), sm_version, /* metadata_only= */ true, context, predicate);
+	if (visitor.error_data.HasError()) {
+		throw IOException("delta_scan: predicate translation failed for '%s': %s", GetPath(),
+		                  visitor.error_data.Message());
+	}
+	return sql;
 }
 
 void DeltaMultiFileList::EnsureSnapshotInitialized() const {
@@ -1086,12 +1328,20 @@ DeltaFileMetaData &DeltaMultiFileList::GetMetaData(idx_t index) const {
 
 vector<string> DeltaMultiFileList::GetPartitionColumns() {
 	unique_lock<mutex> lck(lock);
+	if (schema_provided) {
+		// Faithful Load: the declared broadcast/partition columns, no snapshot.
+		return provided_partitions;
+	}
 	EnsureScanInitialized();
 	return partitions;
 }
 
 vector<DeltaMultiFileColumnDefinition> &DeltaMultiFileList::GetLazyLoadedGlobalColumns() const {
 	unique_lock<mutex> lck(lock);
+	if (schema_provided) {
+		// Faithful Load: the explicitly-provided read schema, no snapshot.
+		return lazy_loaded_schema;
+	}
 	EnsureScanInitialized();
 	return lazy_loaded_schema;
 }

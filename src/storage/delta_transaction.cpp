@@ -1,5 +1,7 @@
 #include "storage/delta_transaction.hpp"
 
+#include <map>
+
 #include "duckdb/common/helper.hpp"
 #include "path_utils.hpp"
 #include "functions/delta_scan/delta_scan.hpp"
@@ -97,7 +99,7 @@ struct StatNode {
 	// If leaf node contains value
 	DeltaColumnStats stats;
 	LogicalType type;
-	unordered_map<string, StatNode> children;
+	std::map<string, StatNode> children;
 };
 
 static LogicalType ParseInnerType(const LogicalType &root_type, const vector<string> &name, idx_t offset) {
@@ -119,7 +121,7 @@ static LogicalType ParseInnerType(const LogicalType &root_type, const vector<str
 
 // Converts the stats from a.b.c -> colstat to a nested StatNode tree
 static void ParseStatsType(const vector<string> &name, idx_t offset, DeltaColumnStats &stats,
-                           unordered_map<string, StatNode> &output) {
+                           std::map<string, StatNode> &output) {
 	if (name.size() <= offset) {
 		throw InternalException("Invalid stats name: empty");
 	}
@@ -146,7 +148,7 @@ static void ParseStatsType(const vector<string> &name, idx_t offset, DeltaColumn
 	return ParseStatsType(name, offset + 1, stats, output[name[offset]].children);
 }
 
-static Value CreateValueLogicalTypeFromStatNode(const unordered_map<string, StatNode> &tree, const string &field) {
+static Value CreateValueLogicalTypeFromStatNode(const std::map<string, StatNode> &tree, const string &field) {
 	child_list_t<Value> children;
 
 	for (const auto &node : tree) {
@@ -178,7 +180,7 @@ static Value CreateValueLogicalTypeFromStatNode(const unordered_map<string, Stat
 struct WriteMetaData {
 	static LogicalType GetStatsType(optional_ptr<const DeltaDataFile> file) {
 		if (file && !file->column_stats.empty()) {
-			unordered_map<string, StatNode> result;
+			std::map<string, StatNode> result;
 			for (auto stat : file->column_stats) {
 				ParseStatsType(stat.first, 0, stat.second, result);
 			}
@@ -201,7 +203,7 @@ struct WriteMetaData {
 			return Value::STRUCT(GetStatsType(nullptr), {Value::BIGINT(file.row_count), Value(tight_bounds)});
 		}
 
-		unordered_map<string, StatNode> result;
+		std::map<string, StatNode> result;
 		for (auto stat : file.column_stats) {
 			ParseStatsType(stat.first, 0, stat.second, result);
 		}
@@ -297,10 +299,12 @@ vector<DeltaMultiFileColumnDefinition> DeltaTransaction::GetWriteSchema(ClientCo
 		InitializeTransaction(context);
 	}
 
-	auto write_context = ffi::get_write_context(kernel_transaction.get());
-	auto result =
-	    SchemaVisitor::VisitWriteContextSchema(write_entry.get()->snapshot->extern_engine.get(), write_context);
-	return result;
+	// TODO(duckdb M1): the write path is out of scope for the Phase-1 plan-based *scan*. stack/fsr
+	// renamed `get_write_context` -> `get_unpartitioned_write_context` (now ExternResult-wrapped).
+	// Porting the write path is future work; stub here so the read-path build links.
+	throw NotImplementedException(
+	    "Delta write path is not supported in the M1 plan-based-scan build (get_write_context "
+	    "was replaced by get_unpartitioned_write_context in the stack/fsr kernel)");
 }
 
 void DeltaTransaction::CleanUpFiles() {

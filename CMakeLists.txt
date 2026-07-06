@@ -20,6 +20,7 @@ set(EXTENSION_SOURCES
     src/functions/delta_scan/delta_scan.cpp
     src/functions/delta_scan/delta_multi_file_list.cpp
     src/functions/delta_scan/delta_multi_file_reader.cpp
+    src/functions/delta_scan/physical_delta_scan.cpp
     src/functions/delta_domain_metadata.cpp
     src/functions/delta_metadata_scan.cpp
     src/functions/metadata_functions.cpp
@@ -122,8 +123,17 @@ set(RUST_UNSET_ENV_VARS --unset=CC --unset=CXX --unset=LD)
 set(DELTA_KERNEL_LIBNAME
     "${CMAKE_STATIC_LIBRARY_PREFIX}delta_kernel_ffi${CMAKE_STATIC_LIBRARY_SUFFIX}"
 )
+# Cargo's output subdir as a PLAIN configure-time string (not a generator expression). It feeds
+# ExternalProject_Add's BUILD_BYPRODUCTS below, and CMake 3.16's ExternalProject rejects a
+# generator expression there ("BYPRODUCTS containing a <"). CMAKE_BUILD_TYPE is known at configure
+# time, so compute the subdir directly.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(CARGO_BUILD_SUBDIR "debug")
+else()
+  set(CARGO_BUILD_SUBDIR "release")
+endif()
 set(DELTA_KERNEL_LIBPATH
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/target/${RUST_PLATFORM_TARGET}/$<IF:$<CONFIG:Debug>,debug,release>/${DELTA_KERNEL_LIBNAME}"
+    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/target/${RUST_PLATFORM_TARGET}/${CARGO_BUILD_SUBDIR}/${DELTA_KERNEL_LIBNAME}"
 )
 set(DELTA_KERNEL_FFI_HEADER_PATH
     "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/target/ffi-headers")
@@ -144,8 +154,8 @@ set(CARGO_PROFILE "$<IF:$<CONFIG:Debug>,dev,release>")
 # Add rust_example as a CMake target
 ExternalProject_Add(
   ${KERNEL_NAME}
-  GIT_REPOSITORY "https://github.com/delta-io/delta-kernel-rs"
-  GIT_TAG v0.21.0
+  GIT_REPOSITORY "https://github.com/OussamaSaoudi/delta-kernel-rs"
+  GIT_TAG prototype/duckdb-plan-based-scan
   # Prints the env variables passed to the cargo build to the terminal, useful
   # in debugging because passing them through CMake is an error-prone mess
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS}
@@ -156,18 +166,14 @@ ExternalProject_Add(
   BUILD_COMMAND
     ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
       --package delta_kernel_ffi --profile=${CARGO_PROFILE}
-      --features "default-engine-rustls,arrow,test-ffi,delta-kernel-unity-catalog,tracing"
+      --features "default-engine-rustls,arrow,test-ffi,delta-kernel-unity-catalog,tracing,duckdb"
       ${RUST_PLATFORM_PARAM}
-  # acceptance depends on delta_kernel_benchmarks (regular dep, not dev), whose build.rs
-  # downloads benchmark workload data we don't need. Pre-create the .done marker to skip it.
-  COMMAND ${CMAKE_COMMAND} -E make_directory
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads"
-  COMMAND ${CMAKE_COMMAND} -E touch
-    "${CMAKE_BINARY_DIR}/rust/src/delta_kernel/benchmarks/workloads/.done"
-  # Build DATs
-  COMMAND
-    ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} cargo build
-      --manifest-path=${CMAKE_BINARY_DIR}/rust/src/delta_kernel/acceptance/Cargo.toml
+  # NOTE: we intentionally build ONLY the `delta_kernel_ffi` package (above), not the kernel's
+  # `acceptance` / `benchmarks` crates. Those are for kernel-internal testing and their build.rs
+  # scripts download DAT / benchmark tarballs over TLS at build time — an unnecessary network
+  # dependency that also fails on hosts whose cert store can't verify the release URL. The extension
+  # does not link or use them; the native acceptance_harness reads workloads from a runtime path,
+  # not from this build tree. (Upstream builds the acceptance crate here for its own DAT tests.)
   # Copy, patch, and generate the C++ FFI header into codegen/include/.
   # See scripts/ffi/generate_delta_kernel_ffi_header and cbindgen#402 for details.
   COMMAND
@@ -216,3 +222,39 @@ install(
   EXPORT "${DUCKDB_EXPORT_SET}"
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+
+# Standalone native acceptance-test harness (test/acceptance_harness.cpp).
+#
+# A self-contained C++ executable (NOT a Catch2 unittest -- those are disabled
+# for extension builds) that embeds DuckDB in-process, LOADs the built delta
+# extension by path, and runs the delta-kernel-rs acceptance/workloads read
+# specs, comparing delta_scan vs the golden parquet exactly like the external
+# Python harness. Because it runs many Connections on one DuckDB across
+# std::threads, it can exercise the async scan path (DELTA_KERNEL_PLAN_SM_ASYNC)
+# under real intra-process concurrency -- which the process-per-shard Python
+# driver cannot.
+#
+# Guarded on the DuckDB source tree being present (it is, since this file is
+# included from within DuckDB's own build). Links the SHARED `duckdb` target
+# (libduckdb.so) -- a self-contained lib with all core+builtin extensions
+# already resolved, so we avoid dragging in the static extension loader chain.
+# yyjson (spec JSON parsing) headers are on the include path; the symbols are
+# header-only inline so no separate lib is needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/include/duckdb.hpp")
+  add_executable(acceptance_harness
+                 ${CMAKE_CURRENT_SOURCE_DIR}/test/acceptance_harness.cpp)
+  target_include_directories(
+    acceptance_harness
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/include
+            ${CMAKE_SOURCE_DIR}/third_party/yyjson/include)
+  find_package(Threads REQUIRED)
+  target_link_libraries(acceptance_harness duckdb Threads::Threads
+                        ${PLATFORM_LIBS})
+  # Embed an rpath to the built libduckdb.so so the harness runs from anywhere.
+  set_target_properties(
+    acceptance_harness PROPERTIES
+    BUILD_RPATH "${CMAKE_BINARY_DIR}/src"
+    INSTALL_RPATH "${CMAKE_BINARY_DIR}/src")
+  # The harness LOADs the delta extension at runtime; make sure it's built.
+  add_dependencies(acceptance_harness ${LOADABLE_EXTENSION_NAME})
+endif()

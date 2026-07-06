@@ -45,6 +45,8 @@ public:
 private:
 	//! Table Functions
 	static TableFunctionSet GetDeltaScanFunction(ExtensionLoader &loader);
+	static TableFunctionSet GetDeltaScanMetadataFunction(ExtensionLoader &loader);
+	static TableFunctionSet GetDeltaLoadFunction(ExtensionLoader &loader);
 	static TableFunctionSet GetDeltaFileListFunction(ExtensionLoader &loader);
 	static TableFunctionSet GetDeltaDomainMetadataFunction(ExtensionLoader &loader);
 

@@ -248,7 +248,14 @@ void ExpressionVisitor::VisitBinaryLiteral(void *state, uintptr_t sibling_list_i
 	auto expression = make_uniq<ConstantExpression>(Value::BLOB(buffer, len));
 	static_cast<ExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
-void ExpressionVisitor::VisitNullLiteral(void *state, uintptr_t sibling_list_id) {
+void ExpressionVisitor::VisitNullLiteral(void *state, uintptr_t sibling_list_id, uint8_t type_tag, uint8_t precision,
+                                         uint8_t scale) {
+	// stack/fsr widened visit_literal_null to carry the null's type (NullTypeTag + decimal
+	// precision/scale). DuckDB represents a typed null as a NULL Value regardless, so the type
+	// metadata is unused here.
+	(void)type_tag;
+	(void)precision;
+	(void)scale;
 	auto expression = make_uniq<ConstantExpression>(Value());
 	static_cast<ExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }

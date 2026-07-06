@@ -1,0 +1,54 @@
+# name: test/sql/acceptance/parity_poc.test
+# description: POC - native data-parity check of delta_scan vs golden expected_data parquet, using the delta-kernel-rs acceptance workloads corpus
+# group: [acceptance]
+#
+# This proves the native path for the parity corpus currently checked by the
+# external Python harness (plan-based-scan/workloads_harness_parallel.py):
+#   - order-insensitive multiset equality is expressed by giving two `query`
+#     blocks the SAME label with `rowsort` (the runner sorts both and compares).
+#   - a concurrentloop block runs many delta_scans concurrently IN ONE PROCESS
+#     (one DuckDB instance, N threads each with its own Connection) -- the thing
+#     the Python process-per-shard harness structurally cannot do.
+#
+# WORKLOADS_PATH must point at ~/delta-kernel-rs/acceptance/workloads
+
+require parquet
+
+require delta
+
+require-env WORKLOADS_PATH
+
+# ---------------------------------------------------------------------------
+# Parity: delta_scan(<table>) == read_parquet(<expected_data>/*.parquet)
+# Shared label "ice_with_dv_read_all" => multiset compared across both blocks.
+# ---------------------------------------------------------------------------
+query II rowsort ice_with_dv_read_all
+SELECT * FROM delta_scan('${WORKLOADS_PATH}/ice_with_dv/delta')
+----
+
+query II rowsort ice_with_dv_read_all
+SELECT * FROM read_parquet('${WORKLOADS_PATH}/ice_with_dv/expected/ice_with_dv_read_all/expected_data/*.parquet')
+----
+
+# Parity with a predicate (spec: ice_with_dv_filter_remaining, "id >= 3")
+query II rowsort ice_with_dv_filter_remaining
+SELECT * FROM delta_scan('${WORKLOADS_PATH}/ice_with_dv/delta') WHERE id >= 3
+----
+
+query II rowsort ice_with_dv_filter_remaining
+SELECT * FROM read_parquet('${WORKLOADS_PATH}/ice_with_dv/expected/ice_with_dv_filter_remaining/expected_data/*.parquet') WHERE id >= 3
+----
+
+# ---------------------------------------------------------------------------
+# Concurrency: 16 delta_scans of the same table running concurrently in ONE
+# process. Each iteration runs on its own thread + Connection against the shared
+# DuckDB instance. Asserts correctness under concurrency (row count == 3).
+# ---------------------------------------------------------------------------
+concurrentloop i 0 16
+
+query I
+SELECT count(*) FROM delta_scan('${WORKLOADS_PATH}/ice_with_dv/delta')
+----
+3
+
+endloop
