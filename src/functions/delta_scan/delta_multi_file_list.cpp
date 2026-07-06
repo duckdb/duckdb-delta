@@ -2,7 +2,6 @@
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
 #include "functions/delta_scan/sm_sdk.hpp"
-#include "functions/delta_scan/delta_scan_sm_driver.hpp"
 
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
@@ -545,14 +544,6 @@ DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &p
 
 DeltaMultiFileList::~DeltaMultiFileList() = default;
 
-DeltaScanSMDriver &DeltaMultiFileList::GetOrCreateSMDriver(ClientContext &context) {
-	unique_lock<mutex> lck(lock);
-	if (!sm_driver) {
-		sm_driver = make_uniq<DeltaScanSMDriver>();
-	}
-	return *sm_driver;
-}
-
 string DeltaMultiFileList::GetPath() const {
 	return paths[0].path;
 }
@@ -802,18 +793,6 @@ void DeltaMultiFileList::AppendResolvedEntries(vector<ResolvedFileEntry> &&entri
 	WakeBlockedSource();
 }
 
-// Legacy nested-query path: build the entry and append it. Caller already holds `lock`.
-void DeltaMultiFileList::IngestScanFileRowLocked(const Value &path_val, const Value &fcv_val,
-                                                 const Value &dv_val) const {
-	auto entry = BuildFileEntry(path_val, fcv_val, dv_val);
-	if (entry.file.path.empty()) {
-		return;
-	}
-	entry.meta->file_number = resolved_files.size();
-	resolved_files.push_back(std::move(entry.file));
-	metadata.push_back(std::move(entry.meta));
-}
-
 void DeltaMultiFileList::MarkExternallyPopulated() {
 	{
 		unique_lock<mutex> lck(lock);
@@ -870,14 +849,6 @@ OpenFileInfo DeltaMultiFileList::GetFileInternal(idx_t i) const {
 			return resolved_files[i];
 		}
 		return OpenFileInfo();
-	}
-
-	// Dynamic-predicate path (gated): drive the kernel scan SM with the pushed-down table_filters,
-	// run its file-list reconciliation SQL, and serve the resulting resolved_files directly — no
-	// kernel scan iterator. PopulateFromScanSM is idempotent and fully materializes the list.
-	if (std::getenv("DELTA_KERNEL_PLAN_SM")) {
-		PopulateFromScanSM();
-		return i < resolved_files.size() ? resolved_files[i] : OpenFileInfo();
 	}
 
 	EnsureScanInitialized();
@@ -1046,87 +1017,10 @@ void DeltaMultiFileList::InitializeScan() const {
 	initialized_scan = true;
 }
 
-void DeltaMultiFileList::PopulateFromScanSM() const {
-	// Idempotent: once driven, the list is fully materialized and immutable for the query.
-	if (files_exhausted) {
-		return;
-	}
-	D_ASSERT(!client_ctx.expired());
-	auto client_ctx_shared = client_ctx.lock();
-
-	// Build the data-skipping predicate from the pushed-down filters (same translation the kernel
-	// iterator path uses via ffi::scan). The kernel visits it ONCE inside kdf_scan_open while this
-	// PredicateVisitor (which borrows table_filters) is alive — the DriveScan call is synchronous.
-	optional_ptr<ffi::EnginePredicate> predicate;
-	PredicateVisitor visitor(global_columns, &table_filters);
-	if (!table_filters.filters.empty()) {
-		predicate = &visitor;
-	}
-
-	int64_t sm_version = (version == DConstants::INVALID_INDEX) ? -1 : static_cast<int64_t>(version);
-
-	// Drive the kernel's metadata-only scan SM to the file-list reconciliation SQL (DuckDB executes
-	// every Reduce inside DriveScan), then run that SQL to obtain the surviving files.
-	string sql = delta_sdk::DriveScan(GetPath(), sm_version, /* metadata_only= */ true, *client_ctx_shared, predicate);
-	if (visitor.error_data.HasError()) {
-		throw IOException("DELTA_KERNEL_PLAN_SM: predicate translation failed for '%s': %s", GetPath(),
-		                  visitor.error_data.Message());
-	}
-
-	// Run the reconciliation SQL on a fresh connection (independent transaction). The metadata-only
-	// terminal emits columns path / fileConstantValues / deletionVector (read by name below).
-	Connection con(*client_ctx_shared->db);
-	auto result = con.Query(sql);
-	if (!result || result->HasError()) {
-		throw IOException("DELTA_KERNEL_PLAN_SM: failed to execute scan-metadata SQL for '%s': %s", GetPath(),
-		                  result ? result->GetError() : string("no result"));
-	}
-
-	// Locate output columns by name.
-	idx_t path_col = DConstants::INVALID_INDEX, fcv_col = DConstants::INVALID_INDEX,
-	      dv_col = DConstants::INVALID_INDEX;
-	for (idx_t c = 0; c < result->names.size(); c++) {
-		auto &nm = result->names[c];
-		if (nm == "path") {
-			path_col = c;
-		} else if (nm == "fileConstantValues") {
-			fcv_col = c;
-		} else if (nm == "deletionVector") {
-			dv_col = c;
-		}
-	}
-	if (path_col == DConstants::INVALID_INDEX) {
-		throw IOException("DELTA_KERNEL_PLAN_SM: scan-metadata SQL result has no 'path' column for '%s'", GetPath());
-	}
-
-	vector<ResolvedFileEntry> entries;
-	while (auto chunk = result->Fetch()) {
-		chunk->Flatten();
-		for (idx_t r = 0; r < chunk->size(); r++) {
-			Value path_val = chunk->GetValue(path_col, r);
-			Value fcv_val = fcv_col != DConstants::INVALID_INDEX ? chunk->GetValue(fcv_col, r) : Value();
-			Value dv_val = dv_col != DConstants::INVALID_INDEX ? chunk->GetValue(dv_col, r) : Value();
-			auto entry = BuildFileEntry(path_val, fcv_val, dv_val);
-			if (!entry.file.path.empty()) {
-				entries.push_back(std::move(entry));
-			}
-		}
-	}
-
-	// Caller holds `lock`; append directly and close the listing.
-	for (auto &entry : entries) {
-		entry.meta->file_number = resolved_files.size();
-		resolved_files.push_back(std::move(entry.file));
-		metadata.push_back(std::move(entry.meta));
-	}
-	files_exhausted = true;
-	plan_sql_done = true;
-}
-
 string DeltaMultiFileList::BuildReconciliationSQL(ClientContext &context) const {
 	// Build the data-skipping predicate from the pushed-down filters (same translation the kernel
-	// iterator path and PopulateFromScanSM use). The kernel visits it ONCE inside kdf_scan_open while
-	// this PredicateVisitor (which borrows table_filters) is alive — DriveScan is synchronous.
+	// iterator path uses). The kernel visits it ONCE inside kdf_scan_open while this PredicateVisitor
+	// (which borrows table_filters) is alive — DriveScan is synchronous.
 	optional_ptr<ffi::EnginePredicate> predicate;
 	PredicateVisitor visitor(global_columns, &table_filters);
 	if (!table_filters.filters.empty()) {
@@ -1140,99 +1034,10 @@ string DeltaMultiFileList::BuildReconciliationSQL(ClientContext &context) const 
 	// predicate was threaded in — we hand it back for the caller to bind as a visible child subplan.
 	string sql = delta_sdk::DriveScan(GetPath(), sm_version, /* metadata_only= */ true, context, predicate);
 	if (visitor.error_data.HasError()) {
-		throw IOException("DELTA_KERNEL_PLAN_SM: predicate translation failed for '%s': %s", GetPath(),
+		throw IOException("delta_scan: predicate translation failed for '%s': %s", GetPath(),
 		                  visitor.error_data.Message());
 	}
 	return sql;
-}
-
-void *DeltaMultiFileList::OpenScanSMForAsync() {
-	D_ASSERT(!client_ctx.expired());
-	// Build the data-skipping predicate from the pushed-down filters (same translation the synchronous
-	// PopulateFromScanSM path uses). The kernel visits it ONCE, synchronously, inside kdf_scan_open while
-	// this PredicateVisitor (which borrows table_filters) is alive — so a stack-local visitor here is safe.
-	optional_ptr<ffi::EnginePredicate> predicate;
-	PredicateVisitor visitor(global_columns, &table_filters);
-	if (!table_filters.filters.empty()) {
-		predicate = &visitor;
-	}
-	int64_t sm_version = (version == DConstants::INVALID_INDEX) ? -1 : static_cast<int64_t>(version);
-
-	string path = GetPath();
-	char *err = nullptr;
-	ffi::KdfSM *sm = ffi::kdf_scan_open(path.c_str(), path.size(), sm_version, /*metadata_only=*/true,
-	                                    predicate.get(), &err);
-	if (visitor.error_data.HasError()) {
-		if (sm) {
-			ffi::kdf_sm_free(sm);
-		}
-		throw IOException("DELTA_KERNEL_PLAN_SM_ASYNC: predicate translation failed for '%s': %s", path,
-		                  visitor.error_data.Message());
-	}
-	if (!sm) {
-		delta_sdk::ThrowFfi(err, "kdf_scan_open");
-	}
-	return sm;
-}
-
-void DeltaMultiFileList::FinalizeScanSMResult(void *sm_ptr) {
-	auto *sm = static_cast<ffi::KdfSM *>(sm_ptr);
-	char *err = nullptr;
-	char *out = ffi::kdf_sm_result_sql(sm, &err);
-	if (!out) {
-		delta_sdk::ThrowFfi(err, "kdf_sm_result_sql");
-	}
-	string sql(out);
-	ffi::kdf_string_free(out);
-	if (std::getenv("KDF_DUMP_SQL")) {
-		fprintf(stderr, "==== KDF result SQL (async) ====\n%s\n========================\n", sql.c_str());
-	}
-
-	D_ASSERT(!client_ctx.expired());
-	auto client_ctx_shared = client_ctx.lock();
-	// Run the reconciliation SQL on a fresh connection (independent transaction). The metadata-only
-	// terminal emits columns path / fileConstantValues / deletionVector (read by name below).
-	Connection con(*client_ctx_shared->db);
-	auto result = con.Query(sql);
-	if (!result || result->HasError()) {
-		throw IOException("DELTA_KERNEL_PLAN_SM_ASYNC: failed to execute scan-metadata SQL for '%s': %s", GetPath(),
-		                  result ? result->GetError() : string("no result"));
-	}
-
-	idx_t path_col = DConstants::INVALID_INDEX, fcv_col = DConstants::INVALID_INDEX,
-	      dv_col = DConstants::INVALID_INDEX;
-	for (idx_t c = 0; c < result->names.size(); c++) {
-		auto &nm = result->names[c];
-		if (nm == "path") {
-			path_col = c;
-		} else if (nm == "fileConstantValues") {
-			fcv_col = c;
-		} else if (nm == "deletionVector") {
-			dv_col = c;
-		}
-	}
-	if (path_col == DConstants::INVALID_INDEX) {
-		throw IOException("DELTA_KERNEL_PLAN_SM_ASYNC: scan-metadata SQL result has no 'path' column for '%s'",
-		                  GetPath());
-	}
-
-	vector<ResolvedFileEntry> entries;
-	while (auto chunk = result->Fetch()) {
-		chunk->Flatten();
-		for (idx_t r = 0; r < chunk->size(); r++) {
-			Value path_val = chunk->GetValue(path_col, r);
-			Value fcv_val = fcv_col != DConstants::INVALID_INDEX ? chunk->GetValue(fcv_col, r) : Value();
-			Value dv_val = dv_col != DConstants::INVALID_INDEX ? chunk->GetValue(dv_col, r) : Value();
-			auto entry = BuildFileEntry(path_val, fcv_val, dv_val);
-			if (!entry.file.path.empty()) {
-				entries.push_back(std::move(entry));
-			}
-		}
-	}
-	// Append under the list lock and close the listing (which also wakes any blocked source). Mirrors the
-	// streaming sink's AppendResolvedEntries + Finalize path.
-	AppendResolvedEntries(std::move(entries));
-	MarkExternallyPopulated();
 }
 
 void DeltaMultiFileList::EnsureSnapshotInitialized() const {

@@ -38,9 +38,8 @@ namespace duckdb {
 class DBConfig;
 
 //! Register the delta_scan optimizer extension. It restores filter pushdown for the custom-operator
-//! path (LogicalDeltaGet is invisible to DuckDB's FilterPushdown), so DELTA_KERNEL_PLAN_OP /
-//! DELTA_KERNEL_PLAN_SM_ASYNC scans prune files (data skipping) like the standard path. No-op for every
-//! other query.
+//! path (LogicalDeltaGet is invisible to DuckDB's FilterPushdown), so delta_scan prunes files (data
+//! skipping) like the standard path, and attaches the reconciliation subplan.
 void RegisterDeltaScanOptimizer(DBConfig &config);
 
 //! Data-stage scan source operator. Subclasses PhysicalTableScan so the entire
@@ -129,11 +128,6 @@ struct LogicalDeltaGet : public LogicalExtensionOperator {
 	idx_t build_path_col = DConstants::INVALID_INDEX;
 	idx_t build_fcv_col = DConstants::INVALID_INDEX;
 	idx_t build_dv_col = DConstants::INVALID_INDEX;
-
-	//! M5 (faithful Load): the data-stage kernel LoadNode params as JSON (file_type,
-	//! metadata_derived_columns, dv{column,kind}, base_url), emitted over FFI. Empty unless
-	//! DELTA_KERNEL_PLAN_LOADNODE is set. Drives the operator by the real IR Load node.
-	string load_node_json;
 
 	PhysicalOperator &CreatePlan(ClientContext &context, PhysicalPlanGenerator &planner) override;
 

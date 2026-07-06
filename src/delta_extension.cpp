@@ -124,8 +124,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	    "performance even with DuckDB logging disabled.",
 	    LogicalType::BOOLEAN, Value(false), LoggerCallback::DuckDBSettingCallBack);
 
-	// Restore filter pushdown for the custom-operator scan path (DELTA_KERNEL_PLAN_OP /
-	// DELTA_KERNEL_PLAN_SM_ASYNC); no-op for every other query.
+	// Restore filter pushdown for the custom-operator scan path (the default delta_scan path); the
+	// LogicalDeltaGet operator is invisible to DuckDB's FilterPushdown, so this extension pushes the
+	// WHERE predicate into the operator's file list and attaches the reconciliation subplan.
 	RegisterDeltaScanOptimizer(config);
 
 	DeltaMacros::RegisterMacros(loader);

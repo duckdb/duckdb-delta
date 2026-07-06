@@ -1,6 +1,5 @@
 #include "functions/delta_scan/physical_delta_scan.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
-#include "functions/delta_scan/delta_scan_sm_driver.hpp"
 
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/common/multi_file/multi_file_states.hpp"
@@ -10,12 +9,8 @@
 #include "duckdb/optimizer/filter_combiner.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
-#include "duckdb/parallel/interrupt.hpp"
 #include "duckdb/parallel/meta_pipeline.hpp"
 #include "duckdb/parallel/pipeline.hpp"
-#include "duckdb/parallel/task_scheduler.hpp"
-#include "duckdb/execution/executor.hpp"
-#include "duckdb/main/database.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -24,37 +19,20 @@
 
 namespace duckdb {
 
-//! Async metadata-scan SM mode (Option B / Tier-2): drive the kernel scan SM at execution time as
-//! scheduler work so the source yields its worker per Reduce instead of pinning it for the whole
-//! reconciliation. Gated behind DELTA_KERNEL_PLAN_SM_ASYNC; the synchronous DELTA_KERNEL_PLAN_SM path
-//! and the default (legacy) path are untouched.
-static bool AsyncScanSMEnabled() {
-	return std::getenv("DELTA_KERNEL_PLAN_SM_ASYNC") != nullptr;
-}
-
-//! Synchronous metadata-scan SM mode rendered as a VISIBLE child subplan (this feature): the metadata
-//! reconciliation (READ_JSON per commit, UNION, arg_max dedup, tombstone + data-skipping stats FILTER)
-//! is attached as a real bound child of the delta_scan operator so it appears in EXPLAIN, instead of
-//! running inside an opaque nested Connection. Gated behind DELTA_KERNEL_PLAN_SM.
-static bool SyncScanSMEnabled() {
-	return std::getenv("DELTA_KERNEL_PLAN_SM") != nullptr;
-}
-
 //===--------------------------------------------------------------------===//
 // Operator-path filter pushdown (optimizer extension).
 //
 // The custom LogicalDeltaGet (a LogicalExtensionOperator) is invisible to DuckDB's FilterPushdown,
 // which only knows LogicalGet — so the pushed-down WHERE clause lands as a LogicalFilter ABOVE the
-// operator and the operator's DeltaMultiFileList keeps EMPTY table_filters (no data-skipping). The
-// synchronous DELTA_KERNEL_PLAN_SM / default paths use a real LogicalGet and don't have this problem.
+// operator and the operator's DeltaMultiFileList keeps EMPTY table_filters (no data-skipping).
 //
 // This extension runs after DuckDB's optimizers: it finds each LogicalFilter directly over a
 // LogicalDeltaGet (delta_scan only), converts those filter expressions into a TableFilterSet with the
 // same FilterCombiner the standard path uses, pushes them into the operator's DeltaMultiFileList
 // (populating table_filters), and swaps the resulting filtered list into the operator's bind_data. The
-// async SM driver then builds its PredicateVisitor from those table_filters (OpenScanSMForAsync), so it
-// prunes files exactly like step-1. The LogicalFilter is left in place (it re-checks rows; the pushdown
-// only adds stats-based file skipping — never changes results). Only active for the operator path.
+// reconciliation subplan then builds its PredicateVisitor from those table_filters (BuildReconciliationSQL),
+// so it prunes files exactly like step-1. The LogicalFilter is left in place (it re-checks rows; the
+// pushdown only adds stats-based file skipping — never changes results). Only active for the operator path.
 //===--------------------------------------------------------------------===//
 static void DeltaScanPushdownIntoOperator(LogicalDeltaGet &op, vector<unique_ptr<Expression>> &filter_exprs,
                                           ClientContext &context) {
@@ -86,8 +64,8 @@ static void DeltaScanPushdownIntoOperator(LogicalDeltaGet &op, vector<unique_ptr
 	// lower-level PushdownInternal directly (NOT ComplexFilterPushdown) on purpose: ComplexFilterPushdown
 	// runs ReportFilterPushdown, which — when delta_scan_explain_files_filtered is on — calls
 	// GetTotalFileCount on the new list and EAGERLY populates it via the synchronous kernel iterator. The
-	// execution-time async SM driver would then append a SECOND time, double-counting files. Going through
-	// PushdownInternal keeps the new list empty so the async SM is its sole populator.
+	// reconciliation subplan's streaming sink would then append a SECOND time, double-counting files. Going
+	// through PushdownInternal keeps the new list empty so the subplan sink is its sole populator.
 	FilterCombiner combiner(context);
 	for (auto riter = filter_exprs.rbegin(); riter != filter_exprs.rend(); ++riter) {
 		combiner.AddFilter((*riter)->Copy());
@@ -98,24 +76,21 @@ static void DeltaScanPushdownIntoOperator(LogicalDeltaGet &op, vector<unique_ptr
 		return; // nothing prunable
 	}
 	auto new_list = delta_list->PushdownInternal(context, filter_set);
-	// In async mode the swapped-in list replaces the bind-time-marked one. Mark it streaming so a
+	// The reconciliation subplan feeds the swapped-in list from a streaming sink. Mark it streaming so a
 	// bind/plan-time GetCardinality on this list serves resolved_files (empty) instead of triggering the
-	// synchronous kernel scan. Mirrors the bind-time mark in DeltaScanBindOperator. The SM-visible-subplan
-	// path also feeds the list from a streaming sink, so it needs the same mark on the swapped-in list.
-	if (AsyncScanSMEnabled() || SyncScanSMEnabled()) {
-		new_list->MarkStreamingPopulated();
-	}
+	// synchronous kernel scan. Mirrors the bind-time mark in DeltaScanBindOperator.
+	new_list->MarkStreamingPopulated();
 	mf_bind->file_list = shared_ptr<MultiFileList>(std::move(new_list));
 }
 
 //===--------------------------------------------------------------------===//
-// SM visible-subplan attachment (this feature). Turn the delta_scan operator's metadata reconciliation
+// Reconciliation subplan attachment. Turn the delta_scan operator's metadata reconciliation
 // into a REAL bound child subplan so EXPLAIN shows its nodes (READ_JSON per commit, UNION, arg_max dedup,
 // tombstone FILTER, and — when a WHERE predicate was pushed down — the data-skipping FILTER over
 // add.stats_parsed). Runs post-pushdown, so the dynamic predicate already threaded into the operator's
 // DeltaMultiFileList::table_filters is baked into the kernel-lowered SQL. PhysicalDeltaLoad's existing
 // streaming build-sink then populates the file list from this subplan's rows (path / fileConstantValues /
-// deletionVector), exactly as the delta_load TVF and async paths do — no nested Connection.
+// deletionVector), exactly as the delta_load TVF does — no nested Connection.
 //===--------------------------------------------------------------------===//
 static void DeltaScanAttachReconciliationSubplan(LogicalDeltaGet &op, OptimizerExtensionInput &input) {
 	// Only plain delta_scan (no build child yet). delta_load already has its subplan + build columns.
@@ -138,17 +113,17 @@ static void DeltaScanAttachReconciliationSubplan(LogicalDeltaGet &op, OptimizerE
 
 	// Parse + bind the SQL into a fully-planned child LogicalOperator. The child binder shares the query's
 	// GlobalBinderState (bound_tables counter) with the main plan's binder, so it allocates FRESH table
-	// indices past every main-plan index — no binding collisions. This is the SAME mechanism the P2
-	// bind_replace subquery path uses; here we do it post-pushdown so the predicate is known.
+	// indices past every main-plan index — no binding collisions. Done post-pushdown so the predicate is
+	// known.
 	Parser parser;
 	parser.ParseQuery(sql);
 	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
-		throw IOException("DELTA_KERNEL_PLAN_SM: expected a single SELECT statement from reconciliation lowering");
+		throw IOException("delta_scan: expected a single SELECT statement from reconciliation lowering");
 	}
 	auto child_binder = Binder::CreateBinder(input.context, &input.optimizer.binder);
 	auto bound = child_binder->Bind(*parser.statements[0]);
 	if (!bound.plan) {
-		throw IOException("DELTA_KERNEL_PLAN_SM: failed to bind reconciliation subplan");
+		throw IOException("delta_scan: failed to bind reconciliation subplan");
 	}
 
 	// The metadata-only terminal emits columns path / fileConstantValues / deletionVector (+ size). Map
@@ -164,7 +139,7 @@ static void DeltaScanAttachReconciliationSubplan(LogicalDeltaGet &op, OptimizerE
 		}
 	}
 	if (op.build_path_col == DConstants::INVALID_INDEX) {
-		throw IOException("DELTA_KERNEL_PLAN_SM: reconciliation subplan is missing the 'path' column");
+		throw IOException("delta_scan: reconciliation subplan is missing the 'path' column");
 	}
 
 	// Attach as the operator's build child. CreatePlan plans it as the build/sink pipeline; BuildPipelines
@@ -174,9 +149,6 @@ static void DeltaScanAttachReconciliationSubplan(LogicalDeltaGet &op, OptimizerE
 }
 
 static void DeltaScanOptimizeFilterPushdown(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
-	if (!AsyncScanSMEnabled() && !SyncScanSMEnabled() && !std::getenv("DELTA_KERNEL_PLAN_OP")) {
-		return; // only the operator path needs this; leave every other query untouched
-	}
 	// Walk the plan: for each LogicalFilter directly over a delta LogicalDeltaGet, push its predicates
 	// into the operator's file list (populating table_filters — the dynamic data-skipping predicate).
 	if (plan->type == LogicalOperatorType::LOGICAL_FILTER && !plan->children.empty() &&
@@ -186,12 +158,12 @@ static void DeltaScanOptimizeFilterPushdown(OptimizerExtensionInput &input, uniq
 			DeltaScanPushdownIntoOperator(ext.Cast<LogicalDeltaGet>(), plan->expressions, input.context);
 		}
 	}
-	// SM visible-subplan: attach the reconciliation subplan to EVERY delta_scan operator (with or without a
-	// WHERE above it). Done when we directly reach the operator in the walk — after the parent filter (if
-	// any) has already pushed its predicate into the file list above — so the subplan SQL reflects it.
-	// Every SM delta_scan's file list was marked streaming (at bind / on pushdown), so it MUST get a sink:
-	// attaching the subplan unconditionally is what populates it (a streaming list with no sink would hang).
-	if (SyncScanSMEnabled() && plan->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
+	// Attach the reconciliation subplan to EVERY delta_scan operator (with or without a WHERE above it).
+	// Done when we directly reach the operator in the walk — after the parent filter (if any) has already
+	// pushed its predicate into the file list above — so the subplan SQL reflects it. Every delta_scan's
+	// file list was marked streaming (at bind / on pushdown), so it MUST get a sink: attaching the subplan
+	// unconditionally is what populates it (a streaming list with no sink would hang).
+	if (plan->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
 		auto &ext = plan->Cast<LogicalExtensionOperator>();
 		if (ext.GetExtensionName() == "delta_scan") {
 			DeltaScanAttachReconciliationSubplan(ext.Cast<LogicalDeltaGet>(), input);
@@ -310,285 +282,19 @@ SinkFinalizeType PhysicalDeltaLoad::Finalize(Pipeline &pipeline, Event &event, C
 }
 
 //===--------------------------------------------------------------------===//
-// Async metadata-scan SM driver (TRUE per-request Option B). Drives the kernel scan SM at execution time
-// under a single-driver election: exactly ONE worker (the elected driver) advances the single-owner SM
-// cursor; every other worker returns SourceResultType::BLOCKED and waits on the "list populated/closed"
-// wake (the DeltaMultiFileList streaming channel the sink uses), then serves files.
-//
-// Per-reduce yielding: the elected driver does NOT pump the SM inline on its worker thread. On each
-// KDF_STEP_REDUCE it dispatches the reduce SQL as scheduler work (a Task on the QUERY executor's own
-// producer token, so threads=1/0 still drain it) and RETURNS BLOCKED, releasing its worker thread for
-// other pipelines. When the reduce task finishes it parks the Arrow result in the shared ReduceChannel
-// and fires the driver's stored InterruptState. The woken driver re-enters, submits the result, and
-// pulls the next step. The continuation is single-elected (channel state READY -> CONSUMED under `mu`),
-// so a spuriously-woken second worker re-BLOCKs instead of double-submitting.
-//
-// Lifetime-safe wake (the crux — the use-after-free the previous inline version was avoiding):
-//   * The driver parks via DuckDB's TASK-mode InterruptState (a weak_ptr<Task>), captured BY VALUE — not
-//     a raw GlobalSourceState*. If the query tore down and freed the blocked pipeline task,
-//     InterruptState::Callback() locks an expired weak_ptr and is a no-op.
-//   * The reduce task touches ONLY the heap ReduceChannel, co-owned via shared_ptr. If the driver / list
-//     / bind_data is destroyed mid-flight (a sibling scan threw, query unwinding), the driver's strong
-//     ref drops but the task keeps the channel alive: the task writes its result into the live channel
-//     and fires the (no-op) wake, then drops its ref and the channel frees. A reduce firing after the
-//     source/driver are gone is a guaranteed no-op, never a deref of freed memory.
-//===--------------------------------------------------------------------===//
-
-//! Off-thread reduce: runs one kernel Reduce's SQL -> Arrow on the query's DatabaseInstance and parks the
-//! result in the shared ReduceChannel, then wakes the parked driver. Co-owns the channel (so it can never
-//! write to freed memory) and the DatabaseInstance (so the DB outlives the off-thread query). Runs once to
-//! completion (TASK_FINISHED); it is never rescheduled — the thing that gets rescheduled is the driver's
-//! own blocked pipeline task, via channel->wake.
-class DeltaReduceTask : public Task {
-public:
-	DeltaReduceTask(shared_ptr<ReduceChannel> channel, shared_ptr<DatabaseInstance> db, string sql)
-	    : channel(std::move(channel)), db(std::move(db)), sql(std::move(sql)) {
-	}
-
-	TaskExecutionResult Execute(TaskExecutionMode mode) override {
-		ffi::FFI_ArrowArray array {};
-		ffi::FFI_ArrowSchema schema {};
-		string err;
-		bool ok = false;
-		try {
-			ok = delta_sdk::RunSqlToArrowOnDB(*db, sql, &array, &schema, err);
-		} catch (std::exception &ex) {
-			ok = false;
-			err = ex.what();
-		} catch (...) {
-			ok = false;
-			err = "unknown error executing reduce SQL";
-		}
-		InterruptState wake;
-		{
-			lock_guard<mutex> l(channel->mu);
-			if (ok) {
-				channel->array = array;
-				channel->schema = schema;
-				channel->has_result = true;
-				channel->state = ReduceState::READY;
-			} else {
-				channel->error = err.empty() ? string("failed to execute reduce SQL in DuckDB") : err;
-				channel->state = ReduceState::FAILED;
-			}
-			wake = channel->wake; // copy by value: firing it after teardown is a no-op
-		}
-		// Wake the parked driver OUTSIDE the channel lock. Callback() on a TASK-mode InterruptState whose
-		// task was freed during query teardown is a no-op (expired weak_ptr) — never a UAF.
-		wake.Callback();
-		return TaskExecutionResult::TASK_FINISHED;
-	}
-
-	string TaskType() const override {
-		return "DeltaReduceTask";
-	}
-
-private:
-	shared_ptr<ReduceChannel> channel;
-	shared_ptr<DatabaseInstance> db;
-	string sql;
-};
-
-//! Dispatch the pending reduce as scheduler work on the QUERY executor's own producer token, then park.
-//! Caller holds `drive_lock` (driver.mu) and the SM is at a KDF_STEP_REDUCE. We fetch the reduce SQL,
-//! arm the channel (state RUNNING, store the by-value wake), schedule the reduce Task, and return — the
-//! caller then returns BLOCKED to release the worker. threads=1/0 still drain the task because it lands on
-//! the query's own producer queue that the single executor loop services.
-static void DispatchReduce(ExecutionContext &context, DeltaScanSMDriver &driver, OperatorSourceInput &input) {
-	string reduce_sql = delta_sdk::SmReduceSql(driver.sm);
-	if (!driver.reduce) {
-		driver.reduce = make_shared_ptr<ReduceChannel>();
-	}
-	auto &channel = driver.reduce;
-	{
-		lock_guard<mutex> l(channel->mu);
-		channel->ReleaseResult();
-		channel->error.clear();
-		channel->wake = input.interrupt_state; // by value — the lifetime-safe wake target
-		channel->state = ReduceState::RUNNING;
-	}
-	auto db = context.client.db; // keep the DB alive for the off-thread query
-	auto task = make_shared_ptr<DeltaReduceTask>(channel, std::move(db), std::move(reduce_sql));
-	auto &executor = context.pipeline->executor;
-	auto &scheduler = TaskScheduler::GetScheduler(context.client);
-	scheduler.ScheduleTask(executor.GetToken(), std::move(task));
-}
-
-//! On a failed drive: record the error, flip FAILED, and wake every blocked worker so each re-enters,
-//! sees FAILED, and re-throws the same message (a clean unwind, no worker stranded). The wake must not
-//! throw out of here, so swallow any wake error. Caller holds `drive_lock`; we unlock before waking
-//! (lock order: never hold `mu` across the source-state lock taken by WakeBlockedSource).
-static void FailDrive(DeltaScanSMDriver &driver, DeltaMultiFileList &file_list, unique_lock<mutex> &drive_lock,
-                      const string &message) {
-	driver.error = message;
-	driver.drive = SMDriveState::FAILED;
-	drive_lock.unlock();
-	try {
-		file_list.WakeBlockedSourceFromTask();
-	} catch (...) {
-	}
-}
-
-//! Step the SM forward as far as it can go WITHOUT blocking, holding `drive_lock`. Returns:
-//!   * true             -> the SM reached Done: the list is populated/closed, drive == DONE, serve files.
-//!   * false (parked)   -> a reduce was dispatched (drive stays DRIVING, channel == RUNNING); the caller
-//!                         must return BLOCKED. On the next entry, if the channel is READY we submit the
-//!                         result and continue stepping; if FAILED we throw.
-//! Throws on a hard SM/finalize error (after marking FAILED + waking blocked workers).
-//! This is the re-entrant heart of per-request Option B: each call advances the SM until it next needs an
-//! off-thread reduce, then yields the worker.
-static bool StepDriveUntilBlockOrDone(ExecutionContext &context, DeltaScanSMDriver &driver,
-                                      DeltaMultiFileList &file_list, OperatorSourceInput &input,
-                                      unique_lock<mutex> &drive_lock) {
-	try {
-		if (!driver.opened) {
-			driver.sm = file_list.OpenScanSMForAsync();
-			driver.opened = true;
-		}
-		// If a previously-dispatched reduce has completed, consume its result before stepping again.
-		if (driver.reduce && driver.reduce->state.load() == ReduceState::READY) {
-			auto &channel = *driver.reduce;
-			lock_guard<mutex> l(channel.mu);
-			delta_sdk::SmSubmitReduce(driver.sm, &channel.array, &channel.schema); // kernel takes ownership
-			channel.has_result = false; // ownership transferred — dtor must not release it
-			channel.state = ReduceState::CONSUMED;
-		}
-		for (;;) {
-			int32_t kind = delta_sdk::SmGetStep(driver.sm);
-			if (kind == ffi::KDF_STEP_DONE) {
-				break;
-			}
-			// KDF_STEP_REDUCE: dispatch it off-thread and park (yield the worker).
-			DispatchReduce(context, driver, input);
-			return false;
-		}
-		// Done: lower + run the terminal ResultPlan, append surviving files, close the listing (wakes every
-		// blocked source). Only the elected driver reaches here; idempotent for this scan.
-		file_list.FinalizeScanSMResult(driver.sm);
-		driver.drive = SMDriveState::DONE;
-		return true;
-	} catch (std::exception &ex) {
-		FailDrive(driver, file_list, drive_lock, ex.what());
-		throw;
-	}
-}
-
-//! Advance the async SM under the single-driver election. Returns true if the file list is now fully
-//! populated (the caller should serve files); returns false after BLOCKing this worker, in which case
-//! `out_result` holds BLOCKED (or FINISHED if blocking is disallowed).
-//!
-//! Single-driver election (the fix for the intra-query data race): DuckDB runs GetDataInternal on MANY
-//! workers concurrently. Exactly ONE may advance the single-owner SM cursor. We elect it with
-//! `driver.drive` (NOT_STARTED -> DRIVING -> DONE | FAILED), guarded by `driver.mu`:
-//!   * DONE                   -> serve files.
-//!   * FAILED                 -> re-throw the recorded error.
-//!   * DRIVING                 -> we are either the parked DRIVER coming back to consume a finished reduce,
-//!                              OR a bystander worker. The continuation is single-elected by the channel
-//!                              state: if a reduce is READY (and not yet CONSUMED) we re-claim the drive and
-//!                              step forward; otherwise (RUNNING / CONSUMED / IDLE — not ours) we BLOCK as a
-//!                              bystander on the populate/close channel.
-//!   * NOT_STARTED            -> claim it and step the SM until it next needs a reduce (-> yield) or Done.
-//!
-//! TWO distinct blocking channels, deliberately kept separate (this is the fix for the threads=1 self-wake
-//! deadlock): the DRIVER, when it dispatches a reduce, parks by returning BLOCKED with its wake stored ONLY
-//! in the ReduceChannel (NOT registered in the source-state's blocked_tasks). The reduce task is then the
-//! SOLE waker of the driver, via that stored InterruptState. Bystanders, by contrast, register in
-//! blocked_tasks (BlockSource) and are woken collectively by the finalize/append WakeBlockedSource. If the
-//! driver also registered in blocked_tasks, the finalize's UnblockTasks — which the driver itself runs
-//! while NOT blocked — would try to Reschedule the running driver task and spin forever.
-static bool DriveAsyncSMTurn(ExecutionContext &context, DeltaScanSMDriver &driver, DeltaMultiFileList &file_list,
-                             OperatorSourceInput &input, SourceResultType &out_result) {
-	unique_lock<mutex> drive_lock(driver.mu);
-	for (;;) {
-		switch (driver.drive.load()) {
-		case SMDriveState::DONE:
-			return true; // list populated/closed: serve files.
-		case SMDriveState::FAILED:
-			throw IOException("DELTA_KERNEL_PLAN_SM_ASYNC: scan state machine failed: %s", driver.error);
-		case SMDriveState::DRIVING: {
-			// A drive is in progress. Under `mu` (so the continuation is single-elected) decide our role.
-			auto rstate = driver.reduce ? driver.reduce->state.load() : ReduceState::IDLE;
-			if (rstate == ReduceState::FAILED) {
-				FailDrive(driver, file_list, drive_lock,
-				          "DELTA_KERNEL_PLAN_SM_ASYNC: reduce failed: " + driver.reduce->error);
-				throw IOException("DELTA_KERNEL_PLAN_SM_ASYNC: scan state machine failed: %s", driver.error);
-			}
-			if (rstate == ReduceState::READY) {
-				// We are the woken driver (single continuation): consume the result and step on. Submitting
-				// flips the channel to CONSUMED under `mu`, so a second woken worker arriving here sees
-				// CONSUMED (falls into the bystander block) — never a double-submit. If StepDrive yields again
-				// (next reduce), it re-armed the channel wake and we return BLOCKED on THAT (no blocked_tasks).
-				if (StepDriveUntilBlockOrDone(context, driver, file_list, input, drive_lock)) {
-					return true; // reached Done.
-				}
-				out_result = SourceResultType::BLOCKED; // parked on the re-armed ReduceChannel wake.
-				return false;
-			}
-			// RUNNING / CONSUMED / IDLE and not ours to advance: bystander BLOCK on the populate/close wake.
-			// Re-check under the SOURCE-state lock (lost-wakeup discipline) before blocking: WakeBlockedSource
-			// takes this same lock, so a close landing between the check and BlockSource is either observed
-			// here (loop again) or delivered to our registered block.
-			drive_lock.unlock();
-			auto guard = input.global_state.Lock();
-			auto st = driver.drive.load();
-			if (st == SMDriveState::DONE || st == SMDriveState::FAILED || file_list.IsFinalizedListing()) {
-				guard.unlock();
-				drive_lock.lock();
-				continue; // drive finished/failed: re-evaluate (serve files / throw).
-			}
-			out_result = input.global_state.BlockSource(guard, input.interrupt_state);
-			return false;
-		}
-		case SMDriveState::NOT_STARTED:
-			// Claim the drive (single-elected) and step the SM until it needs a reduce (-> yield) or is Done.
-			driver.drive = SMDriveState::DRIVING;
-			if (StepDriveUntilBlockOrDone(context, driver, file_list, input, drive_lock)) {
-				return true; // reached Done in one go (no reduces).
-			}
-			// Dispatched the first reduce and parked: return BLOCKED on the ReduceChannel wake (armed by
-			// DispatchReduce). The reduce task is the sole waker; we are NOT in blocked_tasks.
-			out_result = SourceResultType::BLOCKED;
-			return false;
-		}
-	}
-}
-
-//===--------------------------------------------------------------------===//
 // Streaming source side
 //===--------------------------------------------------------------------===//
 unique_ptr<GlobalSourceState> PhysicalDeltaLoad::GetGlobalSourceState(ClientContext &context) const {
 	auto state = PhysicalTableScan::GetGlobalSourceState(context);
 	auto &file_list = GetDeltaFileList(*bind_data);
-	// Register the source's blockable state so the sink (or the async SM driver) can wake it on
-	// append/close. GlobalSourceState publicly derives StateWithBlockableTasks.
+	// Register the source's blockable state so the sink can wake it on append/close. GlobalSourceState
+	// publicly derives StateWithBlockableTasks.
 	file_list.SetBlockedSourceState(state.get());
-	// Async SM mode (no data-child, plain delta_scan): mark the listing streaming so GetFileInternal
-	// serves resolved_files directly (empty until the SM finalizes) and the source BLOCKs at the tail
-	// instead of falling into the synchronous kernel scan path. The driver closes it via FinalizeScanSMResult.
-	if (AsyncScanSMEnabled() && children.empty()) {
-		file_list.MarkStreamingPopulated();
-	}
 	return state;
 }
 
 SourceResultType PhysicalDeltaLoad::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                     OperatorSourceInput &input) const {
-	// Async SM mode: drive the kernel scan SM (as scheduler work) until the file list is populated, then
-	// fall through to the normal parallel multi-file scan. Only for plain delta_scan (no data child).
-	if (AsyncScanSMEnabled() && children.empty()) {
-		auto &file_list = GetDeltaFileList(*bind_data);
-		if (!file_list.IsFinalizedListing()) {
-			auto &driver = file_list.GetOrCreateSMDriver(context.client);
-			// Single-driver election: exactly one worker drives the SM inline to completion; the rest BLOCK
-			// until the list is populated/closed, then serve files. Correct at any thread count (incl.
-			// threads=1: the elected worker drives synchronously and never waits on another task).
-			SourceResultType blocked_result;
-			if (!DriveAsyncSMTurn(context, driver, file_list, input, blocked_result)) {
-				return blocked_result;
-			}
-			// Fall through: list is populated, serve files below.
-		}
-	}
 	auto result = PhysicalTableScan::GetDataInternal(context, chunk, input);
 	if (result != SourceResultType::FINISHED || chunk.size() != 0) {
 		return result;

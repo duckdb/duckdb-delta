@@ -10,12 +10,11 @@
 // rules so the pass numbers are directly comparable. Unlike the Python driver
 // -- which shells out to the `duckdb` CLI one process per shard -- this harness
 // runs many DuckDB Connections on ONE shared DuckDB instance across std::threads,
-// which is what lets it exercise the async scan state-machine path
-// (DELTA_KERNEL_PLAN_SM_ASYNC) under real intra-process concurrency.
+// which exercises the plan-based scan (operator + reconciliation subplan) under
+// real intra-process concurrency.
 //
-// The extension reads its mode env vars itself (DELTA_KERNEL_PLAN_SM,
-// DELTA_KERNEL_PLAN_SM_ASYNC, DELTA_KERNEL_PLAN_SQL_TVF, DELTA_KERNEL_PLAN_SQL,
-// ...). The harness just inherits the environment.
+// The plan-based scan is the single, default delta_scan path -- no env var is
+// required to select it.
 
 #include "duckdb.hpp"
 #include "yyjson.hpp"

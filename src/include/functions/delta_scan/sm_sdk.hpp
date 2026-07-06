@@ -51,87 +51,12 @@ inline bool RunSqlToArrow(ClientContext &context, const string &sql, ffi::FFI_Ar
 	return true;
 }
 
-//! Run `sql` on `db` (a fresh connection / independent transaction) and export the whole result as one
-//! Arrow C Data batch. Used by the async reduce TASK, which runs off the source thread and so cannot
-//! borrow the outer source's ClientContext — it owns a shared_ptr<DatabaseInstance> instead. Returns
-//! false (and `out_error`) on query error.
-inline bool RunSqlToArrowOnDB(DatabaseInstance &db, const string &sql, ffi::FFI_ArrowArray *out_array,
-                              ffi::FFI_ArrowSchema *out_schema, string &out_error) {
-	Connection con(db);
-	auto result = con.Query(sql);
-	if (!result || result->HasError()) {
-		out_error = result ? result->GetError() : string("no result");
-		return false;
-	}
-	ClientProperties props = con.context->GetClientProperties();
-	ArrowSchema schema;
-	ArrowConverter::ToArrowSchema(&schema, result->types, result->names, props);
-	ArrowAppender appender(result->types, STANDARD_VECTOR_SIZE, props, {});
-	while (auto chunk = result->Fetch()) {
-		if (chunk->size() == 0) {
-			break;
-		}
-		appender.Append(*chunk, 0, chunk->size(), chunk->size());
-	}
-	ArrowArray array = appender.Finalize();
-	*reinterpret_cast<ArrowSchema *>(out_schema) = schema;
-	*reinterpret_cast<ArrowArray *>(out_array) = array;
-	return true;
-}
-
 [[noreturn]] inline void ThrowFfi(char *err, const char *what) {
 	string msg = err ? string(err) : string("unknown error");
 	if (err) {
 		ffi::kdf_string_free(err);
 	}
 	throw IOException("delta SM SDK: %s failed: %s", what, msg);
-}
-
-//===----------------------------------------------------------------------===//
-// Async (Option B / Tier-2) building blocks. The kernel CoroutineSM is a passive, single-owner,
-// `!Send` synchronous stepper; the ABI invariant is: NEVER call two kdf_sm_* entry points for the
-// same KdfSM* concurrently. The C++ embedder upholds this with a per-SM mutex (see PhysicalDeltaLoad's
-// DeltaScanSMDriver) — only the EngineRequest (the reduce SQL string) and the EngineResponse (the
-// exported Arrow batch) ever cross threads, never the SM aliased.
-//
-// These thin wrappers are the per-step primitives used by the async driver. The orchestration (which
-// thread drives, when it BLOCKs, how the wake is delivered) lives in physical_delta_scan.cpp.
-
-//! Pull the next step. Returns ffi::KDF_STEP_DONE / ffi::KDF_STEP_REDUCE (>=0), or throws on error.
-inline int32_t SmGetStep(void *sm_ptr) {
-	char *err = nullptr;
-	int32_t kind = ffi::kdf_sm_get_step(static_cast<ffi::KdfSM *>(sm_ptr), &err);
-	if (kind < 0) {
-		ThrowFfi(err, "kdf_sm_get_step");
-	}
-	return kind;
-}
-
-//! Fetch the lowered SQL for the pending Reduce (valid right after SmGetStep returned KDF_STEP_REDUCE).
-inline string SmReduceSql(void *sm_ptr) {
-	char *err = nullptr;
-	char *sql_c = ffi::kdf_sm_reduce_sql(static_cast<ffi::KdfSM *>(sm_ptr), &err);
-	if (!sql_c) {
-		ThrowFfi(err, "kdf_sm_reduce_sql");
-	}
-	string sql(sql_c);
-	ffi::kdf_string_free(sql_c);
-	return sql;
-}
-
-//! Submit a previously-exported Arrow batch (the Reduce result) back to the SM, resuming it. Ownership
-//! of the arrays transfers to the kernel. Throws on error.
-inline void SmSubmitReduce(void *sm_ptr, ffi::FFI_ArrowArray *array, ffi::FFI_ArrowSchema *schema) {
-	char *err = nullptr;
-	if (ffi::kdf_sm_submit_reduce(static_cast<ffi::KdfSM *>(sm_ptr), array, schema, &err) != 0) {
-		ThrowFfi(err, "kdf_sm_submit_reduce");
-	}
-}
-
-inline void SmFree(void *sm_ptr) {
-	if (sm_ptr) {
-		ffi::kdf_sm_free(static_cast<ffi::KdfSM *>(sm_ptr));
-	}
 }
 
 //! Drive the kernel scan state machine to completion and return the data-stage DuckDB SQL.
@@ -142,7 +67,7 @@ inline void SmFree(void *sm_ptr) {
 //! from a `PredicateVisitor` over the pushed-down `TableFilterSet`) the kernel applies to the scan
 //! builder so it emits its stats-based file-skip filter. The kernel visits it ONCE, synchronously,
 //! inside `kdf_scan_open` — so the engine state it borrows (the `TableFilterSet`) need only outlive
-//! THIS call. When null, the kernel falls back to the `DELTA_SM_PREDICATE` env var (debug only).
+//! THIS call. When null, no data-skipping predicate is applied.
 inline string DriveScan(const string &path, int64_t version, bool metadata_only, ClientContext &context,
                         optional_ptr<ffi::EnginePredicate> predicate = nullptr) {
 	char *err = nullptr;
@@ -186,9 +111,6 @@ inline string DriveScan(const string &path, int64_t version, bool metadata_only,
 		string sql(out);
 		ffi::kdf_string_free(out);
 		ffi::kdf_sm_free(sm);
-		if (std::getenv("KDF_DUMP_SQL")) {
-			fprintf(stderr, "==== KDF result SQL ====\n%s\n========================\n", sql.c_str());
-		}
 		return sql;
 	} catch (...) {
 		ffi::kdf_sm_free(sm);

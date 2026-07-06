@@ -91,22 +91,13 @@ static unique_ptr<FunctionData> DeltaScanDeserialize(Deserializer &deserializer,
 	throw NotImplementedException("DeltaScan deserialization not implemented");
 }
 
-// Plan-based scan (design C′): route delta_scan through a custom LogicalDeltaGet ->
-// PhysicalDeltaScan instead of the default LogicalGet -> PhysicalTableScan, so we own the data-stage
-// scan operator (and, in later milestones, its pipeline structure). Gated by DELTA_KERNEL_PLAN_OP;
-// returning nullptr falls back to the standard table-function bind + PhysicalTableScan path.
+// Plan-based scan (design C′): route delta_scan through a custom LogicalDeltaGet -> PhysicalDeltaScan
+// instead of the default LogicalGet -> PhysicalTableScan, so we own the data-stage scan operator. This is
+// the single, default scan path: the operator's metadata reconciliation is attached as a VISIBLE child
+// subplan at optimize time (see DeltaScanAttachReconciliationSubplan) — the WHERE predicate is only known
+// post-pushdown, so the subplan is built there, not here.
 static unique_ptr<LogicalOperator> DeltaScanBindOperator(ClientContext &context, TableFunctionBindInput &input,
                                                          idx_t bind_index, vector<string> &return_names) {
-	// DELTA_KERNEL_PLAN_OP routes delta_scan through the custom operator. DELTA_KERNEL_PLAN_SM_ASYNC
-	// (Option B / Tier-2 async metadata-scan SM) is driven from inside PhysicalDeltaLoad's source, so it
-	// also needs the operator route — enable it implicitly. DELTA_KERNEL_PLAN_SM (the synchronous
-	// metadata-scan path) also routes through the operator so its reconciliation can be attached as a
-	// VISIBLE child subplan at optimize time (see DeltaScanPushdownIntoOperator) — the WHERE predicate
-	// is only known post-pushdown, so the subplan is built there, not here.
-	if (!std::getenv("DELTA_KERNEL_PLAN_OP") && !std::getenv("DELTA_KERNEL_PLAN_SM_ASYNC") &&
-	    !std::getenv("DELTA_KERNEL_PLAN_SM")) {
-		return nullptr;
-	}
 	auto &table_function = input.table_function;
 	if (!table_function.bind) {
 		return nullptr;
@@ -115,18 +106,12 @@ static unique_ptr<LogicalOperator> DeltaScanBindOperator(ClientContext &context,
 	// then wrap it in the custom logical operator.
 	vector<LogicalType> return_types;
 	auto bind_data = table_function.bind(context, input, return_types, return_names);
-	// Async metadata-scan SM mode: mark the file list streaming NOW (at bind) so any bind/plan-time
-	// GetCardinality / GetTotalFileCount call serves the (empty) resolved_files directly instead of
-	// triggering the synchronous kernel scan — leaving the WHOLE reconciliation to the execution-time
-	// async driver in PhysicalDeltaLoad. Without this, cardinality estimation would populate the list at
-	// bind time (defeating Option B and double-populating against the driver).
-	// Both async SM and synchronous-SM-as-visible-subplan feed the file list from PhysicalDeltaLoad's
-	// streaming sink instead of a bind/plan-time synchronous kernel scan. Mark it streaming NOW so any
-	// bind/plan-time GetCardinality / GetTotalFileCount serves the (empty) resolved_files directly.
-	if (std::getenv("DELTA_KERNEL_PLAN_SM_ASYNC") || std::getenv("DELTA_KERNEL_PLAN_SM")) {
-		auto &mf_bind_data = bind_data->Cast<MultiFileBindData>();
-		mf_bind_data.file_list->Cast<DeltaMultiFileList>().MarkStreamingPopulated();
-	}
+	// The reconciliation subplan feeds the file list from PhysicalDeltaLoad's streaming sink instead of a
+	// bind/plan-time synchronous kernel scan. Mark it streaming NOW (at bind) so any bind/plan-time
+	// GetCardinality / GetTotalFileCount serves the (empty) resolved_files directly instead of triggering
+	// the synchronous kernel scan — leaving the reconciliation to the attached subplan.
+	auto &mf_bind_data = bind_data->Cast<MultiFileBindData>();
+	mf_bind_data.file_list->Cast<DeltaMultiFileList>().MarkStreamingPopulated();
 	virtual_column_map_t virtual_columns;
 	if (table_function.get_virtual_columns) {
 		virtual_columns = table_function.get_virtual_columns(context, bind_data.get());
@@ -135,38 +120,6 @@ static unique_ptr<LogicalOperator> DeltaScanBindOperator(ClientContext &context,
 	                                     return_names, std::move(virtual_columns), input.inputs, input.named_parameters);
 
 	return std::move(op);
-}
-
-// delta_scan as one whole-plan SQL string (design P2): instead of attaching the metadata plan as a
-// build child (DELTA_KERNEL_PLAN_BUILD), lower the ENTIRE kernel ResultPlan to SQL (the data Load is
-// the delta_load TVF) and hand it back as a subquery the binder re-binds. Gated by
-// DELTA_KERNEL_PLAN_SQL_TVF; returns nullptr to fall through to the standard/bind_operator paths.
-static unique_ptr<TableRef> DeltaScanBindReplace(ClientContext &context, TableFunctionBindInput &input) {
-	if (!std::getenv("DELTA_KERNEL_PLAN_SQL_TVF")) {
-		return nullptr;
-	}
-	if (input.inputs.empty()) {
-		return nullptr;
-	}
-	string table_path = input.inputs[0].GetValue<string>();
-	int64_t scan_version = -1;
-	for (auto &kv : input.named_parameters) {
-		if (StringUtil::Lower(kv.first) == "version" && !kv.second.IsNull()) {
-			auto v = kv.second.GetValue<int64_t>();
-			scan_version = (v < 0) ? -1 : v;
-		}
-	}
-	// DuckDB drives the kernel scan state machine (get_step -> run the reduce SQL in DuckDB ->
-	// submit), then lowers the terminal ResultPlan to the data-stage SQL.
-	string sql = delta_sdk::DriveScan(table_path, scan_version, /* metadata_only= */ false, context);
-
-	Parser parser;
-	parser.ParseQuery(sql);
-	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
-		throw IOException("delta_scan bind_replace: expected a single SELECT statement from plan lowering");
-	}
-	auto select = unique_ptr_cast<SQLStatement, SelectStatement>(std::move(parser.statements[0]));
-	return make_uniq<SubqueryRef>(std::move(select));
 }
 
 // delta_scan_metadata(path, [version]): runs ONLY the scan-metadata phase — DuckDB drives the
@@ -470,12 +423,9 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 		// TODO: implement/fix these
 		function.serialize = DeltaScanSerialize;
 		function.deserialize = DeltaScanDeserialize;
-		// Plan-based scan: custom operator injection (gated by DELTA_KERNEL_PLAN_OP at bind time).
+		// Plan-based scan: custom operator injection. This is the single, default scan path.
 		function.bind_operator = DeltaScanBindOperator;
-		// Plan-based scan (P2): whole-plan SQL string with delta_load TVF (gated by
-		// DELTA_KERNEL_PLAN_SQL_TVF). bind_operator runs first and returns nullptr unless its own gate
-		// is set, so this is reached when only the SQL-TVF gate is on.
-		function.bind_replace = DeltaScanBindReplace;
+		function.bind_replace = nullptr;
 		function.statistics = nullptr;
 		function.table_scan_progress = nullptr;
 		function.get_bind_info = nullptr;
