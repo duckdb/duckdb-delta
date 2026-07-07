@@ -8,10 +8,10 @@ require delta
 require notwindows
 
 statement ok
-FROM copy_dir('data/inlined/simple_table', '__TEST_DIR__/main/writing/write_to_versioned_attach');
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/write_to_versioned_attach');
 
 statement ok
-ATTACH '__TEST_DIR__/main/writing/write_to_versioned_attach/delta_lake' AS t (TYPE delta, VERSION 0);
+ATTACH '{TEMP_DIR}/main/writing/write_to_versioned_attach/delta_lake' AS t (TYPE delta, VERSION 0);
 
 statement error
 INSERT INTO t VALUES (42);
