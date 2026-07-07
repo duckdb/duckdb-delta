@@ -21,13 +21,13 @@ require-env AWS_DEFAULT_REGION
 require-env AWS_ENDPOINT
 
 statement ok
-set secret_directory='__TEST_DIR__/aws_secret_chains_env'
+set secret_directory='{TEMP_DIR}/aws_secret_chains_env'
 
 # Secret with just the endpoint
 statement ok
 CREATE SECRET s1 (
     TYPE S3,
-    ENDPOINT '${AWS_ENDPOINT}',
+    ENDPOINT '{AWS_ENDPOINT}',
 	USE_SSL false
 );
 
@@ -57,10 +57,10 @@ statement ok
 CREATE SECRET s1 (
     TYPE S3,
     PROVIDER config,
-    KEY_ID '${AWS_ACCESS_KEY_ID}',
-    SECRET '${AWS_SECRET_ACCESS_KEY}',
-    REGION '${AWS_DEFAULT_REGION}',
-    ENDPOINT '${AWS_ENDPOINT}',
+    KEY_ID '{AWS_ACCESS_KEY_ID}',
+    SECRET '{AWS_SECRET_ACCESS_KEY}',
+    REGION '{AWS_DEFAULT_REGION}',
+    ENDPOINT '{AWS_ENDPOINT}',
     USE_SSL false
 );
 
@@ -94,7 +94,7 @@ statement ok
 CREATE SECRET s1 (
     TYPE S3,
     PROVIDER credential_chain,
-    ENDPOINT '${AWS_ENDPOINT}',
+    ENDPOINT '{AWS_ENDPOINT}',
     USE_SSL false
 );
 

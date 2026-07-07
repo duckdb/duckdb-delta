@@ -13,519 +13,519 @@ require-env GOLDEN_TABLES_PATH
 ######## 124-decimal-decode-bug ########
 
 query T rowsort res-124-decimal-decode-bug
-from delta_scan('${GOLDEN_TABLES_PATH}/124-decimal-decode-bug/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/124-decimal-decode-bug/delta')
 
 query T rowsort 124-decimal-decode-bug
-from parquet_scan('${GOLDEN_TABLES_PATH}/124-decimal-decode-bug/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/124-decimal-decode-bug/expected/**/*.parquet')
 
 ######## 125-iterator-bug ########
 
 query T rowsort res-125-iterator-bug
-from delta_scan('${GOLDEN_TABLES_PATH}/125-iterator-bug/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/125-iterator-bug/delta')
 
 query T rowsort 125-iterator-bug
-from parquet_scan('${GOLDEN_TABLES_PATH}/125-iterator-bug/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/125-iterator-bug/expected/**/*.parquet')
 
 ######## basic-with-inserts-deletes-checkpoint ########
 
 query T rowsort res-basic-with-inserts-deletes-checkpoint
-from delta_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-deletes-checkpoint/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-deletes-checkpoint/delta')
 
 query T rowsort basic-with-inserts-deletes-checkpoint
-from parquet_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-deletes-checkpoint/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-deletes-checkpoint/expected/**/*.parquet')
 
 ######## basic-with-inserts-merge ########
 
 query T rowsort res-basic-with-inserts-merge
-from delta_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-merge/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-merge/delta')
 
 query T rowsort basic-with-inserts-merge
-from parquet_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-merge/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-merge/expected/**/*.parquet')
 
 ######## basic-with-inserts-overwrite-restore ########
 
 query T rowsort res-basic-with-inserts-overwrite-restore
-from delta_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-overwrite-restore/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-overwrite-restore/delta')
 
 query T rowsort basic-with-inserts-overwrite-restore
-from parquet_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-overwrite-restore/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-overwrite-restore/expected/**/*.parquet')
 
 ######## basic-with-inserts-updates ########
 
 query T rowsort res-basic-with-inserts-updates
-from delta_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-updates/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-updates/delta')
 
 query T rowsort basic-with-inserts-updates
-from parquet_scan('${GOLDEN_TABLES_PATH}/basic-with-inserts-updates/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/basic-with-inserts-updates/expected/**/*.parquet')
 
 ######## basic-with-vacuum-protocol-check-feature ########
 
 query T rowsort res-basic-with-vacuum-protocol-check-feature
-from delta_scan('${GOLDEN_TABLES_PATH}/basic-with-vacuum-protocol-check-feature/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/basic-with-vacuum-protocol-check-feature/delta')
 
 query T rowsort basic-with-vacuum-protocol-check-feature
-from parquet_scan('${GOLDEN_TABLES_PATH}/basic-with-vacuum-protocol-check-feature/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/basic-with-vacuum-protocol-check-feature/expected/**/*.parquet')
 
 ######## corrupted-last-checkpoint-kernel ########
 
 query T rowsort res-corrupted-last-checkpoint-kernel
-from delta_scan('${GOLDEN_TABLES_PATH}/corrupted-last-checkpoint-kernel/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/corrupted-last-checkpoint-kernel/delta')
 
 query T rowsort corrupted-last-checkpoint-kernel
-from parquet_scan('${GOLDEN_TABLES_PATH}/corrupted-last-checkpoint-kernel/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/corrupted-last-checkpoint-kernel/expected/**/*.parquet')
 
 ######## data-reader-array-complex-objects ########
 
 query T rowsort res-data-reader-array-complex-objects
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-array-complex-objects/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-array-complex-objects/delta')
 
 query T rowsort data-reader-array-complex-objects
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-array-complex-objects/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-array-complex-objects/expected/**/*.parquet')
 
 ######## data-reader-array-primitives ########
 
 query T rowsort res-data-reader-array-primitives
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-array-primitives/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-array-primitives/delta')
 
 query T rowsort data-reader-array-primitives
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-array-primitives/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-array-primitives/expected/**/*.parquet')
 
 ######## data-reader-date-types-America ########
 
 query T rowsort res-data-reader-date-types-America
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-America/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-America/delta')
 
 query T rowsort data-reader-date-types-America
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-America/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-America/expected/**/*.parquet')
 
 ######## data-reader-date-types-Asia ########
 
 query T rowsort res-data-reader-date-types-Asia
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Asia/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Asia/delta')
 
 query T rowsort data-reader-date-types-Asia
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Asia/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Asia/expected/**/*.parquet')
 
 ######## data-reader-date-types-Etc ########
 
 query T rowsort res-data-reader-date-types-Etc
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Etc/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Etc/delta')
 
 query T rowsort data-reader-date-types-Etc
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Etc/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Etc/expected/**/*.parquet')
 
 ######## data-reader-date-types-Iceland ########
 
 query T rowsort res-data-reader-date-types-Iceland
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Iceland/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Iceland/delta')
 
 query T rowsort data-reader-date-types-Iceland
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Iceland/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Iceland/expected/**/*.parquet')
 
 ######## data-reader-date-types-Jst ########
 
 query T rowsort res-data-reader-date-types-Jst
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Jst/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Jst/delta')
 
 query T rowsort data-reader-date-types-Jst
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Jst/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Jst/expected/**/*.parquet')
 
 ######## data-reader-date-types-Pst ########
 
 query T rowsort res-data-reader-date-types-Pst
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Pst/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Pst/delta')
 
 query T rowsort data-reader-date-types-Pst
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-Pst/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-Pst/expected/**/*.parquet')
 
 ######## data-reader-date-types-utc ########
 
 query T rowsort res-data-reader-date-types-utc
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-utc/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-utc/delta')
 
 query T rowsort data-reader-date-types-utc
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-date-types-utc/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-date-types-utc/expected/**/*.parquet')
 
 ######## data-reader-escaped-chars ########
 
 query T rowsort res-data-reader-escaped-chars
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-escaped-chars/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-escaped-chars/delta')
 
 query T rowsort data-reader-escaped-chars
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-escaped-chars/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-escaped-chars/expected/**/*.parquet')
 
 ######## data-reader-map ########
 
 query T rowsort res-data-reader-map
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-map/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-map/delta')
 
 query T rowsort data-reader-map
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-map/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-map/expected/**/*.parquet')
 
 ######## data-reader-nested-struct ########
 
 query T rowsort res-data-reader-nested-struct
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-nested-struct/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-nested-struct/delta')
 
 query T rowsort data-reader-nested-struct
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-nested-struct/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-nested-struct/expected/**/*.parquet')
 
 ######## data-reader-nullable-field-invalid-schema-key ########
 
 query T rowsort res-data-reader-nullable-field-invalid-schema-key
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-nullable-field-invalid-schema-key/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-nullable-field-invalid-schema-key/delta')
 
 query T rowsort data-reader-nullable-field-invalid-schema-key
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-nullable-field-invalid-schema-key/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-nullable-field-invalid-schema-key/expected/**/*.parquet')
 
 ######## data-reader-primitives ########
 
 query T rowsort res-data-reader-primitives
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-primitives/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-primitives/delta')
 
 query T rowsort data-reader-primitives
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-primitives/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-primitives/expected/**/*.parquet')
 
 ######## data-reader-timestamp_ntz ########
 
 query T rowsort res-data-reader-timestamp_ntz
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz/delta')
 
 query T rowsort data-reader-timestamp_ntz
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz/expected/**/*.parquet')
 
 ######## data-reader-timestamp_ntz-id-mode ########
 
 query T rowsort res-data-reader-timestamp_ntz-id-mode
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-id-mode/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-id-mode/delta')
 
 query T rowsort data-reader-timestamp_ntz-id-mode
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-id-mode/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-id-mode/expected/**/*.parquet')
 
 ######## data-reader-timestamp_ntz-name-mode ########
 
 query T rowsort res-data-reader-timestamp_ntz-name-mode
-from delta_scan('${GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-name-mode/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-name-mode/delta')
 
 query T rowsort data-reader-timestamp_ntz-name-mode
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-name-mode/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-reader-timestamp_ntz-name-mode/expected/**/*.parquet')
 
 ######## data-skipping-basic-stats-all-types ########
 
 query T rowsort res-data-skipping-basic-stats-all-types
-from delta_scan('${GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types/delta')
 
 query T rowsort data-skipping-basic-stats-all-types
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types/expected/**/*.parquet')
 
 ######## data-skipping-basic-stats-all-types-checkpoint ########
 
 query T rowsort res-data-skipping-basic-stats-all-types-checkpoint
-from delta_scan('${GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-checkpoint/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-checkpoint/delta')
 
 query T rowsort data-skipping-basic-stats-all-types-checkpoint
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-checkpoint/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-checkpoint/expected/**/*.parquet')
 
 ######## data-skipping-basic-stats-all-types-columnmapping-name ########
 
 query T rowsort res-data-skipping-basic-stats-all-types-columnmapping-name
-from delta_scan('${GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-columnmapping-name/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-columnmapping-name/delta')
 
 query T rowsort data-skipping-basic-stats-all-types-columnmapping-name
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-columnmapping-name/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-skipping-basic-stats-all-types-columnmapping-name/expected/**/*.parquet')
 
 ######## data-skipping-change-stats-collected-across-versions ########
 
 query T rowsort res-data-skipping-change-stats-collected-across-versions
-from delta_scan('${GOLDEN_TABLES_PATH}/data-skipping-change-stats-collected-across-versions/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-skipping-change-stats-collected-across-versions/delta')
 
 query T rowsort data-skipping-change-stats-collected-across-versions
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-skipping-change-stats-collected-across-versions/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-skipping-change-stats-collected-across-versions/expected/**/*.parquet')
 
 ######## data-skipping-partition-and-data-column ########
 
 query T rowsort res-data-skipping-partition-and-data-column
-from delta_scan('${GOLDEN_TABLES_PATH}/data-skipping-partition-and-data-column/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/data-skipping-partition-and-data-column/delta')
 
 query T rowsort data-skipping-partition-and-data-column
-from parquet_scan('${GOLDEN_TABLES_PATH}/data-skipping-partition-and-data-column/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/data-skipping-partition-and-data-column/expected/**/*.parquet')
 
 ######## decimal-various-scale-precision ########
 
 query T rowsort res-decimal-various-scale-precision
-from delta_scan('${GOLDEN_TABLES_PATH}/decimal-various-scale-precision/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/decimal-various-scale-precision/delta')
 
 query T rowsort decimal-various-scale-precision
-from parquet_scan('${GOLDEN_TABLES_PATH}/decimal-various-scale-precision/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/decimal-various-scale-precision/expected/**/*.parquet')
 
 ######## deltalog-getChanges ########
 
 query T rowsort res-deltalog-getChanges
-from delta_scan('${GOLDEN_TABLES_PATH}/deltalog-getChanges/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/deltalog-getChanges/delta')
 
 query T rowsort deltalog-getChanges
-from parquet_scan('${GOLDEN_TABLES_PATH}/deltalog-getChanges/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/deltalog-getChanges/expected/**/*.parquet')
 
 ######## dv-partitioned-with-checkpoint ########
 
 query T rowsort res-dv-partitioned-with-checkpoint
-from delta_scan('${GOLDEN_TABLES_PATH}/dv-partitioned-with-checkpoint/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/dv-partitioned-with-checkpoint/delta')
 
 query T rowsort dv-partitioned-with-checkpoint
-from parquet_scan('${GOLDEN_TABLES_PATH}/dv-partitioned-with-checkpoint/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/dv-partitioned-with-checkpoint/expected/**/*.parquet')
 
 ######## dv-with-columnmapping ########
 
 query T rowsort res-dv-with-columnmapping
-from delta_scan('${GOLDEN_TABLES_PATH}/dv-with-columnmapping/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/dv-with-columnmapping/delta')
 
 query T rowsort dv-with-columnmapping
-from parquet_scan('${GOLDEN_TABLES_PATH}/dv-with-columnmapping/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/dv-with-columnmapping/expected/**/*.parquet')
 
 ######## kernel-timestamp-int96 ########
 
 query T rowsort res-kernel-timestamp-int96
-from delta_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-int96/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-int96/delta')
 
 query T rowsort kernel-timestamp-int96
-from parquet_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-int96/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-int96/expected/**/*.parquet')
 
 ######## kernel-timestamp-pst ########
 
 query T rowsort res-kernel-timestamp-pst
-from delta_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-pst/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-pst/delta')
 
 query T rowsort kernel-timestamp-pst
-from parquet_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-pst/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-pst/expected/**/*.parquet')
 
 ######## kernel-timestamp-timestamp_micros ########
 
 query T rowsort res-kernel-timestamp-timestamp_micros
-from delta_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_micros/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_micros/delta')
 
 query T rowsort kernel-timestamp-timestamp_micros
-from parquet_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_micros/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_micros/expected/**/*.parquet')
 
 ######## kernel-timestamp-timestamp_millis ########
 
 query T rowsort res-kernel-timestamp-timestamp_millis
-from delta_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_millis/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_millis/delta')
 
 query T rowsort kernel-timestamp-timestamp_millis
-from parquet_scan('${GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_millis/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/kernel-timestamp-timestamp_millis/expected/**/*.parquet')
 
 ######## log-replay-dv-key-cases ########
 
 query T rowsort res-log-replay-dv-key-cases
-from delta_scan('${GOLDEN_TABLES_PATH}/log-replay-dv-key-cases/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/log-replay-dv-key-cases/delta')
 
 query T rowsort log-replay-dv-key-cases
-from parquet_scan('${GOLDEN_TABLES_PATH}/log-replay-dv-key-cases/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/log-replay-dv-key-cases/expected/**/*.parquet')
 
 ######## log-replay-latest-metadata-protocol ########
 
 query T rowsort res-log-replay-latest-metadata-protocol
-from delta_scan('${GOLDEN_TABLES_PATH}/log-replay-latest-metadata-protocol/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/log-replay-latest-metadata-protocol/delta')
 
 query T rowsort log-replay-latest-metadata-protocol
-from parquet_scan('${GOLDEN_TABLES_PATH}/log-replay-latest-metadata-protocol/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/log-replay-latest-metadata-protocol/expected/**/*.parquet')
 
 ######## log-replay-special-characters ########
 
 query T rowsort res-log-replay-special-characters
-from delta_scan('${GOLDEN_TABLES_PATH}/log-replay-special-characters/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/log-replay-special-characters/delta')
 
 query T rowsort log-replay-special-characters
-from parquet_scan('${GOLDEN_TABLES_PATH}/log-replay-special-characters/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/log-replay-special-characters/expected/**/*.parquet')
 
 ######## log-replay-special-characters-a ########
 
 query T rowsort res-log-replay-special-characters-a
-from delta_scan('${GOLDEN_TABLES_PATH}/log-replay-special-characters-a/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/log-replay-special-characters-a/delta')
 
 query T rowsort log-replay-special-characters-a
-from parquet_scan('${GOLDEN_TABLES_PATH}/log-replay-special-characters-a/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/log-replay-special-characters-a/expected/**/*.parquet')
 
 ######## multi-part-checkpoint ########
 
 query T rowsort res-multi-part-checkpoint
-from delta_scan('${GOLDEN_TABLES_PATH}/multi-part-checkpoint/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/multi-part-checkpoint/delta')
 
 query T rowsort multi-part-checkpoint
-from parquet_scan('${GOLDEN_TABLES_PATH}/multi-part-checkpoint/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/multi-part-checkpoint/expected/**/*.parquet')
 
 ######## only-checkpoint-files ########
 
 query T rowsort res-only-checkpoint-files
-from delta_scan('${GOLDEN_TABLES_PATH}/only-checkpoint-files/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/only-checkpoint-files/delta')
 
 query T rowsort only-checkpoint-files
-from parquet_scan('${GOLDEN_TABLES_PATH}/only-checkpoint-files/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/only-checkpoint-files/expected/**/*.parquet')
 
 ######## snapshot-data0 ########
 
 query T rowsort res-snapshot-data0
-from delta_scan('${GOLDEN_TABLES_PATH}/snapshot-data0/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/snapshot-data0/delta')
 
 query T rowsort snapshot-data0
-from parquet_scan('${GOLDEN_TABLES_PATH}/snapshot-data0/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/snapshot-data0/expected/**/*.parquet')
 
 ######## snapshot-data1 ########
 
 query T rowsort res-snapshot-data1
-from delta_scan('${GOLDEN_TABLES_PATH}/snapshot-data1/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/snapshot-data1/delta')
 
 query T rowsort snapshot-data1
-from parquet_scan('${GOLDEN_TABLES_PATH}/snapshot-data1/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/snapshot-data1/expected/**/*.parquet')
 
 ######## snapshot-data2 ########
 
 query T rowsort res-snapshot-data2
-from delta_scan('${GOLDEN_TABLES_PATH}/snapshot-data2/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/snapshot-data2/delta')
 
 query T rowsort snapshot-data2
-from parquet_scan('${GOLDEN_TABLES_PATH}/snapshot-data2/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/snapshot-data2/expected/**/*.parquet')
 
 ######## snapshot-data2-deleted ########
 
 query T rowsort res-snapshot-data2-deleted
-from delta_scan('${GOLDEN_TABLES_PATH}/snapshot-data2-deleted/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/snapshot-data2-deleted/delta')
 
 query T rowsort snapshot-data2-deleted
-from parquet_scan('${GOLDEN_TABLES_PATH}/snapshot-data2-deleted/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/snapshot-data2-deleted/expected/**/*.parquet')
 
 ######## snapshot-data3 ########
 
 query T rowsort res-snapshot-data3
-from delta_scan('${GOLDEN_TABLES_PATH}/snapshot-data3/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/snapshot-data3/delta')
 
 query T rowsort snapshot-data3
-from parquet_scan('${GOLDEN_TABLES_PATH}/snapshot-data3/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/snapshot-data3/expected/**/*.parquet')
 
 ######## snapshot-repartitioned ########
 
 query T rowsort res-snapshot-repartitioned
-from delta_scan('${GOLDEN_TABLES_PATH}/snapshot-repartitioned/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/snapshot-repartitioned/delta')
 
 query T rowsort snapshot-repartitioned
-from parquet_scan('${GOLDEN_TABLES_PATH}/snapshot-repartitioned/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/snapshot-repartitioned/expected/**/*.parquet')
 
 ######## snapshot-vacuumed ########
 
 query T rowsort res-snapshot-vacuumed
-from delta_scan('${GOLDEN_TABLES_PATH}/snapshot-vacuumed/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/snapshot-vacuumed/delta')
 
 query T rowsort snapshot-vacuumed
-from parquet_scan('${GOLDEN_TABLES_PATH}/snapshot-vacuumed/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/snapshot-vacuumed/expected/**/*.parquet')
 
 ######## time-travel-partition-changes-a ########
 
 query T rowsort res-time-travel-partition-changes-a
-from delta_scan('${GOLDEN_TABLES_PATH}/time-travel-partition-changes-a/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/time-travel-partition-changes-a/delta')
 
 query T rowsort time-travel-partition-changes-a
-from parquet_scan('${GOLDEN_TABLES_PATH}/time-travel-partition-changes-a/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/time-travel-partition-changes-a/expected/**/*.parquet')
 
 ######## time-travel-partition-changes-b ########
 
 query T rowsort res-time-travel-partition-changes-b
-from delta_scan('${GOLDEN_TABLES_PATH}/time-travel-partition-changes-b/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/time-travel-partition-changes-b/delta')
 
 query T rowsort time-travel-partition-changes-b
-from parquet_scan('${GOLDEN_TABLES_PATH}/time-travel-partition-changes-b/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/time-travel-partition-changes-b/expected/**/*.parquet')
 
 ######## time-travel-schema-changes-a ########
 
 query T rowsort res-time-travel-schema-changes-a
-from delta_scan('${GOLDEN_TABLES_PATH}/time-travel-schema-changes-a/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/time-travel-schema-changes-a/delta')
 
 query T rowsort time-travel-schema-changes-a
-from parquet_scan('${GOLDEN_TABLES_PATH}/time-travel-schema-changes-a/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/time-travel-schema-changes-a/expected/**/*.parquet')
 
 ######## time-travel-schema-changes-b ########
 
 query T rowsort res-time-travel-schema-changes-b
-from delta_scan('${GOLDEN_TABLES_PATH}/time-travel-schema-changes-b/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/time-travel-schema-changes-b/delta')
 
 query T rowsort time-travel-schema-changes-b
-from parquet_scan('${GOLDEN_TABLES_PATH}/time-travel-schema-changes-b/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/time-travel-schema-changes-b/expected/**/*.parquet')
 
 ######## time-travel-start ########
 
 query T rowsort res-time-travel-start
-from delta_scan('${GOLDEN_TABLES_PATH}/time-travel-start/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/time-travel-start/delta')
 
 query T rowsort time-travel-start
-from parquet_scan('${GOLDEN_TABLES_PATH}/time-travel-start/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/time-travel-start/expected/**/*.parquet')
 
 ######## time-travel-start-start20 ########
 
 query T rowsort res-time-travel-start-start20
-from delta_scan('${GOLDEN_TABLES_PATH}/time-travel-start-start20/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/time-travel-start-start20/delta')
 
 query T rowsort time-travel-start-start20
-from parquet_scan('${GOLDEN_TABLES_PATH}/time-travel-start-start20/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/time-travel-start-start20/expected/**/*.parquet')
 
 ######## time-travel-start-start20-start40 ########
 
 query T rowsort res-time-travel-start-start20-start40
-from delta_scan('${GOLDEN_TABLES_PATH}/time-travel-start-start20-start40/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/time-travel-start-start20-start40/delta')
 
 query T rowsort time-travel-start-start20-start40
-from parquet_scan('${GOLDEN_TABLES_PATH}/time-travel-start-start20-start40/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/time-travel-start-start20-start40/expected/**/*.parquet')
 
 ######## v2-checkpoint-json ########
 
 query T rowsort res-v2-checkpoint-json
-from delta_scan('${GOLDEN_TABLES_PATH}/v2-checkpoint-json/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/v2-checkpoint-json/delta')
 
 query T rowsort v2-checkpoint-json
-from parquet_scan('${GOLDEN_TABLES_PATH}/v2-checkpoint-json/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/v2-checkpoint-json/expected/**/*.parquet')
 
 ######## v2-checkpoint-parquet ########
 
 query T rowsort res-v2-checkpoint-parquet
-from delta_scan('${GOLDEN_TABLES_PATH}/v2-checkpoint-parquet/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/v2-checkpoint-parquet/delta')
 
 query T rowsort v2-checkpoint-parquet
-from parquet_scan('${GOLDEN_TABLES_PATH}/v2-checkpoint-parquet/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/v2-checkpoint-parquet/expected/**/*.parquet')
 
 ######## basic-decimal-table ########
 
 query T rowsort res-basic-decimal-table
-from delta_scan('${GOLDEN_TABLES_PATH}/basic-decimal-table/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/basic-decimal-table/delta')
 
 query T rowsort basic-decimal-table
-from parquet_scan('${GOLDEN_TABLES_PATH}/basic-decimal-table/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/basic-decimal-table/expected/**/*.parquet')
 
 ######## basic-decimal-table-legacy ########
 
 query T rowsort res-basic-decimal-table-legacy
-from delta_scan('${GOLDEN_TABLES_PATH}/basic-decimal-table-legacy/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/basic-decimal-table-legacy/delta')
 
 query T rowsort basic-decimal-table-legacy
-from parquet_scan('${GOLDEN_TABLES_PATH}/basic-decimal-table-legacy/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/basic-decimal-table-legacy/expected/**/*.parquet')
 
 ######## table-with-columnmapping-mode-name ########
 
 query T rowsort res-table-with-columnmapping-mode-name
-from delta_scan('${GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-name/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-name/delta')
 
 query T rowsort table-with-columnmapping-mode-name
-from parquet_scan('${GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-name/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-name/expected/**/*.parquet')
 
 ######## table-with-columnmapping-mode-id ########
 
 query T rowsort res-table-with-columnmapping-mode-id
-from delta_scan('${GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-id/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-id/delta')
 
 query T rowsort table-with-columnmapping-mode-id
-from parquet_scan('${GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-id/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/table-with-columnmapping-mode-id/expected/**/*.parquet')
 
 ######## deltalog-invalid-protocol-version ########
 
 statement error
-from delta_scan('${GOLDEN_TABLES_PATH}/deltalog-invalid-protocol-version/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/deltalog-invalid-protocol-version/delta')
 ----
 IO Error: DeltaKernel
 
@@ -533,7 +533,7 @@ IO Error: DeltaKernel
 ######## deltalog-state-reconstruction-from-checkpoint-missing-metadata ########
 
 statement error
-from delta_scan('${GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-from-checkpoint-missing-metadata/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-from-checkpoint-missing-metadata/delta')
 ----
 IO Error: DeltaKernel
 
@@ -541,7 +541,7 @@ IO Error: DeltaKernel
 ######## deltalog-state-reconstruction-from-checkpoint-missing-protocol ########
 
 statement error
-from delta_scan('${GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-from-checkpoint-missing-protocol/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-from-checkpoint-missing-protocol/delta')
 ----
 IO Error: DeltaKernel
 
@@ -549,7 +549,7 @@ IO Error: DeltaKernel
 ######## deltalog-state-reconstruction-without-metadata ########
 
 statement error
-from delta_scan('${GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-without-metadata/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-without-metadata/delta')
 ----
 IO Error: DeltaKernel
 
@@ -557,7 +557,7 @@ IO Error: DeltaKernel
 ######## deltalog-state-reconstruction-without-protocol ########
 
 statement error
-from delta_scan('${GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-without-protocol/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/deltalog-state-reconstruction-without-protocol/delta')
 ----
 IO Error: DeltaKernel
 
@@ -565,7 +565,7 @@ IO Error: DeltaKernel
 ######## no-delta-log-folder ########
 
 statement error
-from delta_scan('${GOLDEN_TABLES_PATH}/no-delta-log-folder/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/no-delta-log-folder/delta')
 ----
 IO Error: DeltaKernel
 
@@ -573,7 +573,7 @@ IO Error: DeltaKernel
 ######## versions-not-contiguous ########
 
 statement error
-from delta_scan('${GOLDEN_TABLES_PATH}/versions-not-contiguous/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/versions-not-contiguous/delta')
 ----
 IO Error: DeltaKernel
 

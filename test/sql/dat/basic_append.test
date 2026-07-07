@@ -16,25 +16,25 @@ require-env DAT_PATH
 
 query I
 SELECT count(*)
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 5
 
 # Cardinality estimation should correctly show this
 query II
-EXPLAIN FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+EXPLAIN FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 physical_plan	<REGEX>:.*5 rows.*
 
 query I
 SELECT count(number)
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 5
 
 query III
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 d	4	4.4
 e	5	5.5
@@ -44,7 +44,7 @@ c	3	3.3
 
 query I
 SELECT letter
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 d
 e
@@ -54,7 +54,7 @@ c
 
 query I
 SELECT number
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 4
 5
@@ -65,7 +65,7 @@ FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 # Now we add a filter that filters out one of the files
 query II
 SELECT letter, number
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 WHERE number < 2
 ----
 a	1
@@ -73,7 +73,7 @@ a	1
 # Now we add a filter that filters out the other file
 query III
 SELECT a_float, letter, number, 
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 WHERE number > 4
 ----
 5.5	e	5
@@ -81,19 +81,19 @@ WHERE number > 4
 # Now we add a filter that filters out all columns
 query III
 SELECT a_float, number, letter
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 WHERE number > 6
 ----
 
 # Filters are reflected in cardinality estimation: filtering out all files shows 0 EC
 query II
-EXPLAIN FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+EXPLAIN FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 WHERE number > 6
 ----
 physical_plan	<REGEX>:.*0 rows.*
 
 query II
-EXPLAIN FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+EXPLAIN FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 WHERE number > 4
 ----
 physical_plan	<REGEX>:.*1 row.*

@@ -17,32 +17,32 @@ require-env GENERATED_DATA_AVAILABLE
 foreach table call_center catalog_page catalog_returns catalog_sales customer customer_demographics customer_address date_dim household_demographics inventory income_band item promotion reason ship_mode store store_returns store_sales time_dim warehouse web_page web_returns web_sales web_site
 
 statement ok
-create view ${table}_delta as from delta_scan('./data/generated/tpcds_sf0_01/${table}/delta_lake');
+create view {table}_delta as from delta_scan('./data/generated/tpcds_sf0_01/{table}/delta_lake');
 
 statement ok
-create view ${table}_parquet as from parquet_scan('./data/generated/tpcds_sf0_01/${table}/parquet/**/*.parquet');
+create view {table}_parquet as from parquet_scan('./data/generated/tpcds_sf0_01/{table}/parquet/**/*.parquet');
 
 # NOTE: switch this to _parquet to easily compare plans while debugging
 statement ok
-create view ${table} as from ${table}_delta
+create view {table} as from {table}_delta
 
 endloop
 
 loop i 1 9
 
 query I
-PRAGMA tpcds(${i})
+PRAGMA tpcds({i})
 ----
-<FILE>:duckdb/extension/tpcds/dsdgen/answers/sf0.01/0${i}.csv
+<FILE>:duckdb/extension/tpcds/dsdgen/answers/sf0.01/0{i}.csv
 
 endloop
 
 loop i 10 99
 
 query I
-PRAGMA tpcds(${i})
+PRAGMA tpcds({i})
 ----
-<FILE>:duckdb/extension/tpcds/dsdgen/answers/sf0.01/${i}.csv
+<FILE>:duckdb/extension/tpcds/dsdgen/answers/sf0.01/{i}.csv
 
 endloop
 

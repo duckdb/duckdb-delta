@@ -10,10 +10,10 @@ require-env GENERATED_DATA_AVAILABLE
 
 # Copy test data over to tmp test dir because we'll be inserting stuff
 statement ok
-from copy_dir('data/generated/simple_table', '__TEST_DIR__/transaction_append/simple_table');
+from copy_dir('data/generated/simple_table', '{TEMP_DIR}/transaction_append/simple_table');
 
 statement ok
-ATTACH '__TEST_DIR__/transaction_append/simple_table/delta_lake' AS simple_table (TYPE delta);
+ATTACH '{TEMP_DIR}/transaction_append/simple_table/delta_lake' AS simple_table (TYPE delta);
 
 query II
 select count(*), sum(i) FROM simple_table;
@@ -21,7 +21,7 @@ select count(*), sum(i) FROM simple_table;
 10	45
 
 query I
-select count(*) FROM glob('__TEST_DIR__/transaction_append/simple_table/delta_lake/**/*.parquet')
+select count(*) FROM glob('{TEMP_DIR}/transaction_append/simple_table/delta_lake/**/*.parquet')
 ----
 1
 
@@ -36,7 +36,7 @@ statement ok
 INSERT INTO simple_table VALUES (5);
 
 query I
-select count(*) FROM glob('__TEST_DIR__/transaction_append/simple_table/delta_lake/**/*.parquet')
+select count(*) FROM glob('{TEMP_DIR}/transaction_append/simple_table/delta_lake/**/*.parquet')
 ----
 2
 
@@ -51,7 +51,7 @@ select count(*), sum(i) FROM simple_table;
 
 # The file is automatically cleaned up by DuckDB on rollback
 query I
-select count(*) FROM glob('__TEST_DIR__/transaction_append/simple_table/delta_lake/**/*.parquet')
+select count(*) FROM glob('{TEMP_DIR}/transaction_append/simple_table/delta_lake/**/*.parquet')
 ----
 1
 
@@ -101,7 +101,7 @@ COMMIT
 
 # there are now 4 files: of which 1 is uncommitted
 query I
-select count(*) FROM glob('__TEST_DIR__/transaction_append/simple_table/delta_lake/**/*.parquet')
+select count(*) FROM glob('{TEMP_DIR}/transaction_append/simple_table/delta_lake/**/*.parquet')
 ----
 4
 
@@ -113,7 +113,7 @@ TransactionContext Error: Failed to commit: DeltaKernel GenericError (5): Generi
 
 # The uncommitted file was cleaned up on rollback
 query I
-select count(*) FROM glob('__TEST_DIR__/transaction_append/simple_table/delta_lake/**/*.parquet')
+select count(*) FROM glob('{TEMP_DIR}/transaction_append/simple_table/delta_lake/**/*.parquet')
 ----
 3
 

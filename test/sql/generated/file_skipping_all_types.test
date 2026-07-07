@@ -13,7 +13,7 @@ foreach type float double
 # using <type> column to skip files
 query II
 EXPLAIN ANALYZE SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping/{type}/delta_lake')
 WHERE
     value1 > 0.5 and
     value2 > 2.5 and
@@ -23,7 +23,7 @@ analyzed_plan	<REGEX>:.*File Filters:.*value1 > 0.5.*value2 > 2.5.*value3 < 3.5.
 
 query III
 SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping/{type}/delta_lake')
 WHERE
     value1 > 0.5 and
     value2 > 2.5 and
@@ -33,7 +33,7 @@ WHERE
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping/{type}/delta_lake')
 WHERE part > 0.5
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 4/5.*
@@ -60,7 +60,7 @@ foreach type int tinyint smallint bigint
 # using <type> column to skip files
 query II
 EXPLAIN ANALYZE SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping/{type}/delta_lake')
 WHERE
     value1 > 1 and
     value2 > 2 and
@@ -70,7 +70,7 @@ analyzed_plan	<REGEX>:.*File Filters:.*value1 > 1.*value2 > 2.*value3 < 4.*Scann
 
 query III
 SELECT value1, value2, value3
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping/{type}/delta_lake')
 WHERE
     value1 > 1 and
     value2 > 2 and
@@ -80,7 +80,7 @@ WHERE
 
 query II
 EXPLAIN ANALYZE SELECT part
-FROM delta_scan('./data/generated/test_file_skipping/${type}/delta_lake')
+FROM delta_scan('./data/generated/test_file_skipping/{type}/delta_lake')
 WHERE part = 0
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*

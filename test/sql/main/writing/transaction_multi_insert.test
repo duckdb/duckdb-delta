@@ -13,10 +13,10 @@ require notwindows
 #
 
 statement ok
-FROM copy_dir('data/inlined/simple_table', '__TEST_DIR__/main/writing/transaction_multi_insert');
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/transaction_multi_insert');
 
 statement ok
-ATTACH '__TEST_DIR__/main/writing/transaction_multi_insert/delta_lake' AS t (TYPE delta);
+ATTACH '{TEMP_DIR}/main/writing/transaction_multi_insert/delta_lake' AS t (TYPE delta);
 
 query II
 SELECT count(*), sum(i) FROM t;
@@ -50,7 +50,7 @@ SELECT count(*), sum(i) FROM t;
 
 # Each INSERT produced its own parquet file (3 new, 1 original)
 query I
-SELECT count(*) FROM glob('__TEST_DIR__/main/writing/transaction_multi_insert/delta_lake/**/*.parquet')
+SELECT count(*) FROM glob('{TEMP_DIR}/main/writing/transaction_multi_insert/delta_lake/**/*.parquet')
 ----
 4
 
@@ -78,6 +78,6 @@ SELECT count(*), sum(i) FROM t;
 
 # Both staged files cleaned up on rollback
 query I
-SELECT count(*) FROM glob('__TEST_DIR__/main/writing/transaction_multi_insert/delta_lake/**/*.parquet')
+SELECT count(*) FROM glob('{TEMP_DIR}/main/writing/transaction_multi_insert/delta_lake/**/*.parquet')
 ----
 4
