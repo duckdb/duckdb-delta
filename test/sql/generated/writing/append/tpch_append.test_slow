@@ -19,32 +19,32 @@ call dbgen(sf=1, suffix='_mem')
 
 # Copy test data over to tmp test dir because we'll be inserting stuff
 statement ok
-from copy_dir('data/generated/tpch_sf0', '__TEST_DIR__/tpch_append/tpch_sf0');
+from copy_dir('data/generated/tpch_sf0', '{TEMP_DIR}/tpch_append/tpch_sf0');
 
 foreach table customer lineitem nation orders part partsupp region supplier
 
 statement ok
-ATTACH '__TEST_DIR__/tpch_append/tpch_sf0/${table}/delta_lake' AS ${table} (TYPE delta);
+ATTACH '{TEMP_DIR}/tpch_append/tpch_sf0/{table}/delta_lake' AS {table} (TYPE delta);
 
 statement ok
-INSERT INTO ${table} from ${table}_mem
+INSERT INTO {table} from {table}_mem
 
 endloop
 
 loop i 1 9
 
 query I
-PRAGMA tpch(${i})
+PRAGMA tpch({i})
 ----
-<FILE>:duckdb/extension/tpch/dbgen/answers/sf1/q0${i}.csv
+<FILE>:duckdb/extension/tpch/dbgen/answers/sf1/q0{i}.csv
 
 endloop
 
 loop i 10 23
 
 query I
-PRAGMA tpch(${i})
+PRAGMA tpch({i})
 ----
-<FILE>:duckdb/extension/tpch/dbgen/answers/sf1/q${i}.csv
+<FILE>:duckdb/extension/tpch/dbgen/answers/sf1/q{i}.csv
 
 endloop

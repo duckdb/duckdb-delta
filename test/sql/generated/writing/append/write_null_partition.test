@@ -11,10 +11,10 @@ require json
 require-env GENERATED_DATA_AVAILABLE
 
 statement ok
-from copy_dir('data/generated/simple_partitioned', '__TEST_DIR__/write_null_partition/simple_partitioned');
+from copy_dir('data/generated/simple_partitioned', '{TEMP_DIR}/write_null_partition/simple_partitioned');
 
 statement ok
-ATTACH '__TEST_DIR__/write_null_partition/simple_partitioned/delta_lake' AS t (TYPE delta);
+ATTACH '{TEMP_DIR}/write_null_partition/simple_partitioned/delta_lake' AS t (TYPE delta);
 
 # Baseline
 query II
@@ -31,7 +31,7 @@ INSERT INTO t VALUES (99, NULL);
 # have "" for the null value.
 query I
 SELECT json_extract_string(add.partitionValues, '$.part')
-FROM read_json('__TEST_DIR__/write_null_partition/simple_partitioned/delta_lake/_delta_log/00000000000000000001.json')
+FROM read_json('{TEMP_DIR}/write_null_partition/simple_partitioned/delta_lake/_delta_log/00000000000000000001.json')
 WHERE add IS NOT NULL;
 ----
 (empty)
@@ -50,4 +50,4 @@ SELECT i FROM t WHERE part IS NULL;
 
 # Confirm that part=NULL directory is encoded as part=__HIVE_DEFAULT_PARTITION__
 statement ok
-FROM read_parquet('__TEST_DIR__/write_null_partition/simple_partitioned/delta_lake/part=__HIVE_DEFAULT_PARTITION__/*.parquet');
+FROM read_parquet('{TEMP_DIR}/write_null_partition/simple_partitioned/delta_lake/part=__HIVE_DEFAULT_PARTITION__/*.parquet');

@@ -20,7 +20,7 @@ mode skip
 
 query I
 SELECT int32
-FROM delta_scan('azure://${AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/dat/all_primitive_types/delta')
+FROM delta_scan('azure://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/dat/all_primitive_types/delta')
 ----
 0
 1
@@ -32,7 +32,7 @@ mode unskip
 
 # Using a secret to set the account name, we can omit the fully qualified url
 statement ok
-CREATE SECRET s1 (TYPE AZURE, ACCOUNT_NAME '${AZURE_STORAGE_ACCOUNT}')
+CREATE SECRET s1 (TYPE AZURE, ACCOUNT_NAME '{AZURE_STORAGE_ACCOUNT}')
 
 query I
 SELECT int32

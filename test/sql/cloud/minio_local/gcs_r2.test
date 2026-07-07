@@ -21,7 +21,7 @@ require-env AWS_DEFAULT_REGION
 require-env AWS_ENDPOINT
 
 statement ok
-set secret_directory='__TEST_DIR__/minio_local_gcs_env'
+set secret_directory='{TEMP_DIR}/minio_local_gcs_env'
 
 statement error
 FROM delta_scan('gcs://test-bucket/dat/all_primitive_types/delta')
@@ -42,10 +42,10 @@ Can not scan a gcs:// gs:// or r2:// url without a secret providing its endpoint
 statement ok
 CREATE SECRET (
     TYPE GCS,
-	KEY_ID '${AWS_ACCESS_KEY_ID}',
-	SECRET '${AWS_SECRET_ACCESS_KEY}',
-	REGION '${AWS_DEFAULT_REGION}',
-	ENDPOINT '${AWS_ENDPOINT}',
+	KEY_ID '{AWS_ACCESS_KEY_ID}',
+	SECRET '{AWS_SECRET_ACCESS_KEY}',
+	REGION '{AWS_DEFAULT_REGION}',
+	ENDPOINT '{AWS_ENDPOINT}',
 	USE_SSL false 
 )
 
@@ -75,10 +75,10 @@ CREATE SECRET s1 (
     TYPE R2,
     PROVIDER config,
     account_id 'some_bogus_account',
-    KEY_ID '${AWS_ACCESS_KEY_ID}',
-	SECRET '${AWS_SECRET_ACCESS_KEY}',
-	REGION '${AWS_DEFAULT_REGION}',
-	ENDPOINT '${AWS_ENDPOINT}',
+    KEY_ID '{AWS_ACCESS_KEY_ID}',
+	SECRET '{AWS_SECRET_ACCESS_KEY}',
+	REGION '{AWS_DEFAULT_REGION}',
+	ENDPOINT '{AWS_ENDPOINT}',
 	USE_SSL false 
 )
 

@@ -13,10 +13,10 @@ statement ok
 CALL enable_logging(level='trace')
 
 statement ok
-CALL copy_dir('data/generated/simple_table', '__TEST_DIR__/late_materialization/simple_table');
+CALL copy_dir('data/generated/simple_table', '{TEMP_DIR}/late_materialization/simple_table');
 
 statement ok
-ATTACH '__TEST_DIR__/late_materialization/simple_table/delta_lake' AS simple_table (TYPE delta);
+ATTACH '{TEMP_DIR}/late_materialization/simple_table/delta_lake' AS simple_table (TYPE delta);
 
 loop i 0 10
 

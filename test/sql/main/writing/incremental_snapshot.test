@@ -21,10 +21,10 @@ require notwindows
 
 # simple_table copy gives us a v0 with 10 rows
 statement ok
-FROM copy_dir('data/inlined/simple_table', '__TEST_DIR__/main/writing/incremental_snapshot');
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/incremental_snapshot');
 
 statement ok
-ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t (TYPE delta);
+ATTACH '{TEMP_DIR}/main/writing/incremental_snapshot/delta_lake' AS t (TYPE delta);
 
 # v1, v2, then a checkpoint at v2
 statement ok
@@ -70,7 +70,7 @@ SET delta_kernel_logging=true;
 #
 
 statement ok
-ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t3 (TYPE delta);
+ATTACH '{TEMP_DIR}/main/writing/incremental_snapshot/delta_lake' AS t3 (TYPE delta);
 
 # --- v2: served entirely from checkpoint@v2; no commit json read ---
 statement ok
@@ -149,7 +149,7 @@ CALL truncate_duckdb_logs();
 #
 
 statement ok
-ATTACH '__TEST_DIR__/main/writing/incremental_snapshot/delta_lake' AS t4 (TYPE delta);
+ATTACH '{TEMP_DIR}/main/writing/incremental_snapshot/delta_lake' AS t4 (TYPE delta);
 
 # Load HEAD (v5, 15 rows) to populate the schema-level cached_table
 query I

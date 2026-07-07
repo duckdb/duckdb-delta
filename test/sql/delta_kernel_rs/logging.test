@@ -22,7 +22,7 @@ statement ok
 SET enable_logging=true;
 
 statement ok
-SELECT * FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
+SELECT * FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
 
 # No kernel logging available yet: we need to set delta_kernel_logging=true
 #SELECT count(*) FROM duckdb_logs WHERE type='DeltaKernel'
@@ -41,7 +41,7 @@ statement ok
 SET logging_level = 'TRACE';
 
 statement ok
-SELECT * FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
+SELECT * FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
 
 # Now we have log!
 query I

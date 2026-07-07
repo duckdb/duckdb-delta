@@ -9,7 +9,7 @@ require delta
 require-env DAT_PATH
 
 statement ok
-ATTACH '${DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta' as dt (TYPE delta)
+ATTACH '{DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta' as dt (TYPE delta)
 
 # We can query the table by the catalog name
 query I
@@ -97,7 +97,7 @@ DETACH dt
 
 # Test the PIN_SNAPSHOT option: the snapshot is now pinned on attaching
 statement ok
-ATTACH '${DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta' as dt (TYPE delta, PIN_SNAPSHOT)
+ATTACH '{DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta' as dt (TYPE delta, PIN_SNAPSHOT)
 
 # This query will now reuse
 query I
