@@ -3,6 +3,7 @@
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
 
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/extension_helper.hpp"

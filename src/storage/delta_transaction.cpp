@@ -9,6 +9,9 @@
 
 #include "storage/delta_catalog.hpp"
 #include "duckdb/main/client_properties.hpp"
+#include "duckdb/logging/logging.hpp"
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"

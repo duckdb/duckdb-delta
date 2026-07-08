@@ -4,6 +4,7 @@
 #include "duckdb/common/path.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
+#include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/planner/operator/logical_copy_to_file.hpp"

@@ -9,6 +9,8 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/parser/parsed_data/attach_info.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/extension_helper.hpp"

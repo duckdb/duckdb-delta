@@ -1,5 +1,7 @@
 #include "delta_kernel_ffi.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
