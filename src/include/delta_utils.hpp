@@ -13,7 +13,6 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/planner/filter/struct_filter.hpp"
 #include <iostream>
-#include <type_traits>
 
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 
@@ -395,33 +394,6 @@ struct TemplatedUniqueKernelPointer : public UniqueKernelPointer<KernelType> {
 
 typedef TemplatedUniqueKernelPointer<ffi::SharedSnapshot, ffi::free_snapshot> KernelSnapshot;
 typedef TemplatedUniqueKernelPointer<ffi::SharedExternEngine, ffi::free_engine> KernelExternEngine;
-
-// PROTOTYPE: shared-ownership wrapper around KernelExternEngine.
-//
-// A kernel engine owns the engine-scoped _delta_log listing / object-store cache, so reusing the same
-// engine across incremental snapshots avoids re-listing the log dir and re-reading base commit files.
-// KernelExternEngine is a move-only unique handle (the underlying ffi::SharedExternEngine is freed via
-// free_engine exactly once), so it cannot be copied to be shared. We wrap it in a duckdb shared_ptr so
-// ownership can be shared between the previous and the next DeltaMultiFileList; free_engine still runs
-// exactly once, when the last wrapper referencing the engine is destroyed. The .get() accessor is
-// preserved so existing call sites (`x.extern_engine.get()`) are unchanged.
-struct SharedKernelExternEngine {
-	SharedKernelExternEngine() = default;
-	// Take ownership of a freshly-built kernel engine handle (same argument KernelExternEngine accepts).
-	// SFINAE'd so it never hijacks the implicit copy/move constructors for same-type arguments.
-	template <typename T, typename = typename std::enable_if<
-	                          !std::is_same<typename std::decay<T>::type, SharedKernelExternEngine>::value>::type>
-	SharedKernelExternEngine(T raw_handle) : engine(make_shared_ptr<KernelExternEngine>(std::move(raw_handle))) {
-	}
-	ffi::SharedExternEngine *get() const {
-		return engine ? engine->get() : nullptr;
-	}
-	explicit operator bool() const {
-		return engine && engine->get() != nullptr;
-	}
-	shared_ptr<KernelExternEngine> engine;
-};
-
 typedef TemplatedUniqueKernelPointer<ffi::SharedScan, ffi::free_scan> KernelScan;
 typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadataIterator, ffi::free_scan_metadata_iter>
     KernelScanDataIterator;

@@ -539,9 +539,6 @@ DeltaMultiFileList::DeltaMultiFileList(ClientContext &context_p, const string &p
 
 	if (previous) {
 		old_snapshot = previous->snapshot;
-		// PROTOTYPE: also capture the previous engine (shares ownership via shared_ptr) so InitializeSnapshot
-		// can reuse it (and its engine-scoped _delta_log cache) on the incremental forward path.
-		old_engine = previous->extern_engine;
 	}
 	client_ctx = weak_ptr<ClientContext>(context_p.shared_from_this());
 }
@@ -708,23 +705,8 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	auto client_ctx_shared = client_ctx.lock();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
 
-	// PROTOTYPE: reuse the previous kernel engine (and its engine-scoped _delta_log listing / object-store
-	// cache) on the incremental forward path instead of building a cold engine. A fresh engine has an empty
-	// cache, forcing the subsequent SCAN to re-list _delta_log and re-read base commit files even when we
-	// already parsed them for the previous snapshot. Reuse only when we have a previous engine AND are
-	// advancing to an equal-or-newer version (or HEAD). Backward time-travel / cold path build fresh.
-	bool reuse_engine = false;
-	if (old_snapshot && old_engine) {
-		auto old_snapshot_ref = old_snapshot->GetLockingRef();
-		auto old_version = ffi::version(old_snapshot_ref.GetPtr());
-		reuse_engine = (version == DConstants::INVALID_INDEX || version >= old_version);
-	}
-	if (reuse_engine) {
-		extern_engine = old_engine; // shares ownership; engine stays valid for snapshot build + InitializeScan
-	} else {
-		auto interface_builder = CreateBuilder(*client_ctx_shared, paths[0].path);
-		extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
-	}
+	auto interface_builder = CreateBuilder(*client_ctx_shared, paths[0].path);
+	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
 
 	if (!snapshot) {
 		ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
