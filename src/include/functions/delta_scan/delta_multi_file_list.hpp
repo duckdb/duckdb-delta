@@ -122,6 +122,7 @@ public:
 	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const override;
 	DeltaFileMetaData &GetMetaData(idx_t index) const;
 	idx_t GetVersion();
+	void PinVersion(idx_t v);
 	vector<string> GetPartitionColumns();
 
 	vector<DeltaMultiFileColumnDefinition> &GetLazyLoadedGlobalColumns() const;
@@ -159,6 +160,7 @@ public: // TODO: clean up
 	mutable shared_ptr<SharedKernelSnapshot> snapshot;
 
 	mutable unique_ptr<DeltaLogPathArray> delta_log_path;
+	mutable int64_t max_catalog_version = -1;
 
 protected:
 	// Note: Nearly this entire class is mutable because it represents a lazily expanded list of files that is logically
