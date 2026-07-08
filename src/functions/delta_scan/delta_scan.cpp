@@ -113,10 +113,10 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 		function.named_parameters["pushdown_filters"] = LogicalType::VARCHAR;
 		function.named_parameters["log_tail"] = KernelUtils::GetLogPathType();
 
-		function.name = "delta_scan";
+		function.SetName("delta_scan");
 	}
 
-	parquet_scan_copy.name = "delta_scan";
+	parquet_scan_copy.SetName("delta_scan");
 	return parquet_scan_copy;
 }
 

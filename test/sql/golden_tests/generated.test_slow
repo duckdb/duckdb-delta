@@ -13,39 +13,39 @@ require-env GOLDEN_TABLES_PATH
 ######## parquet-decimal-dictionaries ########
 
 query T rowsort res-parquet-decimal-dictionaries
-from delta_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/delta')
 
 query T rowsort parquet-decimal-dictionaries
-from parquet_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/expected/**/*.parquet')
 
 ######## parquet-decimal-dictionaries ########
 
 query T rowsort res-parquet-decimal-dictionaries
-from delta_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/delta')
 
 query T rowsort parquet-decimal-dictionaries
-from parquet_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries/expected/**/*.parquet')
 
 ######## parquet-decimal-dictionaries-v1 ########
 
 query T rowsort res-parquet-decimal-dictionaries-v1
-from delta_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v1/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v1/delta')
 
 query T rowsort parquet-decimal-dictionaries-v1
-from parquet_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v1/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v1/expected/**/*.parquet')
 
 ######## parquet-decimal-dictionaries-v2 ########
 
 query T rowsort res-parquet-decimal-dictionaries-v2
-from delta_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v2/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v2/delta')
 
 query T rowsort parquet-decimal-dictionaries-v2
-from parquet_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v2/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-dictionaries-v2/expected/**/*.parquet')
 
 ######## parquet-decimal-type ########
 
 query T rowsort res-parquet-decimal-type
-from delta_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-type/delta')
+from delta_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-type/delta')
 
 query T rowsort parquet-decimal-type
-from parquet_scan('${GOLDEN_TABLES_PATH}/parquet-decimal-type/expected/**/*.parquet')
+from parquet_scan('{GOLDEN_TABLES_PATH}/parquet-decimal-type/expected/**/*.parquet')

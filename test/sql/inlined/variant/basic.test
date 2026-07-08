@@ -8,10 +8,10 @@ require delta
 require notwindows
 
 statement ok
-from copy_dir('data/inlined/variant/basic', '__TEST_DIR__/data/inlined/variant/basic');
+from copy_dir('data/inlined/variant/basic', '{TEMP_DIR}/data/inlined/variant/basic');
 
 statement ok
-ATTACH '__TEST_DIR__/data/inlined/variant/basic' AS delta_table (TYPE delta);
+ATTACH '{TEMP_DIR}/data/inlined/variant/basic' AS delta_table (TYPE delta);
 
 query IIIIII
 DESCRIBE delta_table;
@@ -28,7 +28,7 @@ select * from delta_table;
 query I
 select stats(data) from delta_table;
 ----
-shredding_state: INCONSISTENT[Has Null: true, Has No Null: true]
+{'has_no_null': true, 'has_null': true, 'shredding_state': INCONSISTENT}
 
 query I
 select variant_typeof(data) from delta_table;

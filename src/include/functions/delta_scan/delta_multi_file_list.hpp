@@ -16,6 +16,7 @@
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 
 namespace duckdb {
 
@@ -37,9 +38,46 @@ struct DeltaFileMetaData {
 	idx_t cardinality = DConstants::INVALID_INDEX;
 	ffi::KernelBoolSlice selection_vector = {nullptr, 0};
 
-	case_insensitive_map_t<Value> partition_map;
+	identifier_map_t<Value> partition_map;
 
 	unique_ptr<vector<unique_ptr<ParsedExpression>>> transform_expression;
+};
+
+struct DeltaTableFilters {
+	using filter_set_t = unordered_map<idx_t, unique_ptr<ExpressionFilter>>;
+	using iterator = filter_set_t::iterator;
+	using const_iterator = filter_set_t::const_iterator;
+
+public:
+	bool HasFilters() const {
+		return !table_filters.empty();
+	}
+	void PushFilter(column_t column_idx, unique_ptr<ExpressionFilter> table_filter) {
+		table_filters[column_idx] = std::move(table_filter);
+	}
+	optional_ptr<const ExpressionFilter> TryGetFilterByColumnIndex(column_t column_idx) const {
+		auto entry = table_filters.find(column_idx);
+		if (entry == table_filters.end()) {
+			return nullptr;
+		}
+		return entry->second.get();
+	}
+
+	iterator begin() { // NOLINT: match stl API
+		return table_filters.begin();
+	}
+	iterator end() { // NOLINT: match stl API
+		return table_filters.end();
+	}
+	const_iterator begin() const { // NOLINT: match stl API
+		return table_filters.begin();
+	}
+	const_iterator end() const { // NOLINT: match stl API
+		return table_filters.end();
+	}
+
+private:
+	filter_set_t table_filters;
 };
 
 // Constraint only for internal delta extension use
@@ -65,17 +103,18 @@ public:
 
 	//! MultiFileList API
 public:
-	void Bind(vector<LogicalType> &return_types, vector<string> &names);
+	void Bind(vector<LogicalType> &return_types, vector<Identifier> &names);
 	unique_ptr<MultiFileList> ComplexFilterPushdown(ClientContext &context, const MultiFileOptions &options,
 	                                                MultiFilePushdownInfo &info,
 	                                                vector<unique_ptr<Expression>> &filters) const override;
 
 	unique_ptr<MultiFileList> DynamicFilterPushdown(ClientContext &context, const MultiFileOptions &options,
-	                                                const vector<string> &names, const vector<LogicalType> &types,
+	                                                const vector<Identifier> &names, const vector<LogicalType> &types,
 	                                                const vector<column_t> &column_ids,
 	                                                TableFilterSet &filters) const override;
 
-	unique_ptr<DeltaMultiFileList> PushdownInternal(ClientContext &context, TableFilterSet &new_filters) const;
+	unique_ptr<DeltaMultiFileList> PushdownInternal(ClientContext &context, TableFilterSet &new_filters,
+	                                                vector<column_t> column_indexes) const;
 
 	vector<OpenFileInfo> GetAllFiles() const override;
 	FileExpandResult GetExpandResult() const override;
@@ -148,7 +187,7 @@ protected:
 	mutable vector<unique_ptr<DeltaFileMetaData>> metadata;
 
 	mutable vector<OpenFileInfo> resolved_files;
-	mutable TableFilterSet table_filters;
+	mutable DeltaTableFilters table_filters;
 
 	mutable vector<NestedNotNullConstraint> not_null_constraints;
 	mutable bool has_null_constraints_in_arrays = false;

@@ -58,16 +58,17 @@ void DeltaMacros::RegisterTableMacro(ExtensionLoader &loader, const string &name
 
 	auto func = make_uniq<TableMacroFunction>(std::move(node));
 	for (auto &param : params) {
-		func->parameters.push_back(make_uniq<ColumnRefExpression>(param));
+		func->parameters.push_back(make_uniq<ColumnRefExpression>(Identifier(param)));
 	}
 
 	for (auto &param : named_params) {
-		func->default_parameters[param.first] = make_uniq<ConstantExpression>(param.second);
+		func->default_parameters[Identifier(param.first)] = make_uniq<ConstantExpression>(Value(param.second));
 	}
 
 	CreateMacroInfo info(CatalogType::TABLE_MACRO_ENTRY);
-	info.schema = DEFAULT_SCHEMA;
-	info.name = name;
+	info.SetQualifiedName(
+	    QualifiedName(info.GetQualifiedName().Catalog(), Identifier::DefaultSchema(), info.GetQualifiedName().Name()));
+	info.SetFunctionName(Identifier(name));
 	info.temporary = true;
 	info.internal = true;
 	info.macros.push_back(std::move(func));
@@ -76,11 +77,9 @@ void DeltaMacros::RegisterTableMacro(ExtensionLoader &loader, const string &name
 }
 
 static DefaultMacro delta_macros[] = {
-    {DEFAULT_SCHEMA,
-     "parse_delta_filter_logline",
-     {"x", nullptr},
-     {{nullptr, nullptr}},
-     "x::STRUCT(path VARCHAR, type VARCHAR, filters_before VARCHAR[], filters_after VARCHAR[], files_before BIGINT, "
+    {DEFAULT_SCHEMA, "parse_delta_filter_logline",
+     "(x) AS x::STRUCT(path VARCHAR, type VARCHAR, filters_before VARCHAR[], filters_after VARCHAR[], files_before "
+     "BIGINT, "
      "files_after BIGINT)"},
 };
 

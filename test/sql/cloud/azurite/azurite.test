@@ -13,14 +13,14 @@ require-env AZURE_STORAGE_CONNECTION_STRING
 
 # Set connection string from env var
 statement ok
-CREATE SECRET (TYPE AZURE, CONNECTION_STRING '${AZURE_STORAGE_CONNECTION_STRING}');
+CREATE SECRET (TYPE AZURE, CONNECTION_STRING '{AZURE_STORAGE_CONNECTION_STRING}');
 
 # We need a connection string to do requests
 foreach prefix azure:// az://
 
 query I
 SELECT int32
-FROM delta_scan('${prefix}delta-testing-private/dat/all_primitive_types/delta')
+FROM delta_scan('{prefix}delta-testing-private/dat/all_primitive_types/delta')
 ----
 0
 1

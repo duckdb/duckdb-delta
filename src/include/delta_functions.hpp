@@ -15,7 +15,7 @@ class ExtensionLoader;
 
 class DeltaBaseMetadataFunction : public TableFunction {
 public:
-	DeltaBaseMetadataFunction(string name, table_function_bind_t bind);
+	DeltaBaseMetadataFunction(Identifier name, table_function_bind_t bind);
 };
 
 class DeltaFileListFunction : public DeltaBaseMetadataFunction {
