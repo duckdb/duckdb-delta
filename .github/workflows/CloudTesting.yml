@@ -11,6 +11,14 @@ env:
   GEN: Ninja
   VCPKG_COMMIT_ID: 84bab45d415d22042bd0b9081aea57f362da3f35
   VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+  # Pull prebuilt vcpkg packages (OpenSSL etc.) from duckdb's hosted read-only cache,
+  # same as LocalTesting -- avoids compiling them from source every run.
+  VCPKG_BINARY_SOURCES: clear;http,https://vcpkg-cache.duckdb.org,read
+  # sccache caches BOTH C++ (duckdb auto-detects it, CMakeLists.txt NAMES ccache sccache)
+  # and Rust (delta-kernel via RUSTC_WRAPPER); GHA backend is shared across jobs & runs.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: true
+  CARGO_INCREMENTAL: 0 # sccache cannot cache incremental compilation
 
 jobs:
   azure-tests-linux:
@@ -43,11 +51,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: 'true'
+          submodules: true
 
-      - uses: hendrikmuhs/ccache-action@main
-        with:
-          key: ${{ github.job }}-${{ matrix.duckdb_arch }}
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.1
@@ -56,9 +63,11 @@ jobs:
 
       - name: Configure OpenSSL for Rust
         run: |
-          echo "OPENSSL_ROOT_DIR=`pwd`/build/release/vcpkg_installed/x64-linux" >> $GITHUB_ENV
-          echo "OPENSSL_DIR=`pwd`/build/release/vcpkg_installed/x64-linux" >> $GITHUB_ENV
-          echo "OPENSSL_USE_STATIC_LIBS=true" >> $GITHUB_ENV
+          cat >> "$GITHUB_ENV" <<EOF
+          OPENSSL_ROOT_DIR="$PWD/build/release/vcpkg_installed/x64-linux"
+          OPENSSL_DIR="$PWD/build/release/vcpkg_installed/x64-linux"
+          OPENSSL_USE_STATIC_LIBS=true
+          EOF
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -69,7 +78,7 @@ jobs:
 
       - name: Test with Service Principal (SPN) in env vars
         run: |
-          ${ENV_AZURE} ./build/release/test/unittest `pwd`/test/sql/cloud/*
+          "$ENV_AZURE" ./build/release/test/unittest 'test/sql/cloud/*'
 
       - name: Test with SPN logged in in azure-cli
         env:
@@ -77,13 +86,14 @@ jobs:
         run: |
           # note: first CLI login, then allow env_azure to setup several key (non secret) vars, then clear SECRET after env script
           # to prevent accidental use of env secrets.
-          az login --service-principal --user="${AZURE_CLIENT_ID}" --password="${AZURE_CLIENT_SECRET}" --tenant="${AZURE_TENANT_ID}"
-          ${ENV_AZURE} env -u AZURE_CLIENT_SECRET ./build/release/test/unittest "test/sql/cloud/azure_writes.test"
+          az login --service-principal --user="$AZURE_CLIENT_ID" --password="$AZURE_CLIENT_SECRET" --tenant="$AZURE_TENANT_ID"
+          "$ENV_AZURE" env -u AZURE_CLIENT_SECRET ./build/release/test/unittest test/sql/cloud/azure_writes.test
 
       - name: Test with Access Token in env vars
         run: |
-          export AZURE_ACCESS_TOKEN=`az account get-access-token --resource https://storage.azure.com --query accessToken --output tsv`        
-          ${ENV_AZURE} env -u AZURE_CLIENT_SECRET ./build/release/test/unittest `pwd`/test/sql/cloud/*          
+          AZURE_ACCESS_TOKEN=$(az account get-access-token --resource https://storage.azure.com --query accessToken --output tsv)
+          export AZURE_ACCESS_TOKEN
+          "$ENV_AZURE" env -u AZURE_CLIENT_SECRET ./build/release/test/unittest 'test/sql/cloud/*'
 
       - name: Log out azure-cli
         if: always()
@@ -95,4 +105,4 @@ jobs:
           AZURE_STORAGE_ACCOUNT: ${{secrets.AZURE_STORAGE_ACCOUNT}}
           DUCKDB_AZURE_PUBLIC_CONTAINER_AVAILABLE: 1
         run: |
-          python3 duckdb/scripts/ci/run_tests.py ./build/release/test/unittest "$PWD/test/sql/cloud/*"
+          python3 duckdb/scripts/ci/run_tests.py ./build/release/test/unittest 'test/sql/cloud/*'
