@@ -464,12 +464,12 @@ unique_ptr<ParsedExpression> ExpressionVisitor::MakeStructPatchOp(const string &
 	// encoding.
 	FieldList children_values = std::move(insertions);
 
+	children_values.push_back(
+	    make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("keep_input"),
+	                                    make_uniq<ConstantExpression>(Value::BOOLEAN(keep_input))));
 	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
-	                                                           make_uniq<ColumnRefExpression>("keep_input"),
-	                                                           make_uniq<ConstantExpression>(Value::BOOLEAN(keep_input))));
-	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
-	                                                           make_uniq<ColumnRefExpression>("optional"),
-	                                                           make_uniq<ConstantExpression>(Value::BOOLEAN(optional))));
+	                                                          make_uniq<ColumnRefExpression>("optional"),
+	                                                          make_uniq<ConstantExpression>(Value::BOOLEAN(optional))));
 
 	unique_ptr<ParsedExpression> field_name_val;
 	if (field_name) {
@@ -480,15 +480,16 @@ unique_ptr<ParsedExpression> ExpressionVisitor::MakeStructPatchOp(const string &
 	children_values.push_back(make_uniq<ComparisonExpression>(
 	    ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("field_name"), std::move(field_name_val)));
 
-	children_values.push_back(make_uniq<ComparisonExpression>(
-	    ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("kind"), make_uniq<ConstantExpression>(Value(kind))));
+	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
+	                                                          make_uniq<ColumnRefExpression>("kind"),
+	                                                          make_uniq<ConstantExpression>(Value(kind))));
 
 	return make_uniq<FunctionExpression>("delta_transform_op", std::move(children_values));
 }
 
-void ExpressionVisitor::VisitStructPatchExpression(void *state, uintptr_t sibling_list_id,
-                                                    uintptr_t input_path_list_id, uintptr_t prepended_field_list_id,
-                                                    uintptr_t field_patch_list_id, uintptr_t appended_field_list_id) {
+void ExpressionVisitor::VisitStructPatchExpression(void *state, uintptr_t sibling_list_id, uintptr_t input_path_list_id,
+                                                   uintptr_t prepended_field_list_id, uintptr_t field_patch_list_id,
+                                                   uintptr_t appended_field_list_id) {
 	auto state_cast = static_cast<ExpressionVisitor *>(state);
 
 	auto field_patches = state_cast->TakeFieldList(field_patch_list_id);
@@ -506,7 +507,8 @@ void ExpressionVisitor::VisitStructPatchExpression(void *state, uintptr_t siblin
 
 	FieldList children_values;
 	if (!prepended->empty()) {
-		children_values.push_back(state_cast->MakeStructPatchOp("prepend", nullptr, std::move(*prepended), false, false));
+		children_values.push_back(
+		    state_cast->MakeStructPatchOp("prepend", nullptr, std::move(*prepended), false, false));
 	}
 	for (auto &field_patch : *field_patches) {
 		children_values.push_back(std::move(field_patch));
