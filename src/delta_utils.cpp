@@ -72,6 +72,9 @@ ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor 
 	visitor.visit_literal_binary = &VisitBinaryLiteral;
 	visitor.visit_literal_null = &VisitNullLiteral;
 	visitor.visit_literal_array = &VisitArrayLiteral;
+	// visit_array constructs a non-literal ARRAY[...] expression; the child-list-to-list_value()
+	// logic is identical to the literal-array case.
+	visitor.visit_array = &VisitArrayLiteral;
 
 	visitor.visit_and = VisitVariadicExpression<ExpressionType::CONJUNCTION_AND, ConjunctionExpression>();
 	visitor.visit_or = VisitVariadicExpression<ExpressionType::CONJUNCTION_OR, ConjunctionExpression>();
@@ -93,8 +96,8 @@ ffi::EngineExpressionVisitor ExpressionVisitor::CreateVisitor(ExpressionVisitor 
 	visitor.visit_column = VisitColumnExpression;
 	visitor.visit_struct_expr = VisitStructExpression;
 
-	visitor.visit_transform_expr = VisitTransformExpression;
-	visitor.visit_field_transform = VisitFieldTransform;
+	visitor.visit_struct_patch_expr = VisitStructPatchExpression;
+	visitor.visit_field_patch = VisitFieldPatch;
 
 	visitor.visit_literal_struct = VisitStructLiteral;
 
@@ -257,7 +260,10 @@ void ExpressionVisitor::VisitBinaryLiteral(void *state, uintptr_t sibling_list_i
 	auto expression = make_uniq<ConstantExpression>(Value::BLOB(buffer, len));
 	static_cast<ExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
-void ExpressionVisitor::VisitNullLiteral(void *state, uintptr_t sibling_list_id) {
+void ExpressionVisitor::VisitNullLiteral(void *state, uintptr_t sibling_list_id, uint8_t type_tag, uint8_t precision,
+                                         uint8_t scale) {
+	// type_tag/precision/scale identify the kernel-side data type of the null; we don't need it
+	// since DuckDB's untyped NULL constant is cast to the correct type by the surrounding context.
 	auto expression = make_uniq<ConstantExpression>(Value());
 	static_cast<ExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
@@ -448,66 +454,103 @@ void ExpressionVisitor::VisitStructExpression(void *state, uintptr_t sibling_lis
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
-void ExpressionVisitor::VisitTransformExpression(void *state, uintptr_t sibling_list_id, uintptr_t input_path_list_id,
-                                                 uintptr_t child_list_id) {
-	auto state_cast = static_cast<ExpressionVisitor *>(state);
+unique_ptr<ParsedExpression> ExpressionVisitor::MakeStructPatchOp(const string &kind, const string *field_name,
+                                                                  FieldList &&insertions, bool keep_input,
+                                                                  bool optional) {
+	// Encode as "delta_transform_op(<insertion values...>, keep_input, optional, field_name, kind)".
+	// `kind` is one of "prepend"/"field"/"append" and disambiguates the unnamed prepend/append
+	// patches (position-only, no field_name/keep_input/optional semantics) from named field
+	// patches. See FindPartitionValues in delta_multi_file_list.cpp for the consumer of this
+	// encoding.
+	FieldList children_values = std::move(insertions);
 
-	auto children_values = state_cast->TakeFieldList(child_list_id);
-	if (!children_values) {
-		return;
-	}
+	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
+	                                                           make_uniq<ColumnRefExpression>("keep_input"),
+	                                                           make_uniq<ConstantExpression>(Value::BOOLEAN(keep_input))));
+	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
+	                                                           make_uniq<ColumnRefExpression>("optional"),
+	                                                           make_uniq<ConstantExpression>(Value::BOOLEAN(optional))));
 
-	if (input_path_list_id) {
-		auto input_path = state_cast->TakeFieldList(input_path_list_id);
-
-		if (input_path->size() != 1) {
-			state_cast->error = ErrorData("Expected exactly one input path for transform expression");
-			return;
-		}
-		children_values->push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
-		                                                           make_uniq<ColumnRefExpression>("input_path"),
-		                                                           std::move(input_path->front())));
-	}
-
-	unique_ptr<ParsedExpression> expression =
-	    make_uniq<FunctionExpression>("delta_kernel_transform_expression", std::move(*children_values));
-	state_cast->AppendToList(sibling_list_id, std::move(expression));
-}
-
-void ExpressionVisitor::VisitFieldTransform(void *state, uintptr_t sibling_list_id,
-                                            const ffi::KernelStringSlice *field_name, uintptr_t expr_list_id,
-                                            bool is_replace) {
-	auto state_cast = static_cast<ExpressionVisitor *>(state);
-
-	unique_ptr<FieldList> children_values;
-
-	if (expr_list_id) {
-		children_values = state_cast->TakeFieldList(expr_list_id);
-		if (!children_values) {
-			return;
-		}
-	} else {
-		children_values = make_uniq<FieldList>();
-	}
-
-	// Create is_insert_value
-	children_values->push_back(
-	    make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("is_replace"),
-	                                    make_uniq<ConstantExpression>(Value::BOOLEAN(is_replace))));
-
-	// Create field name expr
 	unique_ptr<ParsedExpression> field_name_val;
 	if (field_name) {
-		string field_name_str = KernelUtils::FromDeltaString(*field_name);
-		field_name_val = make_uniq<ConstantExpression>(Value(field_name_str));
+		field_name_val = make_uniq<ConstantExpression>(Value(*field_name));
 	} else {
 		field_name_val = make_uniq<ConstantExpression>(Value());
 	}
-	children_values->push_back(make_uniq<ComparisonExpression>(
+	children_values.push_back(make_uniq<ComparisonExpression>(
 	    ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("field_name"), std::move(field_name_val)));
 
+	children_values.push_back(make_uniq<ComparisonExpression>(
+	    ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("kind"), make_uniq<ConstantExpression>(Value(kind))));
+
+	return make_uniq<FunctionExpression>("delta_transform_op", std::move(children_values));
+}
+
+void ExpressionVisitor::VisitStructPatchExpression(void *state, uintptr_t sibling_list_id,
+                                                    uintptr_t input_path_list_id, uintptr_t prepended_field_list_id,
+                                                    uintptr_t field_patch_list_id, uintptr_t appended_field_list_id) {
+	auto state_cast = static_cast<ExpressionVisitor *>(state);
+
+	auto field_patches = state_cast->TakeFieldList(field_patch_list_id);
+	if (!field_patches) {
+		return;
+	}
+	auto prepended = state_cast->TakeFieldList(prepended_field_list_id);
+	if (!prepended) {
+		return;
+	}
+	auto appended = state_cast->TakeFieldList(appended_field_list_id);
+	if (!appended) {
+		return;
+	}
+
+	FieldList children_values;
+	if (!prepended->empty()) {
+		children_values.push_back(state_cast->MakeStructPatchOp("prepend", nullptr, std::move(*prepended), false, false));
+	}
+	for (auto &field_patch : *field_patches) {
+		children_values.push_back(std::move(field_patch));
+	}
+	if (!appended->empty()) {
+		children_values.push_back(state_cast->MakeStructPatchOp("append", nullptr, std::move(*appended), false, false));
+	}
+
+	// Unlike prepended/field_patch/appended lists, the kernel always allocates a (possibly empty)
+	// input-path list, even when there is no input path: 0 items means "no path", not "no list".
+	auto input_path = state_cast->TakeFieldList(input_path_list_id);
+	if (!input_path) {
+		return;
+	}
+	if (input_path->size() == 1) {
+		children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
+		                                                          make_uniq<ColumnRefExpression>("input_path"),
+		                                                          std::move(input_path->front())));
+	} else if (!input_path->empty()) {
+		state_cast->error = ErrorData("Expected zero or one input path for struct patch expression");
+		return;
+	}
+
 	unique_ptr<ParsedExpression> expression =
-	    make_uniq<FunctionExpression>("delta_transform_op", std::move(*children_values));
+	    make_uniq<FunctionExpression>("delta_kernel_transform_expression", std::move(children_values));
+	state_cast->AppendToList(sibling_list_id, std::move(expression));
+}
+
+void ExpressionVisitor::VisitFieldPatch(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice field_name,
+                                        uintptr_t insertion_expr_list_id, bool keep_input, bool optional) {
+	auto state_cast = static_cast<ExpressionVisitor *>(state);
+
+	FieldList insertions;
+	if (insertion_expr_list_id) {
+		auto taken = state_cast->TakeFieldList(insertion_expr_list_id);
+		if (!taken) {
+			return;
+		}
+		insertions = std::move(*taken);
+	}
+
+	string field_name_str = KernelUtils::FromDeltaString(field_name);
+	auto expression =
+	    state_cast->MakeStructPatchOp("field", &field_name_str, std::move(insertions), keep_input, optional);
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
@@ -574,6 +617,7 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 	visitor.visit_date = VisitSimpleType<LogicalType::DATE>();
 	visitor.visit_timestamp = VisitSimpleType<LogicalType::TIMESTAMP_TZ>();
 	visitor.visit_timestamp_ntz = VisitSimpleType<LogicalType::TIMESTAMP>();
+	visitor.visit_void = VisitSimpleType<LogicalType::SQLNULL>();
 	visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                                  bool is_nullable, const ffi::CStringMap *metadata)) &
 	                        VisitVariant;

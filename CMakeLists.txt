@@ -145,7 +145,7 @@ set(CARGO_PROFILE "$<IF:$<CONFIG:Debug>,dev,release>")
 ExternalProject_Add(
   ${KERNEL_NAME}
   GIT_REPOSITORY "https://github.com/delta-io/delta-kernel-rs"
-  GIT_TAG v0.21.0
+  GIT_TAG v0.25.0
   # Prints the env variables passed to the cargo build to the terminal, useful
   # in debugging because passing them through CMake is an error-prone mess
   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS}
