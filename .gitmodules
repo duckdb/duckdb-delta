@@ -1,7 +1,10 @@
 [submodule "duckdb"]
 	path = duckdb
-	url = https://github.com/duckdb/duckdb
-	branch = main
+	# Fork: carries the core-DuckDB changes the plan-based scan depends on (BY_FIELD_ID_OR_NAME
+	# column mapping, table-arg child on LOGICAL_EXTENSION_OPERATOR, streaming sink+source). The
+	# pinned submodule commit lives on this fork's prototype/duckdb-plan-based-scan branch.
+	url = https://github.com/OussamaSaoudi/duckdb
+	branch = prototype/duckdb-plan-based-scan
 [submodule "extension-ci-tools"]
 	path = extension-ci-tools
 	url = https://github.com/duckdb/extension-ci-tools.git
