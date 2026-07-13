@@ -139,7 +139,8 @@ private:
 	static void VisitDateLiteral(void *state, uintptr_t sibling_list_id, int32_t value);
 	static void VisitStringLiteral(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice value);
 	static void VisitBinaryLiteral(void *state, uintptr_t sibling_list_id, const uint8_t *buffer, uintptr_t len);
-	static void VisitNullLiteral(void *state, uintptr_t sibling_list_id);
+	static void VisitNullLiteral(void *state, uintptr_t sibling_list_id, uint8_t type_tag, uint8_t precision,
+	                             uint8_t scale);
 	static void VisitArrayLiteral(void *state, uintptr_t sibling_list_id, uintptr_t child_id);
 	static void VisitStructLiteral(void *data, uintptr_t sibling_list_id, uintptr_t child_field_list_value,
 	                               uintptr_t child_value_list_id);
@@ -147,10 +148,13 @@ private:
 	                                uint8_t precision, uint8_t scale);
 	static void VisitColumnExpression(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name);
 	static void VisitStructExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
-	static void VisitTransformExpression(void *data, uintptr_t sibling_list_id, uintptr_t input_path_list_id,
-	                                     uintptr_t child_list_id);
-	static void VisitFieldTransform(void *data, uintptr_t sibling_list_id, const ffi::KernelStringSlice *field_name,
-	                                uintptr_t expr_list_id, bool is_replace);
+	static void VisitStructPatchExpression(void *data, uintptr_t sibling_list_id, uintptr_t input_path_list_id,
+	                                       uintptr_t prepended_field_list_id, uintptr_t field_patch_list_id,
+	                                       uintptr_t appended_field_list_id);
+	static void VisitFieldPatch(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice field_name,
+	                            uintptr_t insertion_expr_list_id, bool keep_input, bool optional);
+	static unique_ptr<ParsedExpression> MakeStructPatchOp(const string &kind, const string *field_name,
+	                                                      FieldList &&insertions, bool keep_input, bool optional);
 	static void VisitNotExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitIsNullExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitLiteralMap(void *data, uintptr_t sibling_list_id, uintptr_t key_list_id, uintptr_t value_list_id);

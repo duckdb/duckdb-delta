@@ -303,7 +303,8 @@ vector<DeltaMultiFileColumnDefinition> DeltaTransaction::GetWriteSchema(ClientCo
 		InitializeTransaction(context);
 	}
 
-	auto write_context = ffi::get_write_context(kernel_transaction.get());
+	auto write_context = write_entry.get()->snapshot->TryUnpackKernelResult(ffi::get_unpartitioned_write_context(
+	    kernel_transaction.get(), write_entry.get()->snapshot->extern_engine.get()));
 	auto result =
 	    SchemaVisitor::VisitWriteContextSchema(write_entry.get()->snapshot->extern_engine.get(), write_context);
 	return result;
@@ -469,7 +470,7 @@ void DeltaTransaction::Commit(ClientContext &context) {
 
 			// We have some special error handling here to ensure the error created by DuckDB is properly thrown here,
 			// because we can't throw it across the FFI boundary, we need to store it in the transaction
-			uint64_t commit_result;
+			ffi::Handle<ffi::ExclusiveCommittedTransaction> commit_result;
 
 			DUCKDB_LOG_INTERNAL(context, "delta.Commit", LogLevel::LOG_DEBUG, "Committing %s",
 			                    table_entry->snapshot->GetPath());
@@ -481,6 +482,8 @@ void DeltaTransaction::Commit(ClientContext &context) {
 				} else {
 					res.Throw();
 				}
+			} else {
+				ffi::free_committed_transaction(commit_result);
 			}
 		}
 	}
