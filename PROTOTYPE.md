@@ -57,3 +57,60 @@ mapping), `var_001_basic` (variant type).
 - Remaining 13 corpus failures are pre-existing kernel-SQL gaps (variant shredding,
   timestamp time-travel, some type-widening / column-mapping edges), not regressions.
 - Async UAF-safety validated by abort-stress, not ASan.
+
+---
+
+## Full reproduction
+
+This prototype spans three forks, all on branch `prototype/duckdb-plan-based-scan`:
+
+| repo | fork | pinned rev |
+|---|---|---|
+| DuckDB (core) | `OussamaSaoudi/duckdb` | `f33b442698` |
+| delta-kernel-rs | `OussamaSaoudi/delta-kernel-rs` | `dadf1c12c1` |
+| duckdb-delta (this) | `OussamaSaoudi/duckdb-delta` | `e658d006f4` |
+
+The duckdb-delta CMake fetches the matching `delta-kernel-rs` branch, and the vendored
+`duckdb` submodule points at the fork above (it carries the core changes this needs:
+`BY_FIELD_ID_OR_NAME` column mapping, a table-arg child on `LOGICAL_EXTENSION_OPERATOR`,
+and the streaming sink+source).
+
+### Build
+```bash
+git clone --branch prototype/duckdb-plan-based-scan --recurse-submodules \
+  https://github.com/OussamaSaoudi/duckdb-delta
+cd duckdb-delta
+# the CMake ExternalProject clones + builds the delta-kernel-rs branch itself
+CMAKE_BUILD_PARALLEL_LEVEL=24 make release
+```
+Produces `build/release/duckdb` (CLI) and `build/release/extension/delta/delta.duckdb_extension`.
+
+### Run — no env vars, plan-based scan is the default
+```bash
+DDB=build/release/duckdb          # run with -unsigned
+T=<path-to-a-delta-table>         # e.g. a delta-kernel-rs acceptance workload: <wl>/delta
+
+# scan the data
+$DDB -unsigned -c "SELECT * FROM delta_scan('$T');"
+
+# the metadata phase (surviving file list) as its own function
+$DDB -unsigned -c "SELECT * FROM delta_scan_metadata('$T');"
+
+# the reconciliation as visible DuckDB operators
+$DDB -unsigned -c "EXPLAIN SELECT * FROM delta_scan('$T');"
+
+# data skipping is dynamic, from the query WHERE (kernel stats prune files before the read)
+$DDB -unsigned -c "EXPLAIN ANALYZE SELECT * FROM delta_scan('$T') WHERE <col> > <lit>;"
+#   -> the DYNAMIC_SCAN node shows 'File Filters' + 'Scanning Files: N/M'
+```
+
+### Verify (acceptance corpus)
+```bash
+# in-process C++ harness: runs the delta-kernel-rs acceptance/workloads read specs through
+# delta_scan and compares against the golden parquet. --concurrency N runs them in parallel.
+make acceptance_harness_release
+build/release/extension/delta/acceptance_harness            # -> pass=1643/1656
+build/release/extension/delta/acceptance_harness --concurrency 8
+```
+The 13 non-passing specs are pre-existing kernel-SQL feature gaps (variant shredding,
+timestamp time-travel, some type-widening / column-mapping edges), not regressions.
