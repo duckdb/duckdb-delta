@@ -48,6 +48,13 @@ struct DeltaLogPathArray {
 	vector<ffi::FfiLogPath> log_entries;
 };
 
+// Mirrors the Delta protocol's `delta.columnMapping.mode` table property.
+// Determines how readers resolve logical columns to parquet columns:
+//   ID   -> resolve by parquet field_id
+//   NAME -> resolve by physical name
+//   NONE -> resolve by display (logical) name
+enum class DeltaColumnMappingMode { NONE, ID, NAME };
+
 struct KernelUtils {
 	static LogicalType GetLogPathType();
 	static ffi::KernelStringSlice ToDeltaString(const string &str);
@@ -55,6 +62,9 @@ struct KernelUtils {
 	static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
 	static string FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *map,
 	                                 const string &key);
+	// Read `delta.columnMapping.mode` from the snapshot's table-property
+	// configuration. Returns NONE when the property is absent or `"none"`.
+	static DeltaColumnMappingMode ReadColumnMappingMode(ffi::SharedSnapshot *snapshot);
 
 	static void *StringAllocationNew(const struct ffi::KernelStringSlice slice) {
 		return new string(slice.ptr, slice.len);
@@ -276,12 +286,15 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 // SchemaVisitor is used to parse the schema of a Delta table from the Kernel
 class SchemaVisitor {
 public:
-	explicit SchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p) : engine(engine_p) {};
+	SchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p, DeltaColumnMappingMode mapping_mode_p)
+	    : engine(engine_p), mapping_mode(mapping_mode_p) {};
 
 	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
-	                                                                  ffi::SharedSnapshot *snapshot);
+	                                                                  ffi::SharedSnapshot *snapshot,
+	                                                                  DeltaColumnMappingMode mapping_mode);
 	static vector<DeltaMultiFileColumnDefinition>
-	VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *state, bool logical);
+	VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *state, bool logical,
+	                              DeltaColumnMappingMode mapping_mode);
 	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
 	                                                                      ffi::SharedWriteContext *write_context);
 
@@ -290,6 +303,7 @@ private:
 	uintptr_t next_id = 1;
 
 	ffi::SharedExternEngine *engine = nullptr;
+	DeltaColumnMappingMode mapping_mode = DeltaColumnMappingMode::NONE;
 	ErrorData error;
 
 	static ffi::EngineSchemaVisitor CreateSchemaVisitor(SchemaVisitor &state);
@@ -297,15 +311,30 @@ private:
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CStringMap *metadata);
 
-	static void ApplyDeltaColumnMapping(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *metadata,
+	// Set `col_def.identifier` so DuckDB's MultiFileReader resolves the column
+	// the way the Delta protocol's "Reader Requirements for Column Mapping"
+	// require for the active mode. Identifier type drives the dispatch:
+	// BIGINT -> match by parquet field_id, VARCHAR -> match by name. Leaving
+	// it unset matches by display (logical) name.
+	static void ApplyDeltaColumnMapping(SchemaVisitor &state, const ffi::CStringMap *metadata,
 	                                    DeltaMultiFileColumnDefinition &col_def) {
-		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
-		if (!id.empty()) {
-			col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
+		switch (state.mapping_mode) {
+		case DeltaColumnMappingMode::ID: {
+			auto id = KernelUtils::FetchFromStringMap(state.engine, metadata, "parquet.field.id");
+			if (!id.empty()) {
+				col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
+			}
+			break;
 		}
-		auto name = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.physicalName");
-		if (!name.empty()) {
-			col_def.identifier = Value(name);
+		case DeltaColumnMappingMode::NAME: {
+			auto name = KernelUtils::FetchFromStringMap(state.engine, metadata, "delta.columnMapping.physicalName");
+			if (!name.empty()) {
+				col_def.identifier = Value(name);
+			}
+			break;
+		}
+		case DeltaColumnMappingMode::NONE:
+			break;
 		}
 		col_def.default_expression = make_uniq<ConstantExpression>(Value(col_def.type));
 	}
@@ -318,7 +347,7 @@ private:
 	static void VisitSimpleTypeImpl(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                                bool is_nullable, const ffi::CStringMap *metadata) {
 		DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), TypeId, is_nullable);
-		ApplyDeltaColumnMapping(state->engine, metadata, col_def);
+		ApplyDeltaColumnMapping(*state, metadata, col_def);
 
 		state->AppendToList(sibling_list_id, name, std::move(col_def));
 	}

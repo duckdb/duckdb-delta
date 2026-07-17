@@ -582,8 +582,9 @@ ffi::EngineSchemaVisitor SchemaVisitor::CreateSchemaVisitor(SchemaVisitor &state
 }
 
 vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
-                                                                          ffi::SharedSnapshot *snapshot) {
-	SchemaVisitor state(engine);
+                                                                          ffi::SharedSnapshot *snapshot,
+                                                                          DeltaColumnMappingMode mapping_mode) {
+	SchemaVisitor state(engine, mapping_mode);
 	auto visitor = CreateSchemaVisitor(state);
 
 	auto schema = logical_schema(snapshot);
@@ -599,8 +600,8 @@ vector<DeltaMultiFileColumnDefinition> SchemaVisitor::VisitSnapshotSchema(ffi::H
 
 vector<DeltaMultiFileColumnDefinition>
 SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *scan,
-                                             bool logical) {
-	SchemaVisitor visitor_state(engine);
+                                             bool logical, DeltaColumnMappingMode mapping_mode) {
+	SchemaVisitor visitor_state(engine, mapping_mode);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 
 	ffi::Handle<ffi::SharedSchema> schema;
@@ -623,7 +624,10 @@ SchemaVisitor::VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine
 vector<DeltaMultiFileColumnDefinition>
 SchemaVisitor::VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
                                        ffi::SharedWriteContext *write_context) {
-	SchemaVisitor visitor_state(engine);
+	// TODO(column-mapping-writes): plumb the table's column mapping mode here so writes
+	// emit identifiers consistent with the read path. The read path is the only consumer
+	// today, so leaving this NONE keeps writes' behavior unchanged from before this fix.
+	SchemaVisitor visitor_state(engine, DeltaColumnMappingMode::NONE);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);
@@ -642,7 +646,7 @@ void SchemaVisitor::VisitDecimal(SchemaVisitor *state, uintptr_t sibling_list_id
 	DeltaMultiFileColumnDefinition decimal_def(KernelUtils::FromDeltaString(name), decimal_type, is_nullable);
 	decimal_def.default_expression = make_uniq<ConstantExpression>(Value().DefaultCastAs(decimal_type));
 
-	ApplyDeltaColumnMapping(state->engine, metadata, decimal_def);
+	ApplyDeltaColumnMapping(*state, metadata, decimal_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(decimal_def));
 }
@@ -665,7 +669,7 @@ void SchemaVisitor::VisitStruct(SchemaVisitor *state, uintptr_t sibling_list_id,
 	struct_def.children = std::move(children);
 	struct_def.default_expression = make_uniq<ConstantExpression>(Value(struct_type));
 
-	ApplyDeltaColumnMapping(state->engine, metadata, struct_def);
+	ApplyDeltaColumnMapping(*state, metadata, struct_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(struct_def));
 }
@@ -685,7 +689,7 @@ void SchemaVisitor::VisitArray(SchemaVisitor *state, uintptr_t sibling_list_id, 
 	// TODO: kinda wonky, but column mapper uses this
 	list_def.children.front().name = "list";
 
-	ApplyDeltaColumnMapping(state->engine, metadata, list_def);
+	ApplyDeltaColumnMapping(*state, metadata, list_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(list_def));
 }
@@ -708,7 +712,7 @@ void SchemaVisitor::VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ff
 
 	map_def.default_expression = make_uniq<ConstantExpression>(Value(map_type));
 
-	ApplyDeltaColumnMapping(state->engine, metadata, map_def);
+	ApplyDeltaColumnMapping(*state, metadata, map_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(map_def));
 }
@@ -720,7 +724,7 @@ void SchemaVisitor::VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id
 	// global setting.
 	LogicalType type = LogicalType::VARIANT();
 	DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
-	ApplyDeltaColumnMapping(state->engine, metadata, col_def);
+	ApplyDeltaColumnMapping(*state, metadata, col_def);
 	state->AppendToList(sibling_list_id, name, std::move(col_def));
 }
 
@@ -922,6 +926,30 @@ string KernelUtils::FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engi
 		delete static_cast<string *>(out);
 	}
 	return val;
+}
+
+DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *snapshot) {
+	struct VisitorContext {
+		string mode;
+	};
+	VisitorContext ctx;
+	auto visitor = [](ffi::NullableCvoid engine_context, ffi::KernelStringSlice key, ffi::KernelStringSlice value) {
+		auto &c = *static_cast<VisitorContext *>(engine_context);
+		if (FromDeltaString(key) == "delta.columnMapping.mode") {
+			c.mode = FromDeltaString(value);
+		}
+	};
+	ffi::visit_metadata_configuration(snapshot, &ctx, visitor);
+	// The Delta protocol specifies lowercase values, but normalize defensively so a
+	// non-conformant writer's "ID"/"Name" doesn't silently degrade to NONE.
+	auto mode = StringUtil::Lower(ctx.mode);
+	if (mode == "id") {
+		return DeltaColumnMappingMode::ID;
+	}
+	if (mode == "name") {
+		return DeltaColumnMappingMode::NAME;
+	}
+	return DeltaColumnMappingMode::NONE;
 }
 
 vector<unique_ptr<ParsedExpression>>

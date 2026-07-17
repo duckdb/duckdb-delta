@@ -1,0 +1,23 @@
+# name: test/sql/inlined/column_mapping_id_mode_nested_struct.test
+# description: id-mode column mapping resolves nested struct fields by parquet
+#              field_id, exercising the Visit{Struct,...} recursion path that
+#              the top-level fixture does not cover.
+# group: [inlined]
+
+require parquet
+
+require delta
+
+statement ok
+from copy_dir('data/inlined/column_mapping_id_mode_nested_struct',
+              '__TEST_DIR__/data/inlined/column_mapping_id_mode_nested_struct');
+
+# The Delta log declares id-mode with physical names "col-nested-uuid" /
+# "col-x-uuid" / "col-y-uuid". The parquet file's columns retain logical
+# names ("nested_col", "x", "y") and carry field_ids 1/2/3. Pre-fix this
+# resolved nested fields by physical name and produced NULLs.
+query I
+select nested_col from delta_scan('__TEST_DIR__/data/inlined/column_mapping_id_mode_nested_struct/delta_lake') order by nested_col.x
+----
+{'x': 1, 'y': alice}
+{'x': 2, 'y': bob}
