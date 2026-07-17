@@ -11,6 +11,8 @@
 #define DEFINE_DEFAULT_ENGINE_BASE 1
 #include "delta_kernel_ffi.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/logging/log_type.hpp"
+#include "duckdb/logging/log_manager.hpp"
 
 namespace duckdb {
 

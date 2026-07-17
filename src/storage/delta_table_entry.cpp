@@ -36,7 +36,7 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 	auto &system_catalog = Catalog::GetSystemCatalog(db);
 
 	auto data = CatalogTransaction::GetSystemTransaction(db);
-	auto &schema = system_catalog.GetSchema(data, DEFAULT_SCHEMA);
+	auto &schema = system_catalog.GetSchema(data, Identifier::DefaultSchema());
 	auto catalog_entry = schema.GetEntry(data, CatalogType::TABLE_FUNCTION_ENTRY, "delta_scan");
 	if (!catalog_entry) {
 		throw InvalidInputException("Function with name \"%s\" not found in ExtensionLoader::GetTableFunction", name);
@@ -64,23 +64,29 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 	}
 
 	function_info->snapshot = this->snapshot;
-	function_info->table_name = delta_catalog.GetName();
+	function_info->table_name = delta_catalog.GetName().GetIdentifierName();
 	delta_scan_function.function_info = std::move(function_info);
 
 	vector<Value> inputs = {delta_catalog.GetDBPath()};
 	named_parameter_map_t param_map;
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<Identifier> names;
 	TableFunctionRef empty_ref;
 
 	// Propagate settings
 	param_map.insert({"pushdown_partition_info", delta_catalog.pushdown_partition_info});
 	param_map.insert({"pushdown_filters", DeltaEnumUtils::ToString(delta_catalog.filter_pushdown_mode)});
+	idx_t param_version = version != DConstants::INVALID_INDEX ? version : delta_catalog.use_specific_version;
+	if (param_version != DConstants::INVALID_INDEX) {
+		param_map.insert({"version", Value::UBIGINT(param_version)});
+	}
 
 	TableFunctionBindInput bind_input(inputs, param_map, return_types, names, nullptr, nullptr, delta_scan_function,
 	                                  empty_ref);
 
-	auto result = delta_scan_function.bind(context, bind_input, return_types, names);
+	vector<string> bind_names;
+	auto result = delta_scan_function.bind(context, bind_input, return_types, bind_names);
+	names = StringsToIdentifiers(bind_names);
 	bind_data = std::move(result);
 
 	return delta_scan_function;
@@ -90,7 +96,7 @@ case_insensitive_map_t<vector<NestedNotNullConstraint>> DeltaTableEntry::GetNotN
 	case_insensitive_map_t<vector<NestedNotNullConstraint>> result;
 	for (auto &constraint : snapshot->GetNestedNotNullConstraints()) {
 		auto &col = GetColumn(constraint.index);
-		auto &item = result[col.Name()];
+		auto &item = result[col.Name().GetIdentifierName()];
 		item.push_back(constraint);
 	}
 	return result;

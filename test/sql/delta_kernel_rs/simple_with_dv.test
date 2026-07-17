@@ -8,27 +8,24 @@ require delta
 
 require-env DELTA_KERNEL_TESTS_PATH
 
-statement ok
-pragma enable_verification
-
 query I
-SELECT count(*) FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+SELECT count(*) FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 ----
 8
 
 query I
-SELECT count(value) FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+SELECT count(value) FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 ----
 8
 
 query II
-SELECT count(value), count(*) FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+SELECT count(value), count(*) FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 ----
 8	8
 
 # Simplest example
 query I
-FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 ----
 1
 2
@@ -41,7 +38,7 @@ FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 
 # With filter: ensures the deletion vector is applied properly on top of pushed down filters
 query I
-FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 WHERE value > 3
 ----
 4
@@ -52,7 +49,7 @@ WHERE value > 3
 
 # With filter: ensures the deletion vector is applied properly on top of pushed down filters with the file_row_number column
 query II
-SELECT *, file_row_number FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+SELECT *, file_row_number FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 WHERE value > 3
 ----
 4	4
@@ -63,7 +60,7 @@ WHERE value > 3
 
 # With filter and a delta scan based extra constant column
 query II
-select value, delta_file_number FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+select value, delta_file_number FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 WHERE value > 3
 ----
 4	7
@@ -75,7 +72,7 @@ WHERE value > 3
 # With filter, delta-extension-originated const column, and parquet-originated const column
 query III
 SELECT value, parse_filename(filename)[-15:-1], delta_file_number
-FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 WHERE value > 3
 ----
 4	.snappy.parquet	7
@@ -87,7 +84,7 @@ WHERE value > 3
 # With PRUNED filter, delta-extension-originated const column, and parquet-originated const column
 query II
 SELECT parse_filename(filename)[-15:-1], delta_file_number
-FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 WHERE value > 3
 ----
 .snappy.parquet	7
@@ -99,7 +96,7 @@ WHERE value > 3
 # With PRUNED filters, delta-extension-originated const column, and parquet-originated const column
 query I
 SELECT delta_file_number
-FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 WHERE value > 3 and filename is not null
 ----
 7
@@ -111,7 +108,7 @@ WHERE value > 3 and filename is not null
 # Enabling the file_row_number option, but projecting it out
 query I
 SELECT value 
-FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
+FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/table-with-dv-small/')
 ----
 1
 2

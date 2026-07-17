@@ -10,13 +10,13 @@ require notwindows
 
 # Copy test data over to tmp test dir because we'll be inserting stuff
 statement ok
-CALL copy_dir('data/inlined/null_constraints_lists', '__TEST_DIR__/non_nullable/null_constraints_lists');
+CALL copy_dir('data/inlined/null_constraints_lists', '{TEMP_DIR}/non_nullable/null_constraints_lists');
 
 statement ok
-CALL copy_dir('data/inlined/null_constraints_structs', '__TEST_DIR__/non_nullable/null_constraints_structs');
+CALL copy_dir('data/inlined/null_constraints_structs', '{TEMP_DIR}/non_nullable/null_constraints_structs');
 
 statement ok
-ATTACH '__TEST_DIR__/non_nullable/null_constraints_structs/delta_lake' AS delta_table (TYPE delta);
+ATTACH '{TEMP_DIR}/non_nullable/null_constraints_structs/delta_lake' AS delta_table (TYPE delta);
 
 query I
 select count(*)  FROM delta_table;
@@ -67,7 +67,7 @@ statement ok
 DETACH delta_table;
 
 statement ok
-ATTACH '__TEST_DIR__/non_nullable/null_constraints_lists/delta_lake' AS delta_table (TYPE delta);
+ATTACH '{TEMP_DIR}/non_nullable/null_constraints_lists/delta_lake' AS delta_table (TYPE delta);
 
 query I
 select count(*)  FROM delta_table;

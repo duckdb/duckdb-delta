@@ -23,7 +23,7 @@ static unique_ptr<FunctionData> DeltaDomainMetadataBind(ClientContext &context, 
 	idx_t version = DConstants::INVALID_INDEX;
 
 	for (auto &kv : input.named_parameters) {
-		auto loption = StringUtil::Lower(kv.first);
+		auto loption = StringUtil::Lower(kv.first.GetIdentifierName());
 		if (loption == "version") {
 			version = kv.second.GetValue<idx_t>();
 		}
@@ -32,7 +32,7 @@ static unique_ptr<FunctionData> DeltaDomainMetadataBind(ClientContext &context, 
 	auto file_list = make_uniq<DeltaMultiFileList>(context, input_string, version);
 
 	// Trigger snapshot initialization
-	vector<string> _n;
+	vector<Identifier> _n;
 	vector<LogicalType> _t;
 	file_list->Bind(_t, _n);
 

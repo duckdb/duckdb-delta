@@ -4,6 +4,7 @@
 #include "duckdb/common/path.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
+#include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/planner/operator/logical_copy_to_file.hpp"
@@ -286,7 +287,7 @@ string DeltaInsert::GetName() const {
 
 InsertionOrderPreservingMap<string> DeltaInsert::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
-	result["Table Name"] = table ? table->name : info->Base().table;
+	result["Table Name"] = table ? table->name.GetIdentifierName() : info->Base().GetTableName().GetIdentifierName();
 	return result;
 }
 
@@ -297,8 +298,8 @@ static optional_ptr<CopyFunctionCatalogEntry> TryGetCopyFunction(DatabaseInstanc
 	D_ASSERT(!name.empty());
 	auto &system_catalog = Catalog::GetSystemCatalog(db);
 	auto data = CatalogTransaction::GetSystemTransaction(db);
-	auto &schema = system_catalog.GetSchema(data, DEFAULT_SCHEMA);
-	return schema.GetEntry(data, CatalogType::COPY_FUNCTION_ENTRY, name)->Cast<CopyFunctionCatalogEntry>();
+	auto &schema = system_catalog.GetSchema(data, Identifier::DefaultSchema());
+	return schema.GetEntry(data, CatalogType::COPY_FUNCTION_ENTRY, Identifier(name))->Cast<CopyFunctionCatalogEntry>();
 }
 
 PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
@@ -316,7 +317,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		// In child catalog mode, the LogicalInsert will not actually contain the table entry, so we need to look it up
 		// here
 		CatalogEntryRetriever retriever(context);
-		EntryLookupInfo lookup_info(CatalogType::TABLE_ENTRY, default_table);
+		EntryLookupInfo lookup_info(CatalogType::TABLE_ENTRY, Identifier(default_table));
 		auto default_table_entry =
 		    LookupEntry(retriever, default_schema, lookup_info, OnEntryNotFound::THROW_EXCEPTION);
 		table_entry = default_table_entry.entry->Cast<DeltaTableEntry>();
@@ -359,7 +360,8 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	auto names_to_write = columns.GetColumnNames();
 	auto types_to_write = columns.GetColumnTypes();
 
-	auto function_data = copy_fun->function.copy_to_bind(context, bind_input, names_to_write, types_to_write);
+	auto function_data =
+	    copy_fun->function.copy_to_bind(context, bind_input, StringsToIdentifiers(names_to_write), types_to_write);
 
 	auto &insert = planner.Make<DeltaInsert>(op, *table_entry, op.column_index_map);
 
@@ -394,11 +396,10 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	physical_copy_ref.file_extension = "parquet";
 	physical_copy_ref.overwrite_mode = CopyOverwriteMode::COPY_OVERWRITE_OR_IGNORE;
 	physical_copy_ref.per_thread_output = false;
-	physical_copy_ref.rotate = false;
 	physical_copy_ref.return_type = CopyFunctionReturnType::WRITTEN_FILE_STATISTICS;
 	physical_copy_ref.write_partition_columns = true;
 	physical_copy_ref.children.push_back(*plan);
-	physical_copy_ref.names = names_to_write;
+	physical_copy_ref.names = StringsToIdentifiers(names_to_write);
 	physical_copy_ref.expected_types = types_to_write;
 	physical_copy_ref.hive_file_pattern = true;
 

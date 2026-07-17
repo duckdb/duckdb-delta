@@ -17,7 +17,7 @@ CREATE VIEW t AS SELECT part::INT as part, sum(i) as value
 query II
 EXPLAIN FROM t
 ----
-physical_plan	<REGEX>:.*PARTITIONED_AGGREGATE.*
+physical_plan	<REGEX>:.*Partitioned Aggregate.*
 
 # With a projection and delta constant column
 query II
@@ -54,7 +54,7 @@ CREATE VIEW t2 AS SELECT part::INT as part, sum(i) as value
 query II
 EXPLAIN FROM t2
 ----
-physical_plan	<!REGEX>:.*PARTITIONED_AGGREGATE.*
+physical_plan	<!REGEX>:.*Partitioned Aggregate.*
 
 # With a projection and delta constant column
 query II
@@ -94,7 +94,7 @@ CREATE VIEW t3 AS SELECT part::INT as part, sum(i) as value
 query II
 EXPLAIN FROM t3
 ----
-physical_plan	<REGEX>:.*PARTITIONED_AGGREGATE.*
+physical_plan	<REGEX>:.*Partitioned Aggregate.*
 
 # Then for ATTACH, with default settings partition info pushdown
 statement ok
@@ -109,5 +109,5 @@ CREATE VIEW t4 AS SELECT part::INT as part, sum(i) as value
 query II
 EXPLAIN FROM t4
 ----
-physical_plan	<!REGEX>:.*PARTITIONED_AGGREGATE.*
+physical_plan	<!REGEX>:.*Partitioned Aggregate.*
 

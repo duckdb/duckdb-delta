@@ -9,6 +9,9 @@
 
 #include "storage/delta_catalog.hpp"
 #include "duckdb/main/client_properties.hpp"
+#include "duckdb/logging/logging.hpp"
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
@@ -44,12 +47,6 @@ static void *allocate_string(const struct ffi::KernelStringSlice slice) {
 
 struct DeltaCommitInfo {
 public:
-	DeltaCommitInfo() {
-		buffer.Initialize(Allocator::DefaultAllocator(), GetTypes());
-		buffer.SetCardinality(0);
-	}
-
-public:
 	static vector<LogicalType> GetTypes() {
 		return {LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)};
 	};
@@ -59,15 +56,7 @@ public:
 
 public:
 	void Append(Value commit_info_map) {
-		idx_t current_size = buffer.size();
-		idx_t current_capacity = buffer.GetCapacity();
-
-		if (current_size == current_capacity) {
-			buffer.SetCapacity(2 * current_capacity);
-		}
-
-		buffer.SetValue(0, current_size, commit_info_map);
-		buffer.SetCardinality(current_size + 1);
+		values.push_back(std::move(commit_info_map));
 	}
 
 	void (*release)();
@@ -78,6 +67,14 @@ public:
 
 	ffi::ArrowFFIData ToArrow(optional_ptr<ClientContext> context) {
 		LoggerCallback::TryLog("delta", LogLevel::LOG_TRACE, "Delta ToArrow debug: created CommitInfo");
+
+		DataChunk buffer;
+		idx_t capacity = MaxValue<idx_t>(values.size(), STANDARD_VECTOR_SIZE);
+		buffer.Initialize(Allocator::DefaultAllocator(), GetTypes(), capacity);
+		for (idx_t i = 0; i < values.size(); i++) {
+			buffer.SetValue(0, i, values[i]);
+		}
+		buffer.SetCardinality(values.size());
 
 		ffi::ArrowFFIData ffi_data;
 		unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
@@ -90,7 +87,7 @@ public:
 	}
 
 private:
-	DataChunk buffer;
+	vector<Value> values;
 };
 
 struct StatNode {
@@ -152,22 +149,25 @@ static Value CreateValueLogicalTypeFromStatNode(const unordered_map<string, Stat
 	for (const auto &node : tree) {
 		if (node.second.children.size() == 0) {
 			if (field == "min") {
-				children.push_back({node.first, node.second.stats.has_min
-				                                    ? Value(node.second.stats.min).DefaultCastAs(node.second.type)
-				                                    : Value(node.second.type)});
+				children.push_back(
+				    {Identifier(node.first), node.second.stats.has_min
+				                                 ? Value(node.second.stats.min).DefaultCastAs(node.second.type)
+				                                 : Value(node.second.type)});
 			} else if (field == "max") {
-				children.push_back({node.first, node.second.stats.has_max
-				                                    ? Value(node.second.stats.max).DefaultCastAs(node.second.type)
-				                                    : Value(node.second.type)});
+				children.push_back(
+				    {Identifier(node.first), node.second.stats.has_max
+				                                 ? Value(node.second.stats.max).DefaultCastAs(node.second.type)
+				                                 : Value(node.second.type)});
 			} else if (field == "null_count") {
-				children.push_back({node.first, node.second.stats.has_null_count
-				                                    ? Value::BIGINT(node.second.stats.null_count)
-				                                    : Value(LogicalType::BIGINT)});
+				children.push_back({Identifier(node.first), node.second.stats.has_null_count
+				                                                ? Value::BIGINT(node.second.stats.null_count)
+				                                                : Value(LogicalType::BIGINT)});
 			} else {
 				throw InternalException("Invalid field: %s", field.c_str());
 			}
 		} else {
-			children.push_back({node.first, CreateValueLogicalTypeFromStatNode(node.second.children, field)});
+			children.push_back(
+			    {Identifier(node.first), CreateValueLogicalTypeFromStatNode(node.second.children, field)});
 		}
 	}
 
@@ -226,8 +226,6 @@ struct WriteMetaData {
 	WriteMetaData(DeltaMultiFileList &snapshot, vector<DeltaDataFile> &outstanding_appends) {
 		const DeltaDataFile *first_file = outstanding_appends.empty() ? nullptr : &outstanding_appends[0];
 		buffer_types = GetTypes(first_file);
-		buffer = make_uniq<DataChunk>();
-		buffer->Initialize(Allocator::DefaultAllocator(), buffer_types);
 
 		for (const auto &file : outstanding_appends) {
 			auto table_path = snapshot.GetPath();
@@ -250,21 +248,11 @@ struct WriteMetaData {
 	}
 
 	void Append(const string &path, Value partition_values, const DeltaDataFile &file) {
-		idx_t current_size = buffer->size();
-		idx_t current_capacity = buffer->GetCapacity();
-
-		if (current_size == current_capacity) {
-			buffer->SetCapacity(2 * current_capacity);
-		}
-
-		auto stats = CreateStatsValue(file, true);
-
-		buffer->SetValue(0, current_size, path);
-		buffer->SetValue(1, current_size, partition_values);
-		buffer->SetValue(2, current_size, Value::BIGINT(file.file_size_bytes));
-		buffer->SetValue(3, current_size, Value::BIGINT(Timestamp::GetEpochMs(file.last_modified_time)));
-		buffer->SetValue(4, current_size, stats);
-		buffer->SetCardinality(current_size + 1);
+		paths.push_back(Value(path));
+		partition_values_list.push_back(std::move(partition_values));
+		sizes.push_back(Value::BIGINT(file.file_size_bytes));
+		modification_times.push_back(Value::BIGINT(Timestamp::GetEpochMs(file.last_modified_time)));
+		stats.push_back(CreateStatsValue(file, true));
 	}
 
 	void (*release)();
@@ -276,11 +264,24 @@ struct WriteMetaData {
 	ffi::ArrowFFIData ToArrow(ClientContext &context) {
 		LoggerCallback::TryLog("delta", LogLevel::LOG_TRACE, "Delta ToArrow debug: created WriteMetaData");
 
+		DataChunk buffer;
+		idx_t n = paths.size();
+		idx_t capacity = MaxValue<idx_t>(n, STANDARD_VECTOR_SIZE);
+		buffer.Initialize(Allocator::DefaultAllocator(), buffer_types, capacity);
+		for (idx_t i = 0; i < n; i++) {
+			buffer.SetValue(0, i, paths[i]);
+			buffer.SetValue(1, i, partition_values_list[i]);
+			buffer.SetValue(2, i, sizes[i]);
+			buffer.SetValue(3, i, modification_times[i]);
+			buffer.SetValue(4, i, stats[i]);
+		}
+		buffer.SetCardinality(n);
+
 		ffi::ArrowFFIData ffi_data;
 		unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
 		ClientProperties props("UTC", ArrowOffsetSize::REGULAR, false, false, false, ArrowFormatVersion::V1_0,
 		                       optional_ptr<ClientContext>(&context));
-		ArrowConverter::ToArrowArray(*buffer, (ArrowArray *)(&ffi_data.array), props, extension_types);
+		ArrowConverter::ToArrowArray(buffer, (ArrowArray *)(&ffi_data.array), props, extension_types);
 		ArrowConverter::ToArrowSchema((ArrowSchema *)(&ffi_data.schema), buffer_types, GetNames(), props);
 
 		ffi_data.array.release = reinterpret_cast<void (*)(ffi::FFI_ArrowArray *)>(InstrumentedRelease);
@@ -288,8 +289,13 @@ struct WriteMetaData {
 		return ffi_data;
 	}
 
+private:
 	vector<LogicalType> buffer_types;
-	unique_ptr<DataChunk> buffer;
+	vector<Value> paths;
+	vector<Value> partition_values_list;
+	vector<Value> sizes;
+	vector<Value> modification_times;
+	vector<Value> stats;
 };
 
 vector<DeltaMultiFileColumnDefinition> DeltaTransaction::GetWriteSchema(ClientContext &context) {

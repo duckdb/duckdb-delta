@@ -9,14 +9,14 @@ require delta
 require-env DELTA_KERNEL_TESTS_PATH
 
 query IIIIII
-DESCRIBE FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/data-reader-timestamp_ntz') order by id
+DESCRIBE FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/data-reader-timestamp_ntz') order by id
 ----
 id	INTEGER	YES	NULL	NULL	NULL
 tsNtz	TIMESTAMP	YES	NULL	NULL	NULL
 tsNtzPartition	TIMESTAMP	YES	NULL	NULL	NULL
 
 query III
-FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/data-reader-timestamp_ntz') order by id
+FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/data-reader-timestamp_ntz') order by id
 ----
 0	2021-11-18 02:30:00.123456	2021-11-18 02:30:00.123456
 1	2013-07-05 17:01:00.123456	2021-11-18 02:30:00.123456

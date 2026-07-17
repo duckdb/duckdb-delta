@@ -9,6 +9,8 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/parser/parsed_data/attach_info.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/extension_helper.hpp"
@@ -38,6 +40,7 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		if (StringUtil::Lower(option.first) == "version") {
 			res->use_cache = true;
 			res->use_specific_version = UBigIntValue::Get(option.second.DefaultCastAs(LogicalType::UBIGINT));
+			res->access_mode = AccessMode::READ_ONLY;
 		}
 		if (StringUtil::Lower(option.first) == "internal_table_name") {
 			res->internal_table_name = StringValue::Get(option.second);
@@ -54,6 +57,9 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		if (StringUtil::Lower(option.first) == "log_tail") {
 			res->catalog_log_tail = option.second;
 		}
+		if (StringUtil::Lower(option.first) == "max_catalog_version") {
+			res->max_catalog_version = option.second.GetValue<int64_t>();
+		}
 		if (StringUtil::Lower(option.first) == "unity_table_id") {
 			res->unity_table_id = StringValue::Get(option.second);
 		}
@@ -65,15 +71,17 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		string commit_fun_name = "__internal_delta_ccv2_commit_staged";
 
 		CatalogEntryRetriever retriever(context);
-		EntryLookupInfo lookup_info(CatalogType::TABLE_FUNCTION_ENTRY, commit_fun_name);
-		auto fun = retriever.GetEntry(res->parent_catalog_name, schema, lookup_info, OnEntryNotFound::RETURN_NULL);
+		EntryLookupInfo lookup_info(
+		    CatalogType::TABLE_FUNCTION_ENTRY,
+		    QualifiedName(Identifier(res->parent_catalog_name), Identifier(schema), Identifier(commit_fun_name)));
+		auto fun = retriever.GetEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
 		if (!fun) {
 			throw InternalException("Parent catalog does not have a __internal_delta_ccv2_commit_staged function");
 		}
 		res->commit_function = fun->Cast<TableFunctionCatalogEntry>();
 	}
 
-	res->SetDefaultTable(DEFAULT_SCHEMA, res->GetInternalTableName());
+	res->SetDefaultTable(Identifier::DefaultSchema(), Identifier(res->GetInternalTableName()));
 
 	return std::move(res);
 }

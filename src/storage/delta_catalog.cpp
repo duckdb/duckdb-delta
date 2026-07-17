@@ -5,6 +5,7 @@
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/planner/logical_operator.hpp"
 
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 

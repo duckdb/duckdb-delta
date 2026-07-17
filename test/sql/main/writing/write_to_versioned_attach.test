@@ -1,0 +1,20 @@
+# name: test/sql/main/writing/write_to_versioned_attach.test
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/write_to_versioned_attach');
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/write_to_versioned_attach/delta_lake' AS t (TYPE delta, VERSION 0);
+
+statement error
+INSERT INTO t VALUES (42);
+----
+Can not append to a read only table
+

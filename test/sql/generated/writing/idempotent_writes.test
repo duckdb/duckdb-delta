@@ -10,11 +10,11 @@ require-env GENERATED_DATA_AVAILABLE
 
 # Copy data
 statement ok
-from copy_dir('data/generated/simple_table', '__TEST_DIR__/idempotent_writes/simple_table');
+from copy_dir('data/generated/simple_table', '{TEMP_DIR}/idempotent_writes/simple_table');
 
 # Attach some delta table 
 statement ok
-ATTACH '__TEST_DIR__/idempotent_writes/simple_table/delta_lake' AS delta_table (TYPE delta); 
+ATTACH '{TEMP_DIR}/idempotent_writes/simple_table/delta_lake' AS delta_table (TYPE delta); 
 
 statement ok
 from delta_table;

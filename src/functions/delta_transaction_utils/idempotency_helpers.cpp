@@ -1,5 +1,7 @@
 #include "delta_kernel_ffi.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -91,7 +93,7 @@ static unique_ptr<FunctionData> DeltaGetTransactionVersionBind(ClientContext &co
 	names.emplace_back("version");
 
 	// TODO: support catalog.schema.table format
-	EntryLookupInfo lookup(CatalogType::TABLE_ENTRY, path);
+	EntryLookupInfo lookup(CatalogType::TABLE_ENTRY, Identifier(path));
 	auto lookup_result = Catalog::GetEntry(context, "", "", lookup, OnEntryNotFound::RETURN_NULL);
 	if (lookup_result.get()) {
 		res->delta_table_entry = lookup_result->Cast<DeltaTableEntry>();
@@ -113,7 +115,7 @@ static unique_ptr<FunctionData> DeltaSetTransactionVersionBind(ClientContext &co
 	res->expected_version = input.inputs[3];
 
 	// TODO: support catalog.schema.table format
-	EntryLookupInfo lookup(CatalogType::TABLE_ENTRY, path);
+	EntryLookupInfo lookup(CatalogType::TABLE_ENTRY, Identifier(path));
 	auto lookup_result = Catalog::GetEntry(context, "", "", lookup, OnEntryNotFound::RETURN_NULL);
 	if (lookup_result.get()) {
 		res->delta_table_entry = lookup_result->Cast<DeltaTableEntry>();

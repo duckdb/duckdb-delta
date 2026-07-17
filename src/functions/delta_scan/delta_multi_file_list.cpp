@@ -3,6 +3,7 @@
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
 
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/extension_helper.hpp"
@@ -18,6 +19,7 @@
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 #include <regex>
+#include <algorithm>
 
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 
@@ -346,30 +348,37 @@ static void KernelPartitionStringVisitor(ffi::NullableCvoid engine_context, ffi:
 
 static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transformation,
                                                        const vector<DeltaMultiFileColumnDefinition> &cols) {
-	if (transformation.Cast<FunctionExpression>().function_name != "delta_kernel_transform_expression") {
+	if (transformation.Cast<FunctionExpression>().FunctionName() != "delta_kernel_transform_expression") {
 		throw IOException("Unexpected function of root expression returned by delta kernel: %s",
-		                  transformation.Cast<FunctionExpression>().function_name);
+		                  transformation.Cast<FunctionExpression>().FunctionName());
 	}
 
 	unordered_map<idx_t, Value> res;
 
 	// Iterate the children of the transform
-	for (auto &child : transformation.Cast<FunctionExpression>().children) {
-		auto &transform_op = child->Cast<FunctionExpression>();
-		if (transform_op.function_name != "delta_transform_op") {
+	for (auto &child : transformation.Cast<FunctionExpression>().GetArguments()) {
+		auto &transform_op = child.GetExpression().Cast<FunctionExpression>();
+		if (transform_op.FunctionName() != "delta_transform_op") {
 			throw IOException("Unexpected function for delta_transform_op returned by delta kernel: %s",
-			                  child->Cast<FunctionExpression>().function_name);
+			                  child.GetExpression().Cast<FunctionExpression>().FunctionName());
 		}
 
 		bool is_replace = false;
 		string field_name;
 		vector<Value> values;
 
-		for (auto &transform_op_child : transform_op.children) {
-			if (transform_op_child->GetExpressionType() == ExpressionType::COMPARE_EQUAL) {
-				auto name =
-				    transform_op_child->Cast<ComparisonExpression>().left->Cast<ColumnRefExpression>().GetName();
-				auto value = transform_op_child->Cast<ComparisonExpression>().right->Cast<ConstantExpression>().value;
+		for (auto &transform_op_child : transform_op.GetArguments()) {
+			if (transform_op_child.GetExpression().GetExpressionType() == ExpressionType::COMPARE_EQUAL) {
+				auto name = transform_op_child.GetExpression()
+				                .Cast<ComparisonExpression>()
+				                .Left()
+				                .Cast<ColumnRefExpression>()
+				                .GetName();
+				auto value = transform_op_child.GetExpression()
+				                 .Cast<ComparisonExpression>()
+				                 .Right()
+				                 .Cast<ConstantExpression>()
+				                 .GetValue();
 
 				if (name == "is_replace") {
 					is_replace = value.GetValue<bool>();
@@ -381,12 +390,12 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 					throw InternalException("Unexpected name for delta_transform_op returned by delta kernel: %s",
 					                        name);
 				}
-			} else if (transform_op_child->GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-				values.push_back(transform_op_child->Cast<ConstantExpression>().value);
+			} else if (transform_op_child.GetExpression().GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+				values.push_back(transform_op_child.GetExpression().Cast<ConstantExpression>().GetValue());
 			} else {
 				throw NotImplementedException(
 				    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
-				    transform_op_child->ToString());
+				    transform_op_child.GetExpression().ToString());
 			}
 		}
 
@@ -482,12 +491,12 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 		auto transform_partitions =
 		    FindPartitionValues(*(*parsed_transformation_expression)[0], snapshot.global_columns);
 
-		case_insensitive_map_t<Value> constant_map;
+		identifier_map_t<Value> constant_map;
 		for (idx_t i = 0; i < snapshot.partitions.size(); ++i) {
 			const auto &partition_id = context->snapshot.partition_ids[i];
 			const auto &partition_name = context->snapshot.partitions[i];
 
-			constant_map[partition_name] = transform_partitions[partition_id];
+			constant_map[Identifier(partition_name)] = transform_partitions[partition_id];
 		}
 		snapshot.metadata.back()->partition_map = std::move(constant_map);
 		snapshot.metadata.back()->transform_expression =
@@ -604,12 +613,12 @@ static bool ExtractHasNullConstraintsInArrays(const vector<DeltaMultiFileColumnD
 	return false;
 }
 
-void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> &names) {
+void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<Identifier> &names) {
 	unique_lock<mutex> lck(lock);
 
 	if (have_bound) {
 		for (const auto &field : global_columns) {
-			names.push_back(field.name);
+			names.push_back(Identifier(field.name));
 			return_types.push_back(field.type);
 		}
 		return;
@@ -625,7 +634,7 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	}
 
 	for (const auto &field : visited_schema) {
-		names.push_back(field.name);
+		names.push_back(Identifier(field.name));
 		return_types.push_back(field.type);
 	}
 
@@ -731,6 +740,9 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 		if (delta_log_path) {
 			TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&builder, delta_log_path->GetFFIPtr()));
 		}
+		if (max_catalog_version >= 0) {
+			ffi::snapshot_builder_set_max_catalog_version(&builder, static_cast<uint64_t>(max_catalog_version));
+		}
 		snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(ffi::snapshot_builder_build(builder)));
 
 		auto snapshot_ref = snapshot->GetLockingRef();
@@ -814,21 +826,24 @@ void DeltaMultiFileList::EnsureScanInitialized() const {
 	}
 }
 
-unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContext &context,
-                                                                    TableFilterSet &new_filters) const {
+unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContext &context, TableFilterSet &new_filters,
+                                                                    vector<column_t> column_indexes) const {
 	auto filtered_list = make_uniq<DeltaMultiFileList>(context, paths[0].path, version);
 
-	TableFilterSet result_filter_set;
+	DeltaTableFilters result_filter_set;
 
 	// Add pre-existing filters
-	for (auto &entry : table_filters.filters) {
-		result_filter_set.PushFilter(ColumnIndex(entry.first), entry.second->Copy());
+	for (auto &entry : table_filters) {
+		result_filter_set.PushFilter(entry.first, entry.second->Copy());
 	}
 
 	// Add new filters
-	for (auto &entry : new_filters.filters) {
-		if (entry.first < global_columns.size()) {
-			result_filter_set.PushFilter(ColumnIndex(entry.first), entry.second->Copy());
+	for (auto &entry : new_filters) {
+		auto &column_id = column_indexes[entry.GetIndex()];
+		if (column_id < global_columns.size()) {
+			auto &filter =
+			    ExpressionFilter::GetExpressionFilter(entry.Filter(), "DeltaMultiFileList::PushdownInternal");
+			result_filter_set.PushFilter(column_id, filter.Copy());
 		}
 	}
 
@@ -877,11 +892,11 @@ unique_ptr<MultiFileList> DeltaMultiFileList::ComplexFilterPushdown(ClientContex
 
 	vector<FilterPushdownResult> pushdown_results;
 	auto filter_set = combiner.GenerateTableScanFilters(info.column_indexes, pushdown_results);
-	if (filter_set.filters.empty()) {
+	if (!filter_set.HasFilters()) {
 		return nullptr;
 	}
 
-	auto filtered_list = PushdownInternal(context, filter_set);
+	auto filtered_list = PushdownInternal(context, filter_set, info.column_ids);
 
 	ReportFilterPushdown(context, *filtered_list, info.column_ids, "constant", info);
 
@@ -925,64 +940,64 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 		new_total = new_list.GetTotalFileCount();
 
 		if (should_report_explain_output) {
-			if (!mfr_info->extra_info.total_files.IsValid()) {
+			// Filter pushdown can run multiple times for one query (e.g. RemoveUnusedColumns re-runs it on the
+			// already-filtered list), so old_total shrinks across passes. Keep the largest (the true pre-filter total).
+			if (!mfr_info->extra_info.total_files.IsValid() ||
+			    old_total > mfr_info->extra_info.total_files.GetIndex()) {
 				mfr_info->extra_info.total_files = old_total;
-			} else if (mfr_info->extra_info.total_files.GetIndex() != old_total) {
-				throw InternalException(
-				    "Error encountered when analyzing filtered out files for delta scan: total_files inconsistent!");
 			}
 
+			// Likewise keep the smallest post-filter count across passes (the most files skipped).
 			if (!mfr_info->extra_info.filtered_files.IsValid() ||
-			    mfr_info->extra_info.filtered_files.GetIndex() >= new_total) {
+			    new_total < mfr_info->extra_info.filtered_files.GetIndex()) {
 				mfr_info->extra_info.filtered_files = new_total;
-			} else {
-				throw InternalException(
-				    "Error encountered when analyzing filtered out files for delta scan: filtered_files inconsistent!");
 			}
 		}
 	}
 
-	// Report the new filters
-	vector<Value> old_filters_value_list;
-	for (auto &f : table_filters.filters) {
-		auto &column_index = f.first;
-		auto &filter = f.second;
-		if (column_index < global_columns.size()) {
-			auto &col_name = global_columns[column_index].name;
-			old_filters_value_list.push_back(filter->ToString(col_name));
+	// Collect a filter set's rendered strings, sorted for deterministic output (the underlying map is unordered).
+	auto collect_filter_strings = [&](const DeltaTableFilters &tf) {
+		vector<string> result;
+		for (auto &entry : tf) {
+			auto column_id = entry.first;
+			if (column_id < global_columns.size()) {
+				result.push_back(entry.second->ToString(global_columns[column_id].name.GetIdentifierName()));
+			}
 		}
-	}
-	auto old_filters_value = Value::LIST(LogicalType::VARCHAR, old_filters_value_list);
+		std::sort(result.begin(), result.end());
+		return result;
+	};
 
-	// Report the new filters
-	vector<Value> filters_value_list;
-	for (auto &f : new_list.table_filters.filters) {
-		auto &column_index = f.first;
-		auto &filter = f.second;
-		if (column_index < global_columns.size()) {
-			auto &col_name = global_columns[column_index].name;
-			filters_value_list.push_back(filter->ToString(col_name));
+	auto to_value_list = [](const vector<string> &strings) {
+		vector<Value> values;
+		for (auto &s : strings) {
+			values.push_back(Value(s));
 		}
-	}
-	auto filters_value = Value::LIST(LogicalType::VARCHAR, filters_value_list);
+		return Value::LIST(LogicalType::VARCHAR, values);
+	};
+
+	// Report the pre- and post-pushdown filters
+	auto old_filters_value = to_value_list(collect_filter_strings(table_filters));
+	auto new_filter_strings = collect_filter_strings(new_list.table_filters);
+	auto filters_value = to_value_list(new_filter_strings);
 
 	if (should_report_explain_output) {
 		string files_string;
-		for (auto &filter : filters_value_list) {
-			files_string += filter.ToString() + "\n";
+		for (auto &filter : new_filter_strings) {
+			files_string += filter + "\n";
 		}
 		mfr_info->extra_info.file_filters = files_string.substr(0, files_string.size() - 1);
 	}
 
 	if (should_log) {
 		child_list_t<Value> struct_fields;
-		struct_fields.push_back({"path", Value(GetPath())});
-		struct_fields.push_back({"type", Value(pushdown_type)});
-		struct_fields.push_back({"filters_before", old_filters_value});
-		struct_fields.push_back({"filters_after", filters_value});
+		struct_fields.emplace_back("path", Value(GetPath()));
+		struct_fields.emplace_back("type", Value(pushdown_type));
+		struct_fields.emplace_back("filters_before", old_filters_value);
+		struct_fields.emplace_back("filters_after", filters_value);
 		if (new_total != DConstants::INVALID_INDEX) {
-			struct_fields.push_back({"files_before", Value::BIGINT(old_total)});
-			struct_fields.push_back({"files_after", Value::BIGINT(new_total)});
+			struct_fields.emplace_back("files_before", Value::BIGINT(old_total));
+			struct_fields.emplace_back("files_after", Value::BIGINT(new_total));
 		}
 		auto struct_value = Value::STRUCT(struct_fields);
 		logger.WriteLog(delta_log_type, log_level, struct_value.ToString());
@@ -991,31 +1006,33 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 
 unique_ptr<MultiFileList>
 DeltaMultiFileList::DynamicFilterPushdown(ClientContext &context, const MultiFileOptions &options,
-                                          const vector<string> &names, const vector<LogicalType> &types,
+                                          const vector<Identifier> &names, const vector<LogicalType> &types,
                                           const vector<column_t> &column_ids, TableFilterSet &filters) const {
 	auto pushdown_mode = GetDeltaFilterPushdownMode(context, options);
 	if (pushdown_mode == DeltaFilterPushdownMode::NONE || pushdown_mode == DeltaFilterPushdownMode::CONSTANT_ONLY) {
 		return nullptr;
 	}
 
-	if (filters.filters.empty()) {
+	if (!filters.HasFilters()) {
 		return nullptr;
 	}
 
 	TableFilterSet filters_copy;
-	for (auto &filter : filters.filters) {
-		auto column_id = column_ids[filter.first];
-		auto previously_pushed_down_filter = this->table_filters.filters.find(column_id);
-		if (previously_pushed_down_filter != this->table_filters.filters.end() &&
-		    filter.second->Equals(*previously_pushed_down_filter->second)) {
+	for (auto &entry : filters) {
+		auto proj_id = entry.GetIndex();
+		auto &filter =
+		    ExpressionFilter::GetExpressionFilter(entry.Filter(), "DeltaMultiFileList::DynamicFilterPushdown");
+		auto column_id = column_ids[proj_id];
+		auto previously_pushed_down_filter = table_filters.TryGetFilterByColumnIndex(column_id);
+		if (previously_pushed_down_filter && filter.Equals(*previously_pushed_down_filter)) {
 			// Skip filters that we already have pushed down
 			continue;
 		}
-		filters_copy.PushFilter(ColumnIndex(column_id), filter.second->Copy());
+		filters_copy.PushFilter(proj_id, filter.Copy());
 	}
 
-	if (!filters_copy.filters.empty()) {
-		auto new_snap = PushdownInternal(context, filters_copy);
+	if (filters_copy.HasFilters()) {
+		auto new_snap = PushdownInternal(context, filters_copy, column_ids);
 		ReportFilterPushdown(context, *new_snap, column_ids, "dynamic", nullptr);
 		return std::move(new_snap);
 	}
@@ -1077,6 +1094,14 @@ idx_t DeltaMultiFileList::GetVersion() {
 	unique_lock<mutex> lck(lock);
 	EnsureSnapshotInitialized();
 	return version;
+}
+
+void DeltaMultiFileList::PinVersion(idx_t v) {
+	unique_lock<mutex> lck(lock);
+	if (initialized_snapshot) {
+		throw InternalException("DeltaMultiFileList::PinVersion called after the snapshot was initialized");
+	}
+	version = v;
 }
 
 DeltaFileMetaData &DeltaMultiFileList::GetMetaData(idx_t index) const {

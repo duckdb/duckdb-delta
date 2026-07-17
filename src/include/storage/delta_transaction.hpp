@@ -16,6 +16,7 @@ class DeltaCatalog;
 class DeltaSchemaEntry;
 class DeltaTableEntry;
 class DeltaMultiFileList;
+class TableFunctionCatalogEntry;
 struct DeltaDataFile;
 struct DeltaMultiFileColumnDefinition;
 

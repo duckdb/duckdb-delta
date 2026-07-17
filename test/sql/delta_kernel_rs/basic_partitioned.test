@@ -9,7 +9,7 @@ require delta
 require-env DELTA_KERNEL_TESTS_PATH
 
 query III
-SELECT * FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
+SELECT * FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
 ----
 NULL	6	6.6
 a	4	4.4
@@ -19,6 +19,6 @@ b	2	2.2
 c	3	3.3
 
 query II
-EXPLAIN FROM delta_scan('${DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
+EXPLAIN FROM delta_scan('{DELTA_KERNEL_TESTS_PATH}/basic_partitioned')
 ----
 physical_plan	<REGEX>:.*6 rows.*

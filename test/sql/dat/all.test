@@ -13,18 +13,18 @@ require-env DAT_PATH
 # all_primitive_types
 query I rowsort all_primitive_types
 SELECT * EXCLUDE(timestamp)
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta')
 ----
 
 # TODO: exclude is necessary due to issue with the golden tables, this should be fixed upstream
 query I rowsort all_primitive_types
 SELECT * EXCLUDE(timestamp)
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/all_primitive_types/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/all_primitive_types/expected/latest/**/*.parquet')
 ----
 
 query I
 SELECT timestamp
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/all_primitive_types/delta')
 ----
 1970-01-01 00:00:00+00
 1970-01-01 01:00:00+00
@@ -35,95 +35,95 @@ FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/all_primitive_types/delt
 # nested_types
 query I rowsort nested_types
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/nested_types/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/nested_types/delta')
 ----
 query I rowsort nested_types
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/nested_types/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/nested_types/expected/latest/**/*.parquet')
 ----
 
 # basic_append
 query I rowsort basic_append
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 
 query I rowsort basic_append
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/expected/latest/**/*.parquet')
 ----
 
 query I rowsort basic_append_count
 SELECT count(*)
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/delta')
 ----
 
 query I rowsort basic_append_count
 SELECT count(*)
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/basic_append/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/basic_append/expected/latest/**/*.parquet')
 ----
 
 # with_schema_change
 query I rowsort with_schema_change
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/with_schema_change/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/with_schema_change/delta')
 ----
 
 query I rowsort with_schema_change
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/with_schema_change/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/with_schema_change/expected/latest/**/*.parquet')
 ----
 
 query I rowsort with_schema_change_count
 SELECT count(*)
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/with_schema_change/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/with_schema_change/delta')
 ----
 
 query I rowsort with_schema_change_count
 SELECT count(*)
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/with_schema_change/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/with_schema_change/expected/latest/**/*.parquet')
 ----
 
 # basic_partitioned
 query I rowsort basic_partitioned
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_partitioned/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_partitioned/delta')
 ----
 
 query I rowsort basic_partitioned
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/basic_partitioned/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/basic_partitioned/expected/latest/**/*.parquet')
 ----
 
 query I rowsort basic_partitioned_count
 SELECT count(*)
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/basic_partitioned/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/basic_partitioned/delta')
 ----
 
 query I rowsort basic_partitioned_count
 SELECT count(*)
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/basic_partitioned/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/basic_partitioned/expected/latest/**/*.parquet')
 ----
 
 # multi_partitioned
 query I rowsort multi_partitioned
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/multi_partitioned/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/multi_partitioned/delta')
 ----
 
 query I rowsort multi_partitioned
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/multi_partitioned/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/multi_partitioned/expected/latest/**/*.parquet')
 ----
 
 query I rowsort multi_partitioned_count
 SELECT count(*)
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/multi_partitioned/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/multi_partitioned/delta')
 ----
 
 query I rowsort multi_partitioned_count
 SELECT count(*)
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/multi_partitioned/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/multi_partitioned/expected/latest/**/*.parquet')
 ----
 
 # TODO: fix this
@@ -132,18 +132,18 @@ require notwindows
 # multi_partitioned_2
 query I rowsort multi_partitioned_2
 SELECT * EXCLUDE(time) 
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/multi_partitioned_2/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/multi_partitioned_2/delta')
 ----
 
 # TODO: exclude is necessary due to issue with the golden tables, this should be fixed upstream
 query I rowsort multi_partitioned_2
 SELECT * EXCLUDE(time)
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/multi_partitioned_2/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/multi_partitioned_2/expected/latest/**/*.parquet')
 ----
 
 query I
 SELECT time
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/multi_partitioned_2/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/multi_partitioned_2/delta')
 order by time
 ----
 1970-01-01 00:00:00+00
@@ -153,100 +153,100 @@ order by time
 # no_replay
 query I rowsort no_replay
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/no_replay/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/no_replay/delta')
 ----
 
 query I rowsort no_replay
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/no_replay/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/no_replay/expected/latest/**/*.parquet')
 ----
 
 # no_stats
 query I rowsort no_stats
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/no_stats/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/no_stats/delta')
 ----
 
 query I rowsort no_stats
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/no_stats/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/no_stats/expected/latest/**/*.parquet')
 ----
 
 # stats_as_struct
 query I rowsort stats_as_struct
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/stats_as_struct/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/stats_as_struct/delta')
 ----
 
 query I rowsort stats_as_struct
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/stats_as_struct/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/stats_as_struct/expected/latest/**/*.parquet')
 ----
 
 # with_checkpoint
 query I rowsort with_checkpoint
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/with_checkpoint/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/with_checkpoint/delta')
 ----
 
 query I rowsort with_checkpoint
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/with_checkpoint/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/with_checkpoint/expected/latest/**/*.parquet')
 ----
 
 # cdf
 query I rowsort cdf
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/cdf/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/cdf/delta')
 ----
 
 query I rowsort cdf
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/cdf/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/cdf/expected/latest/**/*.parquet')
 ----
 
 # check_constraints
 query I rowsort check_constraints
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/check_constraints/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/check_constraints/delta')
 ----
 
 query I rowsort check_constraints
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/check_constraints/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/check_constraints/expected/latest/**/*.parquet')
 ----
 
 # column_mapping
 query I rowsort column_mapping_dat
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/column_mapping/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/column_mapping/delta')
 ----
 
 query I rowsort column_mapping_dat
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/column_mapping/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/column_mapping/expected/latest/**/*.parquet')
 ----
 
 # deletion_vectors
 query I rowsort deletion_vectors
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/deletion_vectors/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/deletion_vectors/delta')
 ----
 
 query I rowsort deletion_vectors
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/deletion_vectors/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/deletion_vectors/expected/latest/**/*.parquet')
 ----
 
 # generated_columns
 query I rowsort generated_columns
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/generated_columns/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/generated_columns/delta')
 ----
 
 query I rowsort generated_columns
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/generated_columns/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/generated_columns/expected/latest/**/*.parquet')
 ----
 
 # iceberg_compat_v1
@@ -255,32 +255,32 @@ FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/generated_columns/expe
 #
 # query I rowsort iceberg_compat_v1
 # SELECT *
-# FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/iceberg_compat_v1/delta')
+# FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/iceberg_compat_v1/delta')
 # ----
 #
 # query I rowsort iceberg_compat_v1
 # SELECT *
-# FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/iceberg_compat_v1/expected/latest/**/*.parquet')
+# FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/iceberg_compat_v1/expected/latest/**/*.parquet')
 # ----
 
 # partitioned_with_null
 query I rowsort partitioned_with_null
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/partitioned_with_null/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/partitioned_with_null/delta')
 ----
 
 query I rowsort partitioned_with_null
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/partitioned_with_null/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/partitioned_with_null/expected/latest/**/*.parquet')
 ----
 
 # timestamp_ntz
 query I rowsort timestamp_ntz_dat
 SELECT *
-FROM delta_scan('${DAT_PATH}/out/reader_tests/generated/timestamp_ntz/delta')
+FROM delta_scan('{DAT_PATH}/out/reader_tests/generated/timestamp_ntz/delta')
 ----
 
 query I rowsort timestamp_ntz_dat
 SELECT *
-FROM parquet_scan('${DAT_PATH}/out/reader_tests/generated/timestamp_ntz/expected/latest/**/*.parquet')
+FROM parquet_scan('{DAT_PATH}/out/reader_tests/generated/timestamp_ntz/expected/latest/**/*.parquet')
 ----

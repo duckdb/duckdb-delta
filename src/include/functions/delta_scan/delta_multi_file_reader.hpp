@@ -33,12 +33,12 @@ struct DeltaMultiFileReader : public MultiFileReader {
 
 	//! Override the regular parquet bind using the MultiFileReader Bind. The bind from these are what DuckDB's file
 	//! readers will try read
-	bool Bind(MultiFileOptions &options, MultiFileList &files, vector<LogicalType> &return_types, vector<string> &names,
-	          MultiFileReaderBindData &bind_data) override;
+	bool Bind(MultiFileOptions &options, MultiFileList &files, vector<LogicalType> &return_types,
+	          vector<Identifier> &names, MultiFileReaderBindData &bind_data) override;
 
 	//! Override the Options bind
 	void BindOptions(MultiFileOptions &options, MultiFileList &files, vector<LogicalType> &return_types,
-	                 vector<string> &names, MultiFileReaderBindData &bind_data) override;
+	                 vector<Identifier> &names, MultiFileReaderBindData &bind_data) override;
 
 	unique_ptr<MultiFileReaderGlobalState>
 	InitializeGlobalState(ClientContext &context, const MultiFileOptions &file_options,
@@ -68,6 +68,9 @@ struct DeltaMultiFileReader : public MultiFileReader {
 	// A snapshot can be injected into the multifilereader, this ensures the GetMultiFileList can return this snapshot
 	// (note that the path should match the one passed to CreateFileList)
 	shared_ptr<DeltaMultiFileList> snapshot;
+	// Version requested via the `version` named parameter, captured in ParseOption. Transferred to the
+	// snapshot before Bind (see DeltaMultiFileReader::Bind) when no snapshot was injected via function_info.
+	idx_t requested_version = DConstants::INVALID_INDEX;
 };
 
 } // namespace duckdb

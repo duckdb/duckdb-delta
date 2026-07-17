@@ -13,10 +13,10 @@ require json
 require notwindows # paths to JSON fail, skip windows
 
 statement ok
-from copy_dir('data/inlined/simple_table/delta_lake', '__TEST_DIR__/null_stats');
+from copy_dir('data/inlined/simple_table/delta_lake', '{TEMP_DIR}/null_stats');
 
 statement ok
-ATTACH '__TEST_DIR__/null_stats' AS null_stats (TYPE delta, READ_ONLY false);
+ATTACH '{TEMP_DIR}/null_stats' AS null_stats (TYPE delta, READ_ONLY false);
 
 # Insert non-null (=42), then NULL to get both real min/max and null stats in 2 transactions.
 statement ok
@@ -38,7 +38,7 @@ SELECT
     json_extract_string(add.stats, '$.minValues.i'),
     json_extract_string(add.stats, '$.maxValues.i'),
     json_extract_string(add.stats, '$.nullCount.i')
-FROM read_json('__TEST_DIR__/null_stats/_delta_log/00000000000000000001.json')
+FROM read_json('{TEMP_DIR}/null_stats/_delta_log/00000000000000000001.json')
 WHERE add IS NOT NULL
 ----
 42	42	0
@@ -49,7 +49,7 @@ SELECT
     json_extract_string(add.stats, '$.minValues.i'),
     json_extract_string(add.stats, '$.maxValues.i'),
     json_extract_string(add.stats, '$.nullCount.i')
-FROM read_json('__TEST_DIR__/null_stats/_delta_log/00000000000000000002.json')
+FROM read_json('{TEMP_DIR}/null_stats/_delta_log/00000000000000000002.json')
 WHERE add IS NOT NULL
 ----
 NULL	NULL	1

@@ -42,10 +42,10 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateFunction(CatalogTransaction t
 }
 
 void DeltaUnqualifyColumnRef(ParsedExpression &expr) {
-	if (expr.type == ExpressionType::COLUMN_REF) {
+	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
 		auto &colref = expr.Cast<ColumnRefExpression>();
-		auto name = std::move(colref.column_names.back());
-		colref.column_names = {std::move(name)};
+		auto name = std::move(colref.ColumnNamesMutable().back());
+		colref.ColumnNamesMutable() = {std::move(name)};
 		return;
 	}
 	ParsedExpressionIterator::EnumerateChildren(expr, DeltaUnqualifyColumnRef);
@@ -110,24 +110,27 @@ unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &co
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version, old_snapshot);
 
-	// Set log_tail for catalog-managed commits (CCV2) if available
+	// Set log_tail and max_catalog_version for catalog-managed commits (CCV2) if available
 	if (!delta_catalog.catalog_log_tail.IsNull()) {
 		snapshot->delta_log_path = make_uniq<DeltaLogPathArray>(delta_catalog.catalog_log_tail);
+	}
+	if (delta_catalog.max_catalog_version >= 0) {
+		snapshot->max_catalog_version = delta_catalog.max_catalog_version;
 	}
 
 	// Get the names and types from the delta snapshot
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<Identifier> names;
 	snapshot->Bind(return_types, names);
 
 	// TODO: forward nullability constraints
 
 	CreateTableInfo table_info;
 	for (idx_t i = 0; i < return_types.size(); i++) {
-		table_info.columns.AddColumn(ColumnDefinition(names[i], return_types[i]));
+		table_info.columns.AddColumn(ColumnDefinition(Identifier(names[i]), return_types[i]));
 	}
-	table_info.table =
-	    !delta_catalog.internal_table_name.empty() ? delta_catalog.internal_table_name : catalog.GetName();
+	table_info.SetTableName(!delta_catalog.internal_table_name.empty() ? Identifier(delta_catalog.internal_table_name)
+	                                                                   : catalog.GetName());
 
 	// Copy over constraints to table info TODO: these are incompatible currently
 	// table_info.constraints = snapshot->not_null_constraints;}

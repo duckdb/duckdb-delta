@@ -12,14 +12,14 @@ require notwindows
 
 # Copy test data to a writable tmp dir
 statement ok
-CALL copy_dir('data/inlined/simple_table', '__TEST_DIR__/checkpoint/simple_table');
+CALL copy_dir('data/inlined/simple_table', '{TEMP_DIR}/checkpoint/simple_table');
 
 statement ok
-ATTACH '__TEST_DIR__/checkpoint/simple_table/delta_lake' AS checkpoint_tbl (TYPE delta);
+ATTACH '{TEMP_DIR}/checkpoint/simple_table/delta_lake' AS checkpoint_tbl (TYPE delta);
 
 # Pre-checkpoint - Assert: 0 _last_checkpoint file, and 0 *.checkpoint*.parquet file
 query I
-SELECT count(*) FROM glob('__TEST_DIR__/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
+SELECT count(*) FROM glob('{TEMP_DIR}/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
 ----
 0
 
@@ -30,7 +30,7 @@ CHECKPOINT checkpoint_tbl
 # Post-checkpoint: Expect: 1 _last_checkpoint file, and 1 *.checkpoint*.parquet file
 # hardcode the name here since it should be safe with this canned data.
 query I sorted
-SELECT parse_filename(file) FROM glob('__TEST_DIR__/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
+SELECT parse_filename(file) FROM glob('{TEMP_DIR}/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
 ----
 00000000000000000000.checkpoint.parquet
 _last_checkpoint
@@ -41,7 +41,7 @@ CHECKPOINT checkpoint_tbl
 
 # Expect: 1 _last_checkpoint file, and 1 *.checkpoint*.parquet file
 query I sorted
-SELECT count(*) FROM glob('__TEST_DIR__/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
+SELECT count(*) FROM glob('{TEMP_DIR}/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
 ----
 2
 
@@ -51,7 +51,7 @@ FORCE CHECKPOINT checkpoint_tbl
 
 # Expect: 1 _last_checkpoint file, and 1 *.checkpoint*.parquet file
 query I sorted
-SELECT count(*) FROM glob('__TEST_DIR__/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
+SELECT count(*) FROM glob('{TEMP_DIR}/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
 ----
 2
 
@@ -70,7 +70,7 @@ CHECKPOINT checkpoint_tbl
 
 # Expect: 1 _last_checkpoint file, and 2 *.checkpoint*.parquet files
 query I sorted
-SELECT count(*) FROM glob('__TEST_DIR__/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
+SELECT count(*) FROM glob('{TEMP_DIR}/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
 ----
 3
 
@@ -94,7 +94,7 @@ CHECKPOINT checkpoint_tbl
 
 # Expect: 1 _last_checkpoint file, and 3 *.checkpoint*.parquet files
 query I sorted
-SELECT count(*) FROM glob('__TEST_DIR__/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
+SELECT count(*) FROM glob('{TEMP_DIR}/checkpoint/simple_table/delta_lake/_delta_log/*checkpoint*');
 ----
 4
 
@@ -105,10 +105,10 @@ DETACH checkpoint_tbl
 
 # Pinned version — checkpoint should work with version=0
 statement ok
-CALL copy_dir('data/inlined/simple_table', '__TEST_DIR__/checkpoint/simple_table_pinned');
+CALL copy_dir('data/inlined/simple_table', '{TEMP_DIR}/checkpoint/simple_table_pinned');
 
 statement ok
-ATTACH '__TEST_DIR__/checkpoint/simple_table_pinned/delta_lake' AS checkpoint_pinned (TYPE delta, version 0);
+ATTACH '{TEMP_DIR}/checkpoint/simple_table_pinned/delta_lake' AS checkpoint_pinned (TYPE delta, version 0);
 
 statement ok
 CHECKPOINT checkpoint_pinned
@@ -116,7 +116,7 @@ CHECKPOINT checkpoint_pinned
 # Post-checkpoint: Expect: 1 _last_checkpoint file, and 1 *.checkpoint*.parquet file
 # hardcode the name here since it should be safe with this canned data.
 query I sorted
-SELECT parse_filename(file) FROM glob('__TEST_DIR__/checkpoint/simple_table_pinned/delta_lake/_delta_log/*checkpoint*');
+SELECT parse_filename(file) FROM glob('{TEMP_DIR}/checkpoint/simple_table_pinned/delta_lake/_delta_log/*checkpoint*');
 ----
 00000000000000000000.checkpoint.parquet
 _last_checkpoint
@@ -133,10 +133,10 @@ DETACH checkpoint_pinned
 
 # Read-only — checkpoint behavior left to kernel (even if NOOP)
 statement ok
-CALL copy_dir('data/inlined/simple_table', '__TEST_DIR__/checkpoint/simple_table_ro');
+CALL copy_dir('data/inlined/simple_table', '{TEMP_DIR}/checkpoint/simple_table_ro');
 
 statement ok
-ATTACH '__TEST_DIR__/checkpoint/simple_table_ro/delta_lake' AS checkpoint_ro (TYPE delta, READ_ONLY);
+ATTACH '{TEMP_DIR}/checkpoint/simple_table_ro/delta_lake' AS checkpoint_ro (TYPE delta, READ_ONLY);
 
 # do not assert anything on RO checkpoint outcomes
 

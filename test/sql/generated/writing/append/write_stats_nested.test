@@ -17,10 +17,10 @@ require-env GENERATED_DATA_AVAILABLE
 #------------------------------------------------------------------------------
 
 statement ok
-from copy_dir('data/generated/simple_table_nested', '__TEST_DIR__/write_stats_nested/simple_table_nested');
+from copy_dir('data/generated/simple_table_nested', '{TEMP_DIR}/write_stats_nested/simple_table_nested');
 
 statement ok
-ATTACH '__TEST_DIR__/write_stats_nested/simple_table_nested/delta_lake' AS t (TYPE delta);
+ATTACH '{TEMP_DIR}/write_stats_nested/simple_table_nested/delta_lake' AS t (TYPE delta);
 
 query II
 SELECT count(*), sum(i.a.b) FROM t;
@@ -33,7 +33,7 @@ INSERT INTO t VALUES ({'a': {'b': 10}});
 # Full stats JSON is deterministic for a single-leaf nested column
 query I
 SELECT add.stats
-FROM read_json('__TEST_DIR__/write_stats_nested/simple_table_nested/delta_lake/_delta_log/00000000000000000002.json')
+FROM read_json('{TEMP_DIR}/write_stats_nested/simple_table_nested/delta_lake/_delta_log/00000000000000000002.json')
 WHERE add IS NOT NULL
 ----
 {"numRecords":1,"nullCount":{"i":{"a":{"b":0}}},"minValues":{"i":{"a":{"b":10}}},"maxValues":{"i":{"a":{"b":10}}},"tightBounds":true}
@@ -70,10 +70,10 @@ DETACH t;
 #------------------------------------------------------------------------------
 
 statement ok
-from copy_dir('data/generated/simple_partitioned_with_structs', '__TEST_DIR__/write_stats_nested/simple_partitioned_with_structs');
+from copy_dir('data/generated/simple_partitioned_with_structs', '{TEMP_DIR}/write_stats_nested/simple_partitioned_with_structs');
 
 statement ok
-ATTACH '__TEST_DIR__/write_stats_nested/simple_partitioned_with_structs/delta_lake' AS t (TYPE delta);
+ATTACH '{TEMP_DIR}/write_stats_nested/simple_partitioned_with_structs/delta_lake' AS t (TYPE delta);
 
 statement ok
 INSERT INTO t VALUES ({'i': 100, 'j': 100}, 99);
@@ -86,7 +86,7 @@ SELECT
     json_extract_string(add.stats, '$.minValues.value.i'),
     json_extract_string(add.stats, '$.maxValues.value.j'),
     json_extract_string(add.stats, '$.tightBounds')
-FROM read_json('__TEST_DIR__/write_stats_nested/simple_partitioned_with_structs/delta_lake/_delta_log/00000000000000000001.json')
+FROM read_json('{TEMP_DIR}/write_stats_nested/simple_partitioned_with_structs/delta_lake/_delta_log/00000000000000000001.json')
 WHERE add IS NOT NULL
 ----
 1	0	100	100	true

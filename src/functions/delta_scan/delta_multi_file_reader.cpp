@@ -55,7 +55,7 @@ void FinalizeBindBaseOverride(MultiFileReaderData &reader_data, const MultiFileO
 	// create a map of name -> column index
 	auto &local_columns = reader_data.reader->GetColumns();
 	auto &filename = reader_data.reader->GetFileName();
-	case_insensitive_map_t<idx_t> name_map;
+	identifier_map_t<idx_t> name_map;
 	if (file_options.union_by_name) {
 		for (idx_t col_idx = 0; col_idx < local_columns.size(); col_idx++) {
 			auto &column = local_columns[col_idx];
@@ -104,12 +104,21 @@ void FinalizeBindBaseOverride(MultiFileReaderData &reader_data, const MultiFileO
 }
 
 bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files, vector<LogicalType> &return_types,
-                                vector<string> &names, MultiFileReaderBindData &bind_data) {
+                                vector<Identifier> &names, MultiFileReaderBindData &bind_data) {
 	auto &delta_snapshot = dynamic_cast<DeltaMultiFileList &>(files);
 
 	auto log_tail_setting = options.custom_options.find("log_tail");
 	if (log_tail_setting != options.custom_options.end()) {
 		delta_snapshot.delta_log_path = make_uniq<DeltaLogPathArray>(log_tail_setting->second);
+	}
+
+	// MultiFileBind constructs the file list before parsing named parameters, so a `version => N`
+	// captured by ParseOption (and stashed on the reader as `requested_version`) cannot be passed
+	// to DeltaMultiFileList's constructor. Transfer it here, before delta_snapshot.Bind() triggers
+	// snapshot initialization. If a snapshot was injected via function_info (catalog-driven path),
+	// `snapshot` is non-null and PinVersion would have nothing to do, so we skip it.
+	if (!snapshot && requested_version != DConstants::INVALID_INDEX) {
+		delta_snapshot.PinVersion(requested_version);
 	}
 
 	delta_snapshot.Bind(return_types, names);
@@ -118,7 +127,7 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 }
 
 void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList &files,
-                                       vector<LogicalType> &return_types, vector<string> &names,
+                                       vector<LogicalType> &return_types, vector<Identifier> &names,
                                        MultiFileReaderBindData &bind_data) {
 	// Disable all other multifilereader options
 	options.auto_detect_hive_partitioning = false;
@@ -137,8 +146,8 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 		auto partitions = snapshot.GetPartitionColumns();
 		for (auto &part : partitions) {
 			idx_t hive_partitioning_index;
-			auto lookup = std::find_if(names.begin(), names.end(),
-			                           [&](const string &col_name) { return StringUtil::CIEquals(col_name, part); });
+			auto lookup =
+			    std::find_if(names.begin(), names.end(), [&](const Identifier &col_name) { return col_name == part; });
 			if (lookup != names.end()) {
 				// hive partitioning column also exists in file - override
 				auto idx = NumericCast<idx_t>(lookup - names.begin());
@@ -147,6 +156,9 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 				throw IOException("Delta Snapshot returned partition column that is not present in the schema");
 			}
 			bind_data.hive_partitioning_indexes.emplace_back(part, hive_partitioning_index);
+			// Register the partition column's type so pre-open filter skipping resolves the partition value as the
+			// column type instead of defaulting to VARCHAR (which crashes typed ExpressionFilter evaluation).
+			options.hive_types_schema[part] = return_types[hive_partitioning_index];
 		}
 	}
 
@@ -238,9 +250,7 @@ shared_ptr<MultiFileList> DeltaMultiFileReader::CreateFileList(ClientContext &co
 	if (snapshot) {
 		// TODO: assert that we are querying the same path as this injected snapshot
 		// This takes the kernel snapshot from the delta snapshot and ensures we use that snapshot for reading
-		if (snapshot) {
-			return snapshot;
-		}
+		return snapshot;
 	}
 
 	return make_shared_ptr<DeltaMultiFileList>(context, paths[0], DConstants::INVALID_INDEX);
@@ -264,7 +274,7 @@ DeltaMultiFileReader::InitializeGlobalState(ClientContext &context, const MultiF
 		}
 
 		auto global_name = global_columns[global_id].name;
-		selected_columns.insert({global_name, i});
+		selected_columns.insert({global_name.GetIdentifierName(), i});
 	}
 
 	auto res = make_uniq<DeltaMultiFileReaderGlobalState>(extra_columns, &file_list);
@@ -302,6 +312,11 @@ bool DeltaMultiFileReader::ParseOption(const string &key, const Value &val, Mult
 	// We need to capture this one to know whether to emit
 	if (loption == "pushdown_filters") {
 		options.custom_options["pushdown_filters"] = val;
+		return true;
+	}
+
+	if (loption == "version") {
+		requested_version = val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>();
 		return true;
 	}
 
