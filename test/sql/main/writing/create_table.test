@@ -1,0 +1,115 @@
+# name: test/sql/main/writing/create_table.test
+# description: CREATE TABLE for delta tables
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Basic create
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_basic' AS basic (TYPE delta);
+
+statement ok
+CREATE TABLE basic.basic (i INTEGER, s VARCHAR);
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_basic/_delta_log/*.json');
+----
+1
+
+# The new table is served from the catalog without re-attaching
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'basic';
+----
+i	INTEGER
+s	VARCHAR
+
+query I
+SELECT count(*) FROM basic.basic;
+----
+0
+
+statement error
+CREATE TABLE basic.basic (i INTEGER);
+----
+already exists
+
+# -----------------------------------------------------------------------------
+# Naming the destination
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_with_path' AS with_path (TYPE delta);
+
+statement ok
+CREATE TABLE with_path.with_path (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_with_path');
+
+query I
+SELECT count(*) FROM with_path.with_path;
+----
+0
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_other_path' AS other_path (TYPE delta);
+
+statement error
+CREATE TABLE other_path.other_path (i INTEGER) WITH (path = '{TEMP_DIR}/somewhere_else');
+----
+can only create a table at the attached path
+
+# -----------------------------------------------------------------------------
+# Partition columns
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_partitioned' AS partitioned (TYPE delta);
+
+statement ok
+CREATE TABLE partitioned.partitioned (id INTEGER, part_col VARCHAR) PARTITIONED BY (part_col);
+
+query I
+SELECT count(*) FROM partitioned.partitioned;
+----
+0
+
+# Kernel requires at least one non-partition column
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_all_partitioned' AS all_partitioned (TYPE delta);
+
+statement error
+CREATE TABLE all_partitioned.all_partitioned (part_col VARCHAR) PARTITIONED BY (part_col);
+----
+<REGEX>:.*artition.*
+
+# -----------------------------------------------------------------------------
+# Unsupported for now
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_unsupported' AS unsupported (TYPE delta);
+
+statement error
+CREATE TABLE unsupported.wrong_name (i INTEGER);
+----
+must use the attached name
+
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER NOT NULL);
+----
+does not support NOT NULL
+
+statement error
+CREATE TABLE unsupported.unsupported (i UINTEGER);
+----
+does not support column 'i' of type UINTEGER
+
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER) SORTED BY (i);
+----
+does not support SORTED BY

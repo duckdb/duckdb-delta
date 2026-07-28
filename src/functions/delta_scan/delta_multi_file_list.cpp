@@ -336,6 +336,16 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 	return builder;
 }
 
+KernelExternEngine CreateDeltaEngine(ClientContext &context, const string &path) {
+	auto interface_builder = CreateBuilder(context, path);
+	ffi::SharedExternEngine *engine;
+	auto res = KernelUtils::TryUnpackResult(ffi::builder_build(interface_builder), engine);
+	if (res.HasError()) {
+		res.Throw();
+	}
+	return KernelExternEngine(engine);
+}
+
 struct KernelPartitionVisitorData {
 	vector<string> partitions;
 	ErrorData err_data;
@@ -721,8 +731,7 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	auto client_ctx_shared = client_ctx.lock();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
 
-	auto interface_builder = CreateBuilder(*client_ctx_shared, paths[0].path);
-	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
+	extern_engine = CreateDeltaEngine(*client_ctx_shared, paths[0].path);
 
 	if (!snapshot) {
 		ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;

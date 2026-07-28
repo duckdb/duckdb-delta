@@ -20,6 +20,10 @@
 
 namespace duckdb {
 
+//! Builds a kernel engine for a table path, applying the DuckDB secret matching that path. Callable
+//! before any snapshot exists, which is what the CREATE TABLE path needs.
+KernelExternEngine CreateDeltaEngine(ClientContext &context, const string &path);
+
 struct DeltaFileMetaData {
 	DeltaFileMetaData() {};
 
