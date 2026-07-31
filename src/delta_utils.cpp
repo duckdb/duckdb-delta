@@ -1075,9 +1075,13 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, Expressi
 		}
 		break;
 	}
+	case LogicalTypeId::TIMESTAMP:
+		right = visit_expression_literal_timestamp_ntz(state, TimestampValue::Get(value).value);
+		break;
+	case LogicalTypeId::TIMESTAMP_TZ:
+		right = visit_expression_literal_timestamp(state, TimestampTZValue::Get(value).value);
+		break;
 	// TODO: implement these types
-	case LogicalTypeId::TIMESTAMP:    // kernel ignores max stats for timestamps (see delta-kernel-rs#1002)
-	case LogicalTypeId::TIMESTAMP_TZ: // kernel ignores max stats for timestamps (see delta-kernel-rs#1002)
 	case LogicalTypeId::STRUCT:
 	case LogicalTypeId::MAP:
 	case LogicalTypeId::LIST:
