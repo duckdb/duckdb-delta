@@ -63,7 +63,8 @@ struct DeltaMultiFileReader : public MultiFileReader {
 	                   ExpressionExecutor &executor, optional_ptr<MultiFileReaderGlobalState> global_state) override;
 
 	//! Override the ParseOption call to parse delta_scan specific options
-	bool ParseOption(const string &key, const Value &val, MultiFileOptions &options, ClientContext &context) override;
+	bool ParseOption(const Identifier &key, const Value &val, MultiFileOptions &options,
+	                 ClientContext &context) override;
 
 	// A snapshot can be injected into the multifilereader, this ensures the GetMultiFileList can return this snapshot
 	// (note that the path should match the one passed to CreateFileList)

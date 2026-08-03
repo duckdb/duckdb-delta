@@ -1002,9 +1002,14 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 }
 
 unique_ptr<MultiFileList>
-DeltaMultiFileList::DynamicFilterPushdown(ClientContext &context, const MultiFileOptions &options,
-                                          const vector<Identifier> &names, const vector<LogicalType> &types,
-                                          const vector<column_t> &column_ids, TableFilterSet &filters) const {
+DeltaMultiFileList::DynamicFilterPushdown(MultiFileDynamicPushdownInfo &dynamic_pushdown_info) const {
+	auto &options = dynamic_pushdown_info.options;
+	auto &names = dynamic_pushdown_info.column_names;
+	auto &types = dynamic_pushdown_info.column_types;
+	auto &column_ids = dynamic_pushdown_info.column_ids;
+	auto &context = dynamic_pushdown_info.context;
+	auto &filters = dynamic_pushdown_info.filters;
+
 	auto pushdown_mode = GetDeltaFilterPushdownMode(context, options);
 	if (pushdown_mode == DeltaFilterPushdownMode::NONE || pushdown_mode == DeltaFilterPushdownMode::CONSTANT_ONLY) {
 		return nullptr;

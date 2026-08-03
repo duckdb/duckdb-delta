@@ -295,27 +295,25 @@ void DeltaMultiFileReader::FinalizeChunk(ClientContext &context, const MultiFile
 	D_ASSERT(delta_global_state.file_list);
 };
 
-bool DeltaMultiFileReader::ParseOption(const string &key, const Value &val, MultiFileOptions &options,
+bool DeltaMultiFileReader::ParseOption(const Identifier &key, const Value &val, MultiFileOptions &options,
                                        ClientContext &context) {
-	auto loption = StringUtil::Lower(key);
-
-	if (loption == "pushdown_partition_info") {
+	if (key == "pushdown_partition_info") {
 		options.custom_options["pushdown_partition_info"] = val;
 		return true;
 	}
 
-	if (loption == "log_tail") {
+	if (key == "log_tail") {
 		options.custom_options["log_tail"] = val;
 		return true;
 	}
 
 	// We need to capture this one to know whether to emit
-	if (loption == "pushdown_filters") {
+	if (key == "pushdown_filters") {
 		options.custom_options["pushdown_filters"] = val;
 		return true;
 	}
 
-	if (loption == "version") {
+	if (key == "version") {
 		requested_version = val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>();
 		return true;
 	}
