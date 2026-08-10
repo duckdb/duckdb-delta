@@ -82,6 +82,18 @@ static bool HandleCreateConflict(ClientContext &context, const CreateTableInfo &
 	return !fs.DirectoryExists(Path::FromString(path).Join("_delta_log").ToString());
 }
 
+//! Kernel rejects a table location that does not exist. Object stores conjure prefixes on write, but
+//! a local filesystem needs the directory to be there first.
+static void EnsureTableDirectory(ClientContext &context, const string &path) {
+	if (!Path::FromString(path).IsLocal()) {
+		return;
+	}
+	auto &fs = FileSystem::GetFileSystem(context);
+	if (!fs.DirectoryExists(path)) {
+		fs.CreateDirectoriesRecursive(path);
+	}
+}
+
 static vector<string> GetCreateTablePartitionColumns(const CreateTableInfo &base) {
 	vector<string> result;
 	for (auto &key : base.partition_keys) {
@@ -136,6 +148,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	}
 	auto partition_columns = GetCreateTablePartitionColumns(base);
 
+	EnsureTableDirectory(context, path);
 	auto engine = CreateDeltaEngine(context, path);
 
 	// The builder holds a borrowed pointer to `schema_builder`, and kernel runs the visitor during
