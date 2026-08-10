@@ -63,6 +63,54 @@ CREATE TABLE other_path.other_path (i INTEGER) WITH (path = '{TEMP_DIR}/somewher
 ----
 can only create a table at the attached path
 
+# A trailing slash names the same path -- the comparison is normalized
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_norm' AS norm (TYPE delta);
+
+statement ok
+CREATE TABLE norm.norm (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_norm/');
+
+query I
+SELECT count(*) FROM norm.norm;
+----
+0
+
+# -----------------------------------------------------------------------------
+# CREATE conflict handling
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_conflict' AS conflict (TYPE delta);
+
+statement ok
+CREATE TABLE conflict.conflict (i INTEGER);
+
+# IF NOT EXISTS on an existing table is a no-op, and must not write a second commit
+statement ok
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER);
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_conflict/_delta_log/*.json');
+----
+1
+
+statement error
+CREATE OR REPLACE TABLE conflict.conflict (i INTEGER);
+----
+do not support CREATE OR REPLACE TABLE
+
+# IF NOT EXISTS on a fresh path still creates
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_if_not_exists' AS ine (TYPE delta);
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine.ine (i INTEGER);
+
+query I
+SELECT count(*) FROM ine.ine;
+----
+0
+
 # -----------------------------------------------------------------------------
 # Partition columns
 #

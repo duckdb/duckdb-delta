@@ -10,6 +10,8 @@
 #include "storage/delta_table_entry.hpp"
 #include "storage/delta_transaction.hpp"
 
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/path.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -52,13 +54,32 @@ static string GetCreateTablePath(const CreateTableInfo &base, DeltaCatalog &delt
 	auto path = option->second->Cast<ConstantExpression>().GetValue().ToString();
 
 	// A Delta catalog is a single table at a single path, so a divergent path would produce a
-	// catalog entry that does not describe what was attached.
-	if (path != delta_catalog.GetDBPath()) {
+	// catalog entry that does not describe what was attached. Compare normalized, so a trailing
+	// slash or a relative spelling of the attached path is not a spurious mismatch.
+	auto attached_path = delta_catalog.GetDBPath();
+	if (Path::Normalize(path) != Path::Normalize(attached_path)) {
 		throw NotImplementedException(
-		    "Delta CREATE TABLE can only create a table at the attached path ('%s'), not at '%s'",
-		    delta_catalog.GetDBPath(), path);
+		    "Delta CREATE TABLE can only create a table at the attached path ('%s'), not at '%s'", attached_path, path);
 	}
 	return path;
+}
+
+//! Applies DuckDB's CREATE conflict semantics ahead of the kernel call. Kernel remains the
+//! authoritative existence check (it inspects `_delta_log`); this only decides what DuckDB should do
+//! when the table is already there. Returns false when the statement should be skipped entirely.
+static bool HandleCreateConflict(ClientContext &context, const CreateTableInfo &base, const string &path) {
+	if (base.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		// Replacing means dropping, and Delta tables do not support dropping yet.
+		throw NotImplementedException("Delta tables do not support CREATE OR REPLACE TABLE");
+	}
+	if (base.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
+		return true;
+	}
+
+	// IF NOT EXISTS has to answer "does it exist" before kernel would, and the catalog entry is not
+	// a reliable signal here: looking it up builds a snapshot, which throws when there is no table.
+	auto &fs = FileSystem::GetFileSystem(context);
+	return !fs.DirectoryExists(Path::FromString(path).Join("_delta_log").ToString());
 }
 
 static vector<string> GetCreateTablePartitionColumns(const CreateTableInfo &base) {
@@ -110,6 +131,9 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	}
 
 	auto path = GetCreateTablePath(base, delta_catalog);
+	if (!HandleCreateConflict(context, base, path)) {
+		return nullptr;
+	}
 	auto partition_columns = GetCreateTablePartitionColumns(base);
 
 	auto engine = CreateDeltaEngine(context, path);

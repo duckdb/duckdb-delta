@@ -88,9 +88,10 @@ uintptr_t DeltaSchemaBuilder::Build(void *data, ffi::KernelSchemaVisitorState *s
 		}
 
 		// Kernel discards the root struct's name; the C reference example passes a placeholder too.
-		auto root_name = KernelUtils::ToDeltaString("root");
-		return builder.Unpack(ffi::visit_field_struct(state, root_name, field_ids.data(), field_ids.size(), false,
-		                                              DuckDBEngineError::AllocateError));
+		// ToDeltaString borrows, so the slice must never outlive a temporary -- keep the string named.
+		const string root_name = "root";
+		return builder.Unpack(ffi::visit_field_struct(state, KernelUtils::ToDeltaString(root_name), field_ids.data(),
+		                                              field_ids.size(), false, DuckDBEngineError::AllocateError));
 	} catch (std::exception &e) {
 		builder.error = ErrorData(e);
 	} catch (...) {
