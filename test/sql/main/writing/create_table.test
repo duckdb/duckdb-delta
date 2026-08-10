@@ -160,4 +160,4 @@ does not support column 'i' of type UINTEGER
 statement error
 CREATE TABLE unsupported.unsupported (i INTEGER) SORTED BY (i);
 ----
-does not support SORTED BY
+SORTED BY is not supported for tables in a delta catalog

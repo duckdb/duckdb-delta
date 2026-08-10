@@ -10,6 +10,7 @@
 #include "storage/delta_table_entry.hpp"
 #include "storage/delta_transaction.hpp"
 
+#include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/path.hpp"
 #include "duckdb/common/to_string.hpp"
@@ -39,6 +40,13 @@ DeltaTransaction &GetDeltaTransaction(CatalogTransaction transaction) {
 	return transaction.transaction->Cast<DeltaTransaction>();
 }
 
+//! Canonical form for comparing two spellings of one table location. `Path::ToString` is base +
+//! path + trailing separator, so dropping the separator is just leaving the last part off.
+static string CanonicalTablePath(const string &path) {
+	auto parsed = Path::FromString(path);
+	return parsed.GetBase() + parsed.GetPath();
+}
+
 //! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (path =
 //! '...')` names it explicitly. Only constants are accepted -- the binder does not evaluate table
 //! options, they arrive as raw parsed expressions.
@@ -57,16 +65,24 @@ static string GetCreateTablePath(const CreateTableInfo &base, DeltaCatalog &delt
 	// catalog entry that does not describe what was attached. Compare normalized, so a trailing
 	// slash or a relative spelling of the attached path is not a spurious mismatch.
 	auto attached_path = delta_catalog.GetDBPath();
-	if (Path::Normalize(path) != Path::Normalize(attached_path)) {
+	if (CanonicalTablePath(path) != CanonicalTablePath(attached_path)) {
 		throw NotImplementedException(
 		    "Delta CREATE TABLE can only create a table at the attached path ('%s'), not at '%s'", attached_path, path);
 	}
 	return path;
 }
 
+//! Whether a Delta table has been created at `path` yet, judged the same way kernel judges it: by
+//! the presence of `_delta_log`. Deliberately a cheap existence probe rather than a snapshot build,
+//! because callers need "is there a table here" to be answerable before there is one.
+static bool DeltaTableExistsAt(ClientContext &context, const string &path) {
+	auto &fs = FileSystem::GetFileSystem(context);
+	return fs.DirectoryExists(Path::FromString(path).Join("_delta_log").ToString());
+}
+
 //! Applies DuckDB's CREATE conflict semantics ahead of the kernel call. Kernel remains the
-//! authoritative existence check (it inspects `_delta_log`); this only decides what DuckDB should do
-//! when the table is already there. Returns false when the statement should be skipped entirely.
+//! authoritative existence check; this only decides what DuckDB should do when the table is already
+//! there. Returns false when the statement should be skipped entirely.
 static bool HandleCreateConflict(ClientContext &context, const CreateTableInfo &base, const string &path) {
 	if (base.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
 		// Replacing means dropping, and Delta tables do not support dropping yet.
@@ -76,10 +92,7 @@ static bool HandleCreateConflict(ClientContext &context, const CreateTableInfo &
 		return true;
 	}
 
-	// IF NOT EXISTS has to answer "does it exist" before kernel would, and the catalog entry is not
-	// a reliable signal here: looking it up builds a snapshot, which throws when there is no table.
-	auto &fs = FileSystem::GetFileSystem(context);
-	return !fs.DirectoryExists(Path::FromString(path).Join("_delta_log").ToString());
+	return !DeltaTableExistsAt(context, path);
 }
 
 //! Kernel rejects a table location that does not exist. Object stores conjure prefixes on write, but
@@ -130,9 +143,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		throw NotImplementedException("Delta CREATE TABLE must use the attached name ('%s'), found '%s'",
 		                              catalog.GetName().GetIdentifierName(), table_name);
 	}
-	if (!base.sort_keys.empty()) {
-		throw NotImplementedException("Delta CREATE TABLE does not support SORTED BY");
-	}
+	// SORTED BY is rejected by DeltaCatalog::SupportsCreateTable, which the binder consults first.
 	for (auto &constraint : base.constraints) {
 		// Delta requires columns to be nullable unless the `invariants` writer feature is enabled,
 		// which we do not request yet.
@@ -202,10 +213,11 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	DUCKDB_LOG_INTERNAL(context, "delta.CreateTable", LogLevel::LOG_DEBUG, "Created %s at version %s", path,
 	                    to_string(version));
 
-	// Re-read the table we just committed so the catalog serves the new snapshot without a re-attach.
-	unique_lock<mutex> l(lock);
-	cached_table = CreateTableEntry(context, DConstants::INVALID_INDEX, nullptr);
-	return *cached_table;
+	// Serve the table we just committed through the regular lookup path, so the schema cache and the
+	// transaction's entry end up in the same state as for a table that already existed. Reading it back
+	// also means the catalog serves the new snapshot without a re-attach.
+	EntryLookupInfo lookup_info(CatalogType::TABLE_ENTRY, QualifiedName(base.GetTableName()));
+	return LookupEntry(transaction, lookup_info);
 }
 
 optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) {
@@ -368,6 +380,14 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		auto transaction_table_entry = delta_transaction.GetTableEntry(version);
 		if (transaction_table_entry) {
 			return *transaction_table_entry;
+		}
+
+		// With nothing cached the entry has to come from a snapshot, and kernel refuses to build one
+		// where no table exists. Report that as "not found" instead of letting the IO error escape:
+		// DuckDB looks the table up before CREATE TABLE, so without this no table can ever be created
+		// at a fresh path, and plain catalog enumeration of an empty attach throws too.
+		if (!GetCachedTable() && !DeltaTableExistsAt(context, delta_catalog.GetDBPath())) {
+			return nullptr;
 		}
 
 		if (delta_catalog.UseCachedSnapshot()) {
