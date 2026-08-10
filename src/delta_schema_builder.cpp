@@ -23,7 +23,8 @@ uintptr_t DeltaSchemaBuilder::Unpack(ffi::ExternResult<uintptr_t> result) {
 uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, const string &name,
                                          const LogicalType &type, bool nullable) {
 	auto name_slice = KernelUtils::ToDeltaString(name);
-	auto allocate_error = DuckDBEngineError::AllocateError;
+	// Explicitly typed: AllocateError is overloaded, so `auto` cannot pick an overload here.
+	ffi::AllocateErrorFn allocate_error = DuckDBEngineError::AllocateError;
 
 	// Mirrors SchemaVisitor's kernel->DuckDB mapping, so a create/read round trip is lossless.
 	switch (type.id()) {
@@ -58,7 +59,7 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 		auto &children = StructType::GetChildTypes(type);
 		vector<uintptr_t> child_ids;
 		for (idx_t i = 0; i < children.size(); i++) {
-			child_ids.push_back(VisitField(state, children[i].first, children[i].second, true));
+			child_ids.push_back(VisitField(state, children[i].first.GetIdentifierName(), children[i].second, true));
 		}
 		return Unpack(ffi::visit_field_struct(state, name_slice, child_ids.data(), child_ids.size(), nullable,
 		                                      allocate_error));
