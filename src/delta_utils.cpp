@@ -874,10 +874,12 @@ string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
 	                                           "CheckpointWriteError",
 	                                           "SchemaError"};
 
-	static_assert(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *) - 1 == (int)ffi::KernelError::SchemaError,
+	static constexpr int KERNEL_ERROR_ENUM_COUNT = (int)(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *));
+
+	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::KernelError::SchemaError,
 	              "KernelErrorEnumStrings mismatched with kernel");
 
-	if ((int)err < sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *)) {
+	if ((int)err < KERNEL_ERROR_ENUM_COUNT) {
 		return KERNEL_ERROR_ENUM_STRINGS[(int)err];
 	}
 
