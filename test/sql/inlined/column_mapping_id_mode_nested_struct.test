@@ -1,7 +1,5 @@
 # name: test/sql/inlined/column_mapping_id_mode_nested_struct.test
-# description: id-mode column mapping resolves nested struct fields by parquet
-#              field_id, exercising the Visit{Struct,...} recursion path that
-#              the top-level fixture does not cover.
+# description: id-mode column mapping resolves nested struct fields by field_id
 # group: [inlined]
 
 require parquet

@@ -1,7 +1,5 @@
 # name: test/sql/inlined/column_mapping_name_mode.test
-# description: name-mode tables resolve parquet columns by physical name. The
-#              parquet file's columns are named with the physical names (the
-#              spec-conformant layout for name mode).
+# description: name-mode tables resolve parquet columns by physical name
 # group: [inlined]
 
 require parquet

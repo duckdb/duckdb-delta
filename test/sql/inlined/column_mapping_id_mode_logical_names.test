@@ -1,6 +1,5 @@
 # name: test/sql/inlined/column_mapping_id_mode_logical_names.test
-# description: id-mode tables whose parquet files carry logical column names plus
-#              PARQUET:field_id metadata must resolve by field_id, not by name.
+# description: id-mode tables with logical parquet column names resolve by field_id
 # group: [inlined]
 
 require parquet

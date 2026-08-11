@@ -267,6 +267,25 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 		return res;
 	}
 
+	//! Field_id matching is all-or-nothing: DuckDB's FieldIdMapper requires an identifier on
+	//! every column it visits, nested ones included. If any column in an id-mode schema lacks
+	//! one, fall the whole schema back to physical-name matching -- the pre-existing behavior,
+	//! which is correct for writers that name parquet columns with the physical names.
+	static bool ResolveByFieldId(vector<DeltaMultiFileColumnDefinition> &schema, DeltaColumnMappingMode mapping_mode) {
+		if (mapping_mode != DeltaColumnMappingMode::ID) {
+			return false;
+		}
+		for (const auto &col : schema) {
+			if (!col.HasFieldIdsRecursive()) {
+				for (auto &fallback : schema) {
+					fallback.UseNameIdentifiers();
+				}
+				return false;
+			}
+		}
+		return true;
+	}
+
 	static void Print(vector<DeltaMultiFileColumnDefinition> schema, const string &name) {
 		return;
 		idx_t nest_level = 0;
@@ -284,13 +303,39 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 		}
 	}
 
+	//! True when this column and every one of its children carry an INTEGER field_id
+	//! identifier. Delta only assigns column mapping ids to struct fields, so the synthetic
+	//! list/map children the visitor creates never have one -- such a schema cannot be
+	//! resolved by field_id and must fall back to name matching.
+	bool HasFieldIdsRecursive() const {
+		if (identifier.IsNull() || identifier.type().id() != LogicalTypeId::INTEGER) {
+			return false;
+		}
+		for (const auto &child : children) {
+			if (!child.HasFieldIdsRecursive()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	//! Swap field_id identifiers back to the physical name, for the name-matching reader.
+	//! Columns without a physical name fall back to matching on the display name.
+	void UseNameIdentifiers() {
+		identifier = physical_name.empty() ? Value() : Value(physical_name);
+		for (auto &child : children) {
+			child.UseNameIdentifiers();
+		}
+	}
+
 	vector<DeltaMultiFileColumnDefinition> children;
 	bool nullable = true;
 	//! Verbatim `__CHAR_VARCHAR_TYPE_STRING` field metadata, e.g. "char(5)" or "array<varchar(5)>": a width the Delta
 	//! type system cannot express, which Spark enforces client-side and the kernel does not interpret at all.
 	string char_varchar_type;
 
-	//! Column-mapping identity, write path only: a write needs both, a read resolves through `identifier`
+	//! Column-mapping identity, write path only: a write needs both, a read resolves through `identifier`.
+	//! Also retained so id-mode schemas can fall back to name matching when not fully covered by field ids.
 	string physical_name;
 	optional_idx field_id;
 
@@ -331,17 +376,20 @@ private:
 
 	// Set `col_def.identifier` so DuckDB's MultiFileReader resolves the column
 	// the way the Delta protocol's "Reader Requirements for Column Mapping"
-	// require for the active mode. Identifier type drives the dispatch:
-	// BIGINT -> match by parquet field_id, VARCHAR -> match by name. Leaving
-	// it unset matches by display (logical) name.
+	// require for the active mode.
+	//
+	// The identifier is interpreted according to the MultiFileColumnMappingMode the
+	// reader runs in (see DeltaMultiFileReader::InitializeReader): under BY_FIELD_ID
+	// it must be an INTEGER parquet field_id, under BY_NAME a VARCHAR name. Leaving
+	// it unset makes BY_NAME fall back to the display (logical) name.
 	static void ApplyDeltaColumnMapping(KernelSchemaVisitor &state, const ffi::CStringMap *metadata,
 	                                    DeltaMultiFileColumnDefinition &col_def) {
-		// The two keys carry the same number: the kernel derives `parquet.field.id` from
-		// `delta.columnMapping.id` when it builds a physical schema. Read whichever the schema at hand
-		// spells it with.
-		auto id = KernelUtils::FetchFromStringMap(state.engine, metadata, "delta.columnMapping.id");
+		// The kernel only attaches `parquet.field.id` when it materializes a *physical* schema; we
+		// visit the logical schema, which carries the raw Delta field metadata under
+		// `delta.columnMapping.id` -- the same field id by another name. Read whichever is present.
+		auto id = KernelUtils::FetchFromStringMap(state.engine, metadata, "parquet.field.id");
 		if (id.empty()) {
-			id = KernelUtils::FetchFromStringMap(state.engine, metadata, "parquet.field.id");
+			id = KernelUtils::FetchFromStringMap(state.engine, metadata, "delta.columnMapping.id");
 		}
 		if (!id.empty()) {
 			col_def.field_id = optional_idx(Value(id).DefaultCastAs(LogicalType::UBIGINT).GetValue<uint64_t>());
@@ -356,7 +404,8 @@ private:
 		switch (state.mapping_mode) {
 		case DeltaColumnMappingMode::ID:
 			if (!id.empty()) {
-				col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
+				// INTEGER, not BIGINT: MultiFileColumnDefinition::GetIdentifierFieldId requires it
+				col_def.identifier = Value(id).DefaultCastAs(LogicalType::INTEGER);
 			}
 			break;
 		case DeltaColumnMappingMode::NAME:
