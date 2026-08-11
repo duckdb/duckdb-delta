@@ -45,11 +45,17 @@ cp "$INPUT_HEADER" "$OUTPUT_HEADER"
 
 # Bring together all the patches into generated header:
 #   /^#pragma once$/    -> append prefix.inc
-#   /^extern/           -> append inline_msvc_compat.inc (generated above)
+#   /^extern "C" \{$/   -> append inline_msvc_compat.inc (generated above)
 #   /^}.*namespace ffi/ -> append suffix.inc
+#
+# NOTE: the injection point must match only the `extern "C" {` block opener, not any
+# top-level `extern` declaration -- kernel headers can also contain plain
+# `extern const uint8_t FOO[N];` statics (e.g. the REST_BUILDER_OPTION_*_KEY constants added
+# in delta-kernel-rs v0.26.0), and a bare `/^extern/` pattern matches those too, injecting
+# (and thus duplicating) the whole struct once per match.
 sed -i.bak \
 	-e "/^#pragma once$/r $SCRIPTS_FFI_DIR/prefix.inc" \
-	-e "/^extern/r $MSVC_COMPAT_INC" \
+	-e "/^extern \"C\" {\$/r $MSVC_COMPAT_INC" \
 	-e "/^}.*namespace.ffi/r $SCRIPTS_FFI_DIR/suffix.inc" \
 	"$OUTPUT_HEADER"
 

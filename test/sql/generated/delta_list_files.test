@@ -25,8 +25,8 @@ SELECT data_file[-8:], cardinality, partitions, have_deletes FROM delta_list_fil
 query IIIII
 SELECT data_file[-8:], cardinality, partitions, have_deletes, transform_expression FROM delta_list_files('./data/generated/simple_partitioned/delta_lake', transform_expression=1) order by partitions;
 ----
-.parquet	5	{part=0}	false	['delta_kernel_transform_expression(delta_transform_op(0, (is_replace = false), (field_name = \'i\')))']
-.parquet	5	{part=1}	false	['delta_kernel_transform_expression(delta_transform_op(1, (is_replace = false), (field_name = \'i\')))']
+.parquet	5	{part=0}	false	['delta_kernel_transform_expression(delta_transform_op(0, (keep_input = true), (optional = false), (field_name = \'i\'), (kind = \'field\')))']
+.parquet	5	{part=1}	false	['delta_kernel_transform_expression(delta_transform_op(1, (keep_input = true), (optional = false), (field_name = \'i\'), (kind = \'field\')))']
 
 query IIIII
 SELECT data_file[-8:], cardinality, partitions, have_deletes, delete_count FROM delta_list_files('./data/generated/simple_partitioned/delta_lake', delete_count=1) order by partitions;

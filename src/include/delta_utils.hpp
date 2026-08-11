@@ -96,16 +96,16 @@ struct KernelUtils {
 	UnpackTransformExpression(const vector<unique_ptr<ParsedExpression>> &parsed_expression);
 };
 
-class ExpressionVisitor : public ffi::EngineExpressionVisitor {
+class KernelExpressionVisitor : public ffi::EngineExpressionVisitor {
 	using FieldList = vector<unique_ptr<ParsedExpression>>;
 
 public:
-	unique_ptr<vector<unique_ptr<ParsedExpression>>>
-	VisitKernelExpression(const ffi::Handle<ffi::SharedExpression> *expression);
-	unique_ptr<vector<unique_ptr<ParsedExpression>>>
-	VisitKernelPredicate(const ffi::Handle<ffi::SharedPredicate> *predicate);
-	unique_ptr<vector<unique_ptr<ParsedExpression>>> VisitKernelExpression(const ffi::Expression *expression);
-	ffi::EngineExpressionVisitor CreateVisitor(ExpressionVisitor &state);
+	static unique_ptr<vector<unique_ptr<ParsedExpression>>>
+	ToParsedExpression(const ffi::Handle<ffi::SharedExpression> *expression);
+	static unique_ptr<vector<unique_ptr<ParsedExpression>>>
+	ToParsedExpression(const ffi::Handle<ffi::SharedPredicate> *predicate);
+	static unique_ptr<vector<unique_ptr<ParsedExpression>>> ToParsedExpression(const ffi::Expression *expression);
+	static ffi::EngineExpressionVisitor CreateVisitor(KernelExpressionVisitor &state);
 
 private:
 	unordered_map<uintptr_t, unique_ptr<FieldList>> inflight_lists;
@@ -120,7 +120,7 @@ private:
 	}
 	template <typename CPP_TYPE, typename CREATE_VALUE_FUN>
 	static void VisitPrimitiveLiteral(void *state, uintptr_t sibling_list_id, CPP_TYPE value) {
-		auto state_cast = static_cast<ExpressionVisitor *>(state);
+		auto state_cast = static_cast<KernelExpressionVisitor *>(state);
 		auto duckdb_value = CREATE_VALUE_FUN(value);
 		auto expression = make_uniq<ConstantExpression>(duckdb_value);
 		state_cast->AppendToList(sibling_list_id, std::move(expression));
@@ -139,7 +139,8 @@ private:
 	static void VisitDateLiteral(void *state, uintptr_t sibling_list_id, int32_t value);
 	static void VisitStringLiteral(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice value);
 	static void VisitBinaryLiteral(void *state, uintptr_t sibling_list_id, const uint8_t *buffer, uintptr_t len);
-	static void VisitNullLiteral(void *state, uintptr_t sibling_list_id);
+	static void VisitNullLiteral(void *state, uintptr_t sibling_list_id, uint8_t type_tag, uint8_t precision,
+	                             uint8_t scale);
 	static void VisitArrayLiteral(void *state, uintptr_t sibling_list_id, uintptr_t child_id);
 	static void VisitStructLiteral(void *data, uintptr_t sibling_list_id, uintptr_t child_field_list_value,
 	                               uintptr_t child_value_list_id);
@@ -147,10 +148,13 @@ private:
 	                                uint8_t precision, uint8_t scale);
 	static void VisitColumnExpression(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name);
 	static void VisitStructExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
-	static void VisitTransformExpression(void *data, uintptr_t sibling_list_id, uintptr_t input_path_list_id,
-	                                     uintptr_t child_list_id);
-	static void VisitFieldTransform(void *data, uintptr_t sibling_list_id, const ffi::KernelStringSlice *field_name,
-	                                uintptr_t expr_list_id, bool is_replace);
+	static void VisitStructPatchExpression(void *data, uintptr_t sibling_list_id, uintptr_t input_path_list_id,
+	                                       uintptr_t prepended_field_list_id, uintptr_t field_patch_list_id,
+	                                       uintptr_t appended_field_list_id);
+	static void VisitFieldPatch(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice field_name,
+	                            uintptr_t insertion_expr_list_id, bool keep_input, bool optional);
+	static unique_ptr<ParsedExpression> MakeStructPatchOp(const string &kind, const string *field_name,
+	                                                      FieldList &&insertions, bool keep_input, bool optional);
 	static void VisitNotExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitIsNullExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 	static void VisitLiteralMap(void *data, uintptr_t sibling_list_id, uintptr_t key_list_id, uintptr_t value_list_id);
@@ -177,7 +181,7 @@ private:
 
 	template <ExpressionType EXPRESSION_TYPE, typename EXPRESSION_TYPENAME>
 	static void VisitVariadicExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
-		auto state_cast = static_cast<ExpressionVisitor *>(state);
+		auto state_cast = static_cast<KernelExpressionVisitor *>(state);
 		auto children = state_cast->TakeFieldList(child_list_id);
 		if (!children) {
 			state_cast->AppendToList(sibling_list_id, std::move(make_uniq<ConstantExpression>(Value(42))));
@@ -195,7 +199,7 @@ private:
 
 	template <ExpressionType EXPRESSION_TYPE, typename EXPRESSION_TYPENAME>
 	static void VisitBinaryExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
-		auto state_cast = static_cast<ExpressionVisitor *>(state);
+		auto state_cast = static_cast<KernelExpressionVisitor *>(state);
 		auto children = state_cast->TakeFieldList(child_list_id);
 		if (!children) {
 			state_cast->AppendToList(sibling_list_id, std::move(make_uniq<ConstantExpression>(Value(42))));
@@ -219,7 +223,7 @@ private:
 	static void VisitComparisonExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id);
 
 	// List functions
-	static uintptr_t MakeFieldList(ExpressionVisitor *state, uintptr_t capacity_hint);
+	static uintptr_t MakeFieldList(KernelExpressionVisitor *state, uintptr_t capacity_hint);
 	void AppendToList(uintptr_t id, unique_ptr<ParsedExpression> child);
 	uintptr_t MakeFieldListImpl(uintptr_t capacity_hint);
 	unique_ptr<FieldList> TakeFieldList(uintptr_t id);
@@ -273,17 +277,17 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 	bool nullable = true;
 };
 
-// SchemaVisitor is used to parse the schema of a Delta table from the Kernel
-class SchemaVisitor {
+// KernelSchemaVisitor is used to parse the schema of a Delta table from the Kernel
+class KernelSchemaVisitor {
 public:
-	explicit SchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p) : engine(engine_p) {};
+	explicit KernelSchemaVisitor(ffi::Handle<ffi::SharedExternEngine> engine_p) : engine(engine_p) {};
 
-	static vector<DeltaMultiFileColumnDefinition> VisitSnapshotSchema(ffi::Handle<ffi::SharedExternEngine> engine,
+	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
 	                                                                  ffi::SharedSnapshot *snapshot);
-	static vector<DeltaMultiFileColumnDefinition>
-	VisitSnapshotGlobalReadSchema(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *state, bool logical);
-	static vector<DeltaMultiFileColumnDefinition> VisitWriteContextSchema(ffi::Handle<ffi::SharedExternEngine> engine,
-	                                                                      ffi::SharedWriteContext *write_context);
+	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
+	                                                                  ffi::SharedScan *state, bool logical);
+	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
+	                                                                  ffi::SharedWriteContext *write_context);
 
 private:
 	unordered_map<uintptr_t, vector<DeltaMultiFileColumnDefinition>> inflight_lists;
@@ -292,7 +296,7 @@ private:
 	ffi::SharedExternEngine *engine = nullptr;
 	ErrorData error;
 
-	static ffi::EngineSchemaVisitor CreateSchemaVisitor(SchemaVisitor &state);
+	static ffi::EngineSchemaVisitor CreateSchemaVisitor(KernelSchemaVisitor &state);
 
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CStringMap *metadata);
@@ -315,7 +319,7 @@ private:
 		return (SimpleTypeVisitorFunction *)&VisitSimpleTypeImpl<TypeId>;
 	}
 	template <LogicalTypeId TypeId>
-	static void VisitSimpleTypeImpl(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	static void VisitSimpleTypeImpl(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                                bool is_nullable, const ffi::CStringMap *metadata) {
 		DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), TypeId, is_nullable);
 		ApplyDeltaColumnMapping(state->engine, metadata, col_def);
@@ -323,16 +327,16 @@ private:
 		state->AppendToList(sibling_list_id, name, std::move(col_def));
 	}
 
-	static void VisitDecimal(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	static void VisitDecimal(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                         bool is_nullable, const ffi::CStringMap *metadata, uint8_t precision, uint8_t scale);
-	static uintptr_t MakeFieldList(SchemaVisitor *state, uintptr_t capacity_hint);
-	static void VisitStruct(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	static uintptr_t MakeFieldList(KernelSchemaVisitor *state, uintptr_t capacity_hint);
+	static void VisitStruct(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                        bool is_nullable, const ffi::CStringMap *metadata, uintptr_t child_list_id);
-	static void VisitArray(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	static void VisitArray(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                       bool is_nullable, const ffi::CStringMap *metadata, uintptr_t child_list_id);
-	static void VisitMap(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name, bool is_nullable,
-	                     const ffi::CStringMap *metadata, uintptr_t child_list_id);
-	static void VisitVariant(SchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	static void VisitMap(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	                     bool is_nullable, const ffi::CStringMap *metadata, uintptr_t child_list_id);
+	static void VisitVariant(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                         bool is_nullable, const ffi::CStringMap *metadata);
 
 	uintptr_t MakeFieldListImpl(uintptr_t capacity_hint);

@@ -69,8 +69,15 @@ void DeltaTransactionManager::Checkpoint(ClientContext &context, bool force) {
 	// Get a locking ref to the shared ffi snapshot
 	auto snapshot_ref = table_entry.snapshot->snapshot->GetLockingRef();
 
-	table_entry.snapshot->TryUnpackKernelResult(
-	    ffi::checkpoint_snapshot(snapshot_ref.GetPtr(), table_entry.snapshot->extern_engine.get()));
+	auto checkpoint_result = table_entry.snapshot->TryUnpackKernelResult(
+	    ffi::checkpoint_snapshot(snapshot_ref.GetPtr(), table_entry.snapshot->extern_engine.get(), nullptr));
+	// Both result variants carry an owned snapshot handle (the pre-existing or newly-written
+	// snapshot) that we don't need here, but must still release.
+	if (checkpoint_result.tag == ffi::FfiCheckpointWriteResult::Tag::FfiCheckpointWriteResultWritten) {
+		ffi::free_snapshot(checkpoint_result.written._0);
+	} else {
+		ffi::free_snapshot(checkpoint_result.already_exists._0);
+	}
 }
 
 } // namespace duckdb
