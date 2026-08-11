@@ -1,6 +1,10 @@
 # name: test/sql/inlined/catalog_managed/refuse_path_read.test
 # description: reading a catalog-managed table straight off storage must fail, not return stale rows
 # group: [catalog_managed]
+#
+# The fixture enables inCommitTimestamp because kernel v0.26 made it a requirement of catalogManaged
+# (FeatureRequirement::Enabled) -- without it the table is rejected as an invalid protocol before any
+# of this is reached.
 
 require parquet
 
