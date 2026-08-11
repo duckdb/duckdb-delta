@@ -65,6 +65,13 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		}
 	}
 
+	// After the loop: option order does not guarantee child_catalog_mode is parsed first. A user-supplied
+	// version cannot be checked against the catalog, so it would only mask the staleness it claims to fix.
+	if (!res->child_catalog_mode && (!res->catalog_log_tail.IsNull() || res->max_catalog_version >= 0)) {
+		throw InvalidInputException("The 'log_tail' and 'max_catalog_version' options are supplied by the catalog "
+		                            "that owns a catalog-managed table and can not be set on ATTACH");
+	}
+
 	// If parent_commit is enabled, we need to load the internal commit function of the parent catalog here
 	if (res->parent_commit) {
 		string schema = DEFAULT_SCHEMA;

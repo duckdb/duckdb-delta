@@ -107,11 +107,6 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
                                 vector<Identifier> &names, MultiFileReaderBindData &bind_data) {
 	auto &delta_snapshot = dynamic_cast<DeltaMultiFileList &>(files);
 
-	auto log_tail_setting = options.custom_options.find("log_tail");
-	if (log_tail_setting != options.custom_options.end()) {
-		delta_snapshot.delta_log_path = make_uniq<DeltaLogPathArray>(log_tail_setting->second);
-	}
-
 	// MultiFileBind constructs the file list before parsing named parameters, so a `version => N`
 	// captured by ParseOption (and stashed on the reader as `requested_version`) cannot be passed
 	// to DeltaMultiFileList's constructor. Transfer it here, before delta_snapshot.Bind() triggers
@@ -301,11 +296,6 @@ bool DeltaMultiFileReader::ParseOption(const string &key, const Value &val, Mult
 
 	if (loption == "pushdown_partition_info") {
 		options.custom_options["pushdown_partition_info"] = val;
-		return true;
-	}
-
-	if (loption == "log_tail") {
-		options.custom_options["log_tail"] = val;
 		return true;
 	}
 
