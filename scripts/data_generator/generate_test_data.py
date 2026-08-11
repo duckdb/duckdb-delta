@@ -160,6 +160,11 @@ type = "timestamp"
 query = f"CREATE table test_table as select ('2024-01-0' || i::VARCHAR || ' 00:00:00')::TIMESTAMP as value1, ('2024-01-0' || i::VARCHAR || ' 00:00:00')::TIMESTAMP as part from range(1,6) tbl(i)"
 generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping/{type}", query, "part")
 
+## Partitioned table with timestamptz type
+type = "timestamptz"
+query = f"CREATE table test_table as select ('2024-01-0' || i::VARCHAR || ' 00:00:00+00')::TIMESTAMPTZ as value1, ('2024-01-0' || i::VARCHAR || ' 00:00:00+00')::TIMESTAMPTZ as part from range(1,6) tbl(i)"
+generate_test_data_delta_rs(BASE_PATH,f"test_file_skipping/{type}", query, "part")
+
 ## Partitioned table with decimal type
 type = "decimal"
 query = f"CREATE table test_table as select i::DECIMAL(10,2) as value1, i::DECIMAL(10,2) as part from range(1,6) tbl(i)"
