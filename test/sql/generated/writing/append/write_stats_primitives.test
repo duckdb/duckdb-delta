@@ -292,8 +292,13 @@ WHERE add IS NOT NULL
 ----
 1	0	2024-01-06T00:00:00	2024-01-06T00:00:00	true
 
-# NOTE: timestamp_ntz stats-based file skipping is not yet supported by delta-kernel v0.20.0,
-# so EXPLAIN ANALYZE file-skipping assertions are omitted here.
+# Skipping against the stats written above. The filter has to prune the file this
+# test just inserted: reading it back trips the URL-encoded partition bug skipped
+# for further up.
+query II
+EXPLAIN ANALYZE SELECT value1 FROM t WHERE value1 = '2024-01-03 00:00:00'::TIMESTAMP
+----
+analyzed_plan	<REGEX>:.*File Filters:.*value1 = '2024-01-03 00:00:00'.*Scanning Files: 1/6.*
 
 statement ok
 DETACH t;

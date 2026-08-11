@@ -212,12 +212,51 @@ WHERE value1 = '2024-01-03 00:00:00+00'::TIMESTAMPTZ
 ----
 analyzed_plan	<REGEX>:.*File Filters:.*value1 = .*Scanning Files: 1/5.*
 
+# Compared against a literal rather than asserted as rendered text: TIMESTAMPTZ
+# renders in the session timezone, and pinning it would need icu.
+query II
+SELECT value1 = '2024-01-03 00:00:00+00'::TIMESTAMPTZ, part = '2024-01-03 00:00:00+00'::TIMESTAMPTZ
+FROM delta_scan('./data/generated/test_file_skipping/timestamptz/delta_lake')
+WHERE value1 = '2024-01-03 00:00:00+00'::TIMESTAMPTZ
+----
+true	true
+
+# A literal carrying a non-UTC offset denotes the same instant, so it must prune
+# to the same file and return the same row.
+query II
+EXPLAIN ANALYZE SELECT value1
+FROM delta_scan('./data/generated/test_file_skipping/timestamptz/delta_lake')
+WHERE value1 = '2024-01-02 16:00:00-08'::TIMESTAMPTZ
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
+
+query II
+SELECT value1 = '2024-01-03 00:00:00+00'::TIMESTAMPTZ, part = '2024-01-03 00:00:00+00'::TIMESTAMPTZ
+FROM delta_scan('./data/generated/test_file_skipping/timestamptz/delta_lake')
+WHERE value1 = '2024-01-02 16:00:00-08'::TIMESTAMPTZ
+----
+true	true
+
 query II
 EXPLAIN ANALYZE SELECT value1
 FROM delta_scan('./data/generated/test_file_skipping/timestamptz/delta_lake')
 WHERE value1 > '2030-01-01 00:00:00+00'::TIMESTAMPTZ
 ----
 analyzed_plan	<REGEX>:.* Scanning Files: 0/5.*
+
+query II
+EXPLAIN ANALYZE SELECT value1
+FROM delta_scan('./data/generated/test_file_skipping/timestamptz/delta_lake')
+WHERE value1 >= '2024-01-04 00:00:00+00'::TIMESTAMPTZ
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 2/5.*
+
+query II
+EXPLAIN ANALYZE SELECT part
+FROM delta_scan('./data/generated/test_file_skipping/timestamptz/delta_lake')
+WHERE part = '2024-01-03 00:00:00+00'::TIMESTAMPTZ
+----
+analyzed_plan	<REGEX>:.* Scanning Files: 1/5.*
 
 ### STRUCT
 
