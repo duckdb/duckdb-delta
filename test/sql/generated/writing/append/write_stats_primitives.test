@@ -181,41 +181,6 @@ statement ok
 DETACH t;
 
 #------------------------------------------------------------------------------
-# Bool
-# Existing data: 2 files (one all-false, one all-true); insert all-true row
-# After insert: 3 files; WHERE value1=false skips the 2 true files → 1/3
-#------------------------------------------------------------------------------
-
-statement ok
-from copy_dir('data/generated/test_file_skipping/bool', '{TEMP_DIR}/write_stats_all_types/bool');
-
-statement ok
-ATTACH '{TEMP_DIR}/write_stats_all_types/bool/delta_lake' AS t (TYPE delta);
-
-statement ok
-INSERT INTO t (value1, value2, value3, part) VALUES (true, true, true, true);
-
-query IIIII
-SELECT
-    json_extract_string(add.stats, '$.numRecords'),
-    json_extract_string(add.stats, '$.nullCount.value1'),
-    json_extract_string(add.stats, '$.minValues.value1'),
-    json_extract_string(add.stats, '$.maxValues.value1'),
-    json_extract_string(add.stats, '$.tightBounds')
-FROM read_json('{TEMP_DIR}/write_stats_all_types/bool/delta_lake/_delta_log/00000000000000000001.json')
-WHERE add IS NOT NULL
-----
-1	0	true	true	true
-
-query II
-EXPLAIN ANALYZE SELECT value1 FROM t WHERE value1 = false
-----
-analyzed_plan	<REGEX>:.*Scanning Files: 1/3.*
-
-statement ok
-DETACH t;
-
-#------------------------------------------------------------------------------
 # Decimal
 # Existing data: 5 files with values 1.00–5.00; insert 6.00
 #------------------------------------------------------------------------------

@@ -84,9 +84,7 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 	TableFunctionBindInput bind_input(inputs, param_map, return_types, names, nullptr, nullptr, delta_scan_function,
 	                                  empty_ref);
 
-	vector<string> bind_names;
-	auto result = delta_scan_function.bind(context, bind_input, return_types, bind_names);
-	names = StringsToIdentifiers(bind_names);
+	auto result = delta_scan_function.bind(context, bind_input, return_types, names);
 	bind_data = std::move(result);
 
 	return delta_scan_function;

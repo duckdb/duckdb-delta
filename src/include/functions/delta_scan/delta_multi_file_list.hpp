@@ -108,10 +108,7 @@ public:
 	                                                MultiFilePushdownInfo &info,
 	                                                vector<unique_ptr<Expression>> &filters) const override;
 
-	unique_ptr<MultiFileList> DynamicFilterPushdown(ClientContext &context, const MultiFileOptions &options,
-	                                                const vector<Identifier> &names, const vector<LogicalType> &types,
-	                                                const vector<column_t> &column_ids,
-	                                                TableFilterSet &filters) const override;
+	unique_ptr<MultiFileList> DynamicFilterPushdown(MultiFileDynamicPushdownInfo &pushdown_info) const override;
 
 	unique_ptr<DeltaMultiFileList> PushdownInternal(ClientContext &context, TableFilterSet &new_filters,
 	                                                vector<column_t> column_indexes) const;

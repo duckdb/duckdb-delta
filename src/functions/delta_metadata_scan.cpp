@@ -63,7 +63,7 @@ static void AddFileInfo(OpenFileInfo &file_info, DeltaFileMetaData &metadata, ve
 }
 
 static unique_ptr<FunctionData> DeltaFileListBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                                  vector<LogicalType> &return_types, vector<Identifier> &names) {
 	//! Parse input
 
 	auto input_string = input.inputs[0].ToString();

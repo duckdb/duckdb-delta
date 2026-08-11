@@ -83,7 +83,7 @@ static void DeltaSetTransactionVersionFunction(ClientContext &context, TableFunc
 
 static unique_ptr<FunctionData> DeltaGetTransactionVersionBind(ClientContext &context, TableFunctionBindInput &input,
                                                                vector<LogicalType> &return_types,
-                                                               vector<string> &names) {
+                                                               vector<Identifier> &names) {
 	auto res = make_uniq<TransactionGetVersionBindData>();
 
 	auto path = input.inputs[0].GetValue<string>();
@@ -106,7 +106,7 @@ static unique_ptr<FunctionData> DeltaGetTransactionVersionBind(ClientContext &co
 
 static unique_ptr<FunctionData> DeltaSetTransactionVersionBind(ClientContext &context, TableFunctionBindInput &input,
                                                                vector<LogicalType> &return_types,
-                                                               vector<string> &names) {
+                                                               vector<Identifier> &names) {
 	auto res = make_uniq<TransactionSetVersionBindData>();
 
 	auto path = input.inputs[0].GetValue<string>();

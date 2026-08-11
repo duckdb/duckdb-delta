@@ -18,7 +18,7 @@ static void DomainMetadataVisitor(ffi::NullableCvoid engine_context, ffi::Kernel
 }
 
 static unique_ptr<FunctionData> DeltaDomainMetadataBind(ClientContext &context, TableFunctionBindInput &input,
-                                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto input_string = input.inputs[0].ToString();
 	idx_t version = DConstants::INVALID_INDEX;
 

@@ -363,8 +363,13 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 			                  child.GetExpression().Cast<FunctionExpression>().FunctionName());
 		}
 
-		bool is_replace = false;
+		// kind: "prepend" | "field" | "append" (see MakeStructPatchOp in delta_utils.cpp).
+		// keep_input/optional only apply to kind == "field".
+		string kind;
+		bool keep_input = false;
+		bool optional = false;
 		string field_name;
+		bool has_field_name = false;
 		vector<Value> values;
 
 		for (auto &transform_op_child : transform_op.GetArguments()) {
@@ -380,11 +385,16 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 				                 .Cast<ConstantExpression>()
 				                 .GetValue();
 
-				if (name == "is_replace") {
-					is_replace = value.GetValue<bool>();
+				if (name == "kind") {
+					kind = value.ToString();
+				} else if (name == "keep_input") {
+					keep_input = value.GetValue<bool>();
+				} else if (name == "optional") {
+					optional = value.GetValue<bool>();
 				} else if (name == "field_name") {
 					if (!value.IsNull()) {
 						field_name = value.ToString();
+						has_field_name = true;
 					}
 				} else {
 					throw InternalException("Unexpected name for delta_transform_op returned by delta kernel: %s",
@@ -399,21 +409,27 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 			}
 		}
 
-		/// NOTE: Treating list id 0 as an empty list yields a simplified truth table:
-		///
-		/// |field_name? |is_replace? |meaning|
+		/// |kind    |keep_input? |meaning|
 		/// |-|-|-|
-		/// | NO  | *   | Prepend a (possibly empty) list of expressions to the output
-		/// | YES | NO  | Insert a (possibly empty)  list of expressions after the named input field
-		/// | YES | YES | Replace the named input field with a (possibly empty) list of expressions
+		/// |prepend |   *        | Prepend a (possibly empty) list of expressions to the output
+		/// |append  |   *        | Append a (possibly empty) list of expressions to the output
+		/// |field   |  YES       | Insert a (possibly empty) list of expressions after the named input field
+		/// |field   |  NO        | Replace the named input field with a (possibly empty) list of expressions
 		// TODO: broken for multiple transform expressions?
 		idx_t index_to_insert = 0;
-		if (!field_name.empty()) {
+		if (kind == "append") {
+			index_to_insert = cols.size();
+		} else if (kind == "field" && has_field_name) {
+			bool found = false;
 			for (idx_t i = 0; i < cols.size(); ++i) {
 				if (field_name == cols[i].name) {
-					index_to_insert = is_replace ? i : i + 1;
+					index_to_insert = keep_input ? i + 1 : i;
+					found = true;
 					break;
 				}
+			}
+			if (!found && optional) {
+				continue;
 			}
 		}
 
@@ -472,8 +488,7 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 
 	// Lookup all columns for potential hits in the constant map
 	if (transform) {
-		ExpressionVisitor visitor;
-		auto parsed_transformation_expression = visitor.VisitKernelExpression(transform);
+		auto parsed_transformation_expression = KernelExpressionVisitor::ToParsedExpression(transform);
 
 		if (!parsed_transformation_expression) {
 			context->error = ErrorData(ExceptionType::IO,
@@ -629,7 +644,7 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<Identifi
 	vector<DeltaMultiFileColumnDefinition> visited_schema;
 	{
 		auto snapshot_ref = snapshot->GetLockingRef();
-		visited_schema = SchemaVisitor::VisitSnapshotSchema(extern_engine.get(), snapshot_ref.GetPtr());
+		visited_schema = KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr());
 	}
 
 	for (const auto &field : visited_schema) {
@@ -824,7 +839,7 @@ void DeltaMultiFileList::InitializeScan() const {
 		}
 	}
 
-	lazy_loaded_schema = SchemaVisitor::VisitSnapshotGlobalReadSchema(extern_engine.get(), scan.get(), true);
+	lazy_loaded_schema = KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), scan.get(), true);
 
 	DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 
@@ -1023,9 +1038,14 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 }
 
 unique_ptr<MultiFileList>
-DeltaMultiFileList::DynamicFilterPushdown(ClientContext &context, const MultiFileOptions &options,
-                                          const vector<Identifier> &names, const vector<LogicalType> &types,
-                                          const vector<column_t> &column_ids, TableFilterSet &filters) const {
+DeltaMultiFileList::DynamicFilterPushdown(MultiFileDynamicPushdownInfo &dynamic_pushdown_info) const {
+	auto &options = dynamic_pushdown_info.options;
+	auto &names = dynamic_pushdown_info.column_names;
+	auto &types = dynamic_pushdown_info.column_types;
+	auto &column_ids = dynamic_pushdown_info.column_ids;
+	auto &context = dynamic_pushdown_info.context;
+	auto &filters = dynamic_pushdown_info.filters;
+
 	auto pushdown_mode = GetDeltaFilterPushdownMode(context, options);
 	if (pushdown_mode == DeltaFilterPushdownMode::NONE || pushdown_mode == DeltaFilterPushdownMode::CONSTANT_ONLY) {
 		return nullptr;
