@@ -388,10 +388,10 @@ static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, Ph
 	for (const auto &width_bound : width_bounds) {
 		auto &column = columns.GetColumn(PhysicalIndex(width_bound.column_index));
 		if (!width_bound.max_length.IsValid()) {
-			auto declared = width_bound.declared_type.empty()
-			                    ? "has a nested field declaring a CHAR/VARCHAR width"
-			                    : StringUtil::Format("declares the width %s on a nested field",
-			                                         width_bound.declared_type);
+			auto declared =
+			    width_bound.declared_type.empty()
+			        ? "has a nested field declaring a CHAR/VARCHAR width"
+			        : StringUtil::Format("declares the width %s on a nested field", width_bound.declared_type);
 			throw NotImplementedException("Delta column \"%s\" %s, which duckdb-delta cannot enforce on write yet. "
 			                              "Refusing the write rather than committing values Spark would reject.",
 			                              column.Name().GetIdentifierName(), declared);
