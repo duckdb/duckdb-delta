@@ -1,0 +1,95 @@
+# name: test/sql/inlined/catalog_managed/refuse_path_read.test
+# description: reading a catalog-managed table straight off storage must fail, not return stale rows
+# group: [catalog_managed]
+
+#
+# The fixture enables inCommitTimestamp because kernel v0.26 made it a requirement of catalogManaged
+# (FeatureRequirement::Enabled) -- without it the table is rejected as an invalid protocol before any
+# of this is reached.
+
+require parquet
+
+require delta
+
+# -----------------------------------------------------------------------------
+# delta_scan of a catalog-managed table
+#
+# The kernel itself refuses to open the snapshot without max_catalog_version; what we check here is
+# that the refusal reaches the user as something they can act on.
+#
+
+statement error
+SELECT count(*) FROM delta_scan('data/inlined/catalog_managed/delta_lake');
+----
+is a catalog-managed Delta table
+
+# The message must point at the fix, not just at the refusal
+statement error
+SELECT count(*) FROM delta_scan('data/inlined/catalog_managed/delta_lake');
+----
+TYPE unity_catalog
+
+# -----------------------------------------------------------------------------
+# Plain delta ATTACH of the same table
+#
+# No version supplied, so the kernel's refusal still fires -- the silent-staleness case stays closed.
+#
+
+statement ok
+ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt (TYPE delta);
+
+statement error
+SELECT count(*) FROM cmt;
+----
+is a catalog-managed Delta table
+
+statement ok
+DETACH cmt;
+
+# -----------------------------------------------------------------------------
+# A caller-supplied version is allowed
+#
+# The kernel only requires that max_catalog_version be present, not that it be current. An explicit
+# value is the caller's deliberate pin (as with time travel), not the silent stale read C2 reports,
+# so it reads rather than errors.
+#
+
+statement ok
+ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt_pinned (TYPE delta, max_catalog_version 0);
+
+query I
+SELECT count(*) FROM cmt_pinned;
+----
+10
+
+statement ok
+DETACH cmt_pinned;
+
+# -----------------------------------------------------------------------------
+# delta_scan no longer accepts a log_tail parameter
+#
+# Unused in-tree, and with no max_catalog_version counterpart it could never make a path read
+# catalog-correct.
+#
+
+statement error
+SELECT count(*) FROM delta_scan('data/inlined/simple_table/delta_lake', log_tail = []);
+----
+log_tail
+
+# -----------------------------------------------------------------------------
+# Control: tables that are not catalog-managed are unaffected
+#
+
+query I
+SELECT count(*) FROM delta_scan('data/inlined/simple_table/delta_lake');
+----
+10
+
+statement ok
+ATTACH 'data/inlined/simple_table/delta_lake' AS plain (TYPE delta);
+
+query I
+SELECT count(*) FROM plain;
+----
+10

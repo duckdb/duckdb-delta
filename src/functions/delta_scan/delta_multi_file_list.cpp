@@ -724,6 +724,27 @@ OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) const {
 	return GetFileInternal(i);
 }
 
+// Kernel refuses a catalog-managed table without max_catalog_version -- its newest commit may be
+// catalog-tracked and not yet backfilled. Catch that kernel/API error, and rephrase it for users.
+// NOTE:  Text match, but it cannot rot unnoticed: the builder API this calls is gone post-v0.26, so
+// that bump breaks the build here before the match can go stale.
+ffi::Handle<ffi::SharedSnapshot>
+DeltaMultiFileList::BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const {
+	ffi::Handle<ffi::SharedSnapshot> built;
+	auto res = KernelUtils::TryUnpackResult(ffi::snapshot_builder_build(builder), built);
+	if (res.HasError()) {
+		if (StringUtil::Contains(res.RawMessage(), "Catalog-managed table requires max_catalog_version")) {
+			throw InvalidInputException(
+			    "Table at '%s' is a catalog-managed Delta table: reading it directly from storage would skip "
+			    "commits that are only tracked by the catalog. Attach the catalog that owns it instead (e.g. "
+			    "ATTACH '<catalog>' AS <name> (TYPE unity_catalog)) and query it through that catalog.",
+			    paths[0].path);
+		}
+		res.Throw();
+	}
+	return built;
+}
+
 // req: this.lock must already be owned
 void DeltaMultiFileList::InitializeSnapshot() const {
 	// D_ASSERT(lock.is_locked())  -- no such check available; could use recursive mutex
@@ -766,7 +787,7 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 		if (max_catalog_version >= 0) {
 			ffi::snapshot_builder_set_max_catalog_version(&builder, static_cast<uint64_t>(max_catalog_version));
 		}
-		snapshot = make_shared_ptr<SharedKernelSnapshot>(TryUnpackKernelResult(ffi::snapshot_builder_build(builder)));
+		snapshot = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(builder));
 
 		auto snapshot_ref = snapshot->GetLockingRef();
 		if (version == DConstants::INVALID_INDEX) {

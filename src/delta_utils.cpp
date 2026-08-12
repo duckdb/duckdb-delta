@@ -948,12 +948,6 @@ ffi::LogPathArray DeltaLogPathArray::GetFFIPtr() {
 	return {log_entries.data(), log_entries.size()};
 }
 
-LogicalType KernelUtils::GetLogPathType() {
-	return LogicalType::LIST(LogicalType::STRUCT({{"file_name", LogicalType::VARCHAR},
-	                                              {"timestamp", LogicalType::BIGINT},
-	                                              {"file_size", LogicalType::UBIGINT}}));
-}
-
 ffi::KernelStringSlice KernelUtils::ToDeltaString(const string &str) {
 	return {str.data(), str.size()};
 }

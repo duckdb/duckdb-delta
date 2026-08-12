@@ -100,9 +100,5 @@ jobs:
         run: |
           az logout
 
-      - name: Tests that focus on public non-authenticated requests
-        env:
-          AZURE_STORAGE_ACCOUNT: ${{secrets.AZURE_STORAGE_ACCOUNT}}
-          DUCKDB_AZURE_PUBLIC_CONTAINER_AVAILABLE: 1
-        run: |
-          python3 duckdb/scripts/ci/run_tests.py ./build/release/test/unittest 'test/sql/cloud/*'
+      # TODO: no public/unauthenticated step for now -- unauthenticated.test does not run; it will
+      # be moved to azurite tests instead.

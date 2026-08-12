@@ -140,6 +140,9 @@ protected:
 	void InitializeSnapshot() const;
 	void InitializeScan() const;
 
+	//! Restates the kernel's catalog-managed refusal in terms the caller can act on
+	ffi::Handle<ffi::SharedSnapshot> BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const;
+
 	void EnsureSnapshotInitialized() const;
 	void EnsureScanInitialized() const;
 
