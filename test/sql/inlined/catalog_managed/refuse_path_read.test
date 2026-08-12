@@ -66,16 +66,22 @@ statement ok
 DETACH cmt_pinned;
 
 # -----------------------------------------------------------------------------
-# delta_scan no longer accepts a log_tail parameter
+# delta_scan takes the same coordinates as ATTACH
 #
-# Unused in-tree, and with no max_catalog_version counterpart it could never make a path read
-# catalog-correct.
+# max_catalog_version (and log_tail) are accepted on delta_scan and reach the same snapshot fields
+# the ATTACH options set, so a scan and an attach of the same table read identically.
 #
 
-statement error
+query I
+SELECT count(*) FROM delta_scan('data/inlined/catalog_managed/delta_lake', max_catalog_version = 0);
+----
+10
+
+# log_tail is a delta_scan parameter too; an empty tail is a no-op on a plain table
+query I
 SELECT count(*) FROM delta_scan('data/inlined/simple_table/delta_lake', log_tail = []);
 ----
-log_tail
+10
 
 # -----------------------------------------------------------------------------
 # Control: tables that are not catalog-managed are unaffected

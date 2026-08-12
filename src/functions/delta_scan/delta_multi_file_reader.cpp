@@ -107,13 +107,24 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
                                 vector<Identifier> &names, MultiFileReaderBindData &bind_data) {
 	auto &delta_snapshot = dynamic_cast<DeltaMultiFileList &>(files);
 
-	// MultiFileBind constructs the file list before parsing named parameters, so a `version => N`
-	// captured by ParseOption (and stashed on the reader as `requested_version`) cannot be passed
-	// to DeltaMultiFileList's constructor. Transfer it here, before delta_snapshot.Bind() triggers
-	// snapshot initialization. If a snapshot was injected via function_info (catalog-driven path),
-	// `snapshot` is non-null and PinVersion would have nothing to do, so we skip it.
-	if (!snapshot && requested_version != DConstants::INVALID_INDEX) {
-		delta_snapshot.PinVersion(requested_version);
+	// MultiFileBind constructs the file list before parsing named parameters, so the scan-time
+	// coordinates below cannot go through DeltaMultiFileList's constructor -- ParseOption stashes them
+	// and we transfer them onto the list here, before Bind() triggers snapshot initialization. A
+	// catalog-injected snapshot (function_info path) already carries its own coordinates, so skip it.
+	// These mirror the ATTACH options set in delta_schema_entry.cpp, so a scan and an attach of the
+	// same table read identically.
+	if (!snapshot) {
+		if (requested_version != DConstants::INVALID_INDEX) {
+			delta_snapshot.PinVersion(requested_version);
+		}
+		auto log_tail_setting = options.custom_options.find("log_tail");
+		if (log_tail_setting != options.custom_options.end()) {
+			delta_snapshot.delta_log_path = make_uniq<DeltaLogPathArray>(log_tail_setting->second);
+		}
+		auto max_catalog_version_setting = options.custom_options.find("max_catalog_version");
+		if (max_catalog_version_setting != options.custom_options.end()) {
+			delta_snapshot.max_catalog_version = max_catalog_version_setting->second.GetValue<int64_t>();
+		}
 	}
 
 	delta_snapshot.Bind(return_types, names);
@@ -305,6 +316,16 @@ bool DeltaMultiFileReader::ParseOption(const Identifier &key, const Value &val, 
 
 	if (key == "version") {
 		requested_version = val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>();
+		return true;
+	}
+
+	if (key == "log_tail") {
+		options.custom_options["log_tail"] = val;
+		return true;
+	}
+
+	if (key == "max_catalog_version") {
+		options.custom_options["max_catalog_version"] = val;
 		return true;
 	}
 

@@ -49,6 +49,8 @@ struct DeltaLogPathArray {
 };
 
 struct KernelUtils {
+	// LogicalType of the delta_scan `log_tail` parameter: the catalog's ratified-but-unbackfilled commits.
+	static LogicalType GetLogPathType();
 	static ffi::KernelStringSlice ToDeltaString(const string &str);
 	static string FromDeltaString(const struct ffi::KernelStringSlice slice);
 	static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
