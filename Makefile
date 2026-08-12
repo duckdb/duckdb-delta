@@ -51,8 +51,6 @@ generate-data:
 	# NOTE: @benfleis - for now pin versions that work, since unversioned/HEAD caused a big JVM stack trace that I couldn't trivially track down;
 	${PIP} install delta-spark==4.0.0 deltalake==1.2.1 duckdb==1.4.4 pandas==2.3.3 pyarrow==22.0.0 pyspark==4.0.1 typing-extensions==4.15.0
 	python3 scripts/data_generator/generate_test_data.py
-	# avoid footguns -- make outputs read only
-	find data/generated -mindepth 1 -print0 | xargs -0 -n 1000 chmod a-w
 
 unpack-golden-tables-release:
 	./scripts/unwrap_golden_tables.sh
