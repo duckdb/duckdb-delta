@@ -1,6 +1,7 @@
 # name: test/sql/inlined/catalog_managed/refuse_path_read.test
 # description: reading a catalog-managed table straight off storage must fail, not return stale rows
 # group: [catalog_managed]
+
 #
 # The fixture enables inCommitTimestamp because kernel v0.26 made it a requirement of catalogManaged
 # (FeatureRequirement::Enabled) -- without it the table is rejected as an invalid protocol before any
@@ -20,7 +21,7 @@ require delta
 statement error
 SELECT count(*) FROM delta_scan('data/inlined/catalog_managed/delta_lake');
 ----
-catalog-managed
+is a catalog-managed Delta table
 
 # The message must point at the fix, not just at the refusal
 statement error
@@ -40,7 +41,7 @@ ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt (TYPE delta);
 statement error
 SELECT count(*) FROM cmt;
 ----
-catalog-managed
+is a catalog-managed Delta table
 
 statement ok
 DETACH cmt;
