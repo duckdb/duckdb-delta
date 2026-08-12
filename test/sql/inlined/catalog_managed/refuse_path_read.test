@@ -31,6 +31,8 @@ TYPE unity_catalog
 # -----------------------------------------------------------------------------
 # Plain delta ATTACH of the same table
 #
+# No version supplied, so the kernel's refusal still fires -- the silent-staleness case stays closed.
+#
 
 statement ok
 ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt (TYPE delta);
@@ -44,52 +46,35 @@ statement ok
 DETACH cmt;
 
 # -----------------------------------------------------------------------------
-# The catalog's coordinates are not user-settable
+# A caller-supplied version is allowed
 #
-# This is the part the kernel cannot defend: any max_catalog_version satisfies its check, so a
-# user-supplied one buys back exactly the stale read it is supposed to prevent.
-#
-
-statement error
-ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt (TYPE delta, max_catalog_version 0);
-----
-supplied by the catalog
-
-statement error
-ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt (TYPE delta, log_tail []);
-----
-supplied by the catalog
-
-# Same for a plain (non catalog-managed) table: provenance is what matters, not the table
-statement error
-ATTACH 'data/inlined/simple_table/delta_lake' AS plain (TYPE delta, max_catalog_version 0);
-----
-supplied by the catalog
-
-# delta_scan no longer takes a log_tail at all
-statement error
-SELECT count(*) FROM delta_scan('data/inlined/simple_table/delta_lake', log_tail = []);
-----
-log_tail
-
-# -----------------------------------------------------------------------------
-# The child attach unity_catalog performs is the one allowed source
-#
-# Nothing else in this repo covers that branch -- inverting the gate would break unity_catalog with delta's
-# own suite still green. It also shows the gate's limit: child_catalog_mode is itself just an option, so it
-# is a guard against the footgun, not against someone reaching into internals on purpose.
+# The kernel only requires that max_catalog_version be present, not that it be current. An explicit
+# value is the caller's deliberate pin (as with time travel), not the silent stale read C2 reports,
+# so it reads rather than errors.
 #
 
 statement ok
-ATTACH 'data/inlined/catalog_managed/delta_lake' AS uc_child (TYPE delta, child_catalog_mode true, max_catalog_version 0);
+ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt_pinned (TYPE delta, max_catalog_version 0);
 
 query I
-SELECT count(*) FROM uc_child;
+SELECT count(*) FROM cmt_pinned;
 ----
 10
 
 statement ok
-DETACH uc_child;
+DETACH cmt_pinned;
+
+# -----------------------------------------------------------------------------
+# delta_scan no longer accepts a log_tail parameter
+#
+# Unused in-tree, and with no max_catalog_version counterpart it could never make a path read
+# catalog-correct.
+#
+
+statement error
+SELECT count(*) FROM delta_scan('data/inlined/simple_table/delta_lake', log_tail = []);
+----
+log_tail
 
 # -----------------------------------------------------------------------------
 # Control: tables that are not catalog-managed are unaffected
