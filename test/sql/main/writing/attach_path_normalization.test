@@ -1,0 +1,106 @@
+# name: test/sql/main/writing/attach_path_normalization.test
+# description: Test that ATTACH paths needing normalization still log correct relative add.path
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# setup
+#
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/attach_path_normalization/dotdot/nested');
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/attach_path_normalization/double_sep/nested');
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/attach_path_normalization/trailing_sep/nested');
+
+# -----------------------------------------------------------------------------
+# test: parent-directory components in the ATTACH path
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/attach_path_normalization/dotdot/nested/../nested/delta_lake' AS dotdot (TYPE delta);
+
+statement ok
+INSERT INTO dotdot VALUES (100);
+
+query II
+SELECT count(*), sum(i) FROM dotdot;
+----
+11	145
+
+# The commit must name the data file relative to the table root, not a truncation of it
+query I
+SELECT regexp_full_match(add.path, 'duckdb-[0-9a-f\-]+\.parquet')
+FROM read_json('{TEMP_DIR}/main/writing/attach_path_normalization/dotdot/nested/delta_lake/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+true
+
+# A reader attaching the canonical path must find the file the commit points at
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/attach_path_normalization/dotdot/nested/delta_lake' AS dotdot_reader (TYPE delta, READ_ONLY);
+
+query II
+SELECT count(*), sum(i) FROM dotdot_reader;
+----
+11	145
+
+# -----------------------------------------------------------------------------
+# test: repeated separators in the ATTACH path
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/attach_path_normalization/double_sep/nested//delta_lake' AS double_sep (TYPE delta);
+
+statement ok
+INSERT INTO double_sep VALUES (100);
+
+query I
+SELECT regexp_full_match(add.path, 'duckdb-[0-9a-f\-]+\.parquet')
+FROM read_json('{TEMP_DIR}/main/writing/attach_path_normalization/double_sep/nested/delta_lake/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+true
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/attach_path_normalization/double_sep/nested/delta_lake' AS double_sep_reader (TYPE delta, READ_ONLY);
+
+query II
+SELECT count(*), sum(i) FROM double_sep_reader;
+----
+11	145
+
+# -----------------------------------------------------------------------------
+# test: trailing separator on the ATTACH path
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/attach_path_normalization/trailing_sep/nested/delta_lake/' AS trailing_sep (TYPE delta);
+
+statement ok
+INSERT INTO trailing_sep VALUES (100);
+
+query I
+SELECT regexp_full_match(add.path, 'duckdb-[0-9a-f\-]+\.parquet')
+FROM read_json('{TEMP_DIR}/main/writing/attach_path_normalization/trailing_sep/nested/delta_lake/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+true
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/attach_path_normalization/trailing_sep/nested/delta_lake' AS trailing_sep_reader (TYPE delta, READ_ONLY);
+
+query II
+SELECT count(*), sum(i) FROM trailing_sep_reader;
+----
+11	145

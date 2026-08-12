@@ -175,6 +175,40 @@ static Value CreateValueLogicalTypeFromStatNode(const unordered_map<string, Stat
 	return Value::STRUCT(children);
 }
 
+// The delta log names each data file relative to the table root. The writer normalizes the table
+// path before composing the file path, so an ATTACH path that is not already normalized differs in
+// length from the prefix the writer actually used; comparing the parsed paths keeps the two
+// spellings from silently producing a truncated -- and unreadable -- entry.
+static string ToTableRelativePath(const string &table_path_raw, const string &file_path_raw) {
+	auto table_path = Path::FromString(table_path_raw);
+	auto file_path = Path::FromString(file_path_raw);
+
+	// Local paths reach us both with and without a file:// scheme, and may be relative to the CWD.
+	// Remote paths are left alone: only their owning store can say what is equivalent.
+	if (table_path.IsLocal() && file_path.IsLocal()) {
+		table_path = PathToLocal(PathToAbsolute(table_path));
+		file_path = PathToLocal(PathToAbsolute(file_path));
+	}
+
+	auto depth = PathGetCommonLineage(file_path, table_path, 1);
+	if (depth < 0) {
+		throw InternalException("Delta write produced file '%s', which is not inside table '%s'", file_path_raw,
+		                        table_path_raw);
+	}
+
+	// Joining the trailing segments keeps the entry relative and '/'-separated: a leading separator
+	// corrupts the table for other engines (https://github.com/duckdb/duckdb-delta/issues/268)
+	const auto &segments = file_path.GetPathSegments();
+	string relative_path;
+	for (idx_t i = segments.size() - static_cast<idx_t>(depth); i < segments.size(); i++) {
+		if (!relative_path.empty()) {
+			relative_path += "/";
+		}
+		relative_path += segments[i];
+	}
+	return relative_path;
+}
+
 struct WriteMetaData {
 	static LogicalType GetStatsType(optional_ptr<const DeltaDataFile> file) {
 		if (file && !file->column_stats.empty()) {
@@ -227,16 +261,9 @@ struct WriteMetaData {
 		const DeltaDataFile *first_file = outstanding_appends.empty() ? nullptr : &outstanding_appends[0];
 		buffer_types = GetTypes(first_file);
 
+		auto table_path = snapshot.GetPath();
 		for (const auto &file : outstanding_appends) {
-			auto table_path = snapshot.GetPath();
-
-			// consume any leading '/' chars to be certain path is relative -- as seen in #268 they corrupt (for spark)
-			// https://github.com/duckdb/duckdb-delta/issues/268
-			auto file_name_offset = table_path.size();
-			for (; file.file_name[file_name_offset] == '/'; ++file_name_offset) {
-			}
-			auto file_name = file.file_name.substr(file_name_offset);
-			D_ASSERT(!StringUtil::StartsWith(file_name, "/"));
+			auto file_name = ToTableRelativePath(table_path, file.file_name);
 
 			InsertionOrderPreservingMap<string> partitions = {};
 			for (const auto &part : file.partition_values) {
