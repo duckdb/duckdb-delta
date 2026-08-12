@@ -3,6 +3,7 @@
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
 
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -588,6 +589,65 @@ string DeltaMultiFileList::ToDeltaPath(const string &raw_path) {
 	return path;
 }
 
+//! Only a bare "char(n)"/"varchar(n)" bounds the field itself. Anything else wraps the width in a nested type, and
+//! stays unset so callers refuse the write instead of ignoring the bound.
+static optional_idx ParseCharVarcharWidth(const string &declared_type) {
+	auto lower = StringUtil::Lower(declared_type);
+	string prefix;
+	if (StringUtil::StartsWith(lower, "char(")) {
+		prefix = "char(";
+	} else if (StringUtil::StartsWith(lower, "varchar(")) {
+		prefix = "varchar(";
+	} else {
+		return optional_idx();
+	}
+	if (lower.back() != ')') {
+		return optional_idx();
+	}
+	auto digits = lower.substr(prefix.size(), lower.size() - prefix.size() - 1);
+	if (digits.empty()) {
+		return optional_idx();
+	}
+	for (const auto c : digits) {
+		if (!StringUtil::CharacterIsDigit(c)) {
+			return optional_idx();
+		}
+	}
+	idx_t width;
+	if (!TryCast::Operation<string_t, idx_t>(string_t(digits), width) || width == 0) {
+		return optional_idx();
+	}
+	return optional_idx(width);
+}
+
+static bool HasNestedCharVarcharType(const vector<DeltaMultiFileColumnDefinition> &columns) {
+	for (auto &col : columns) {
+		if (!col.char_varchar_type.empty() || HasNestedCharVarcharType(col.children)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void ExtractStringWidthBounds(vector<DeltaStringWidthBound> &bounds,
+                                     const vector<DeltaMultiFileColumnDefinition> &columns) {
+	for (idx_t col_id = 0; col_id < columns.size(); col_id++) {
+		auto &col = columns[col_id];
+		auto nested = HasNestedCharVarcharType(col.children);
+		if (col.char_varchar_type.empty() && !nested) {
+			continue;
+		}
+
+		DeltaStringWidthBound bound;
+		bound.column_index = col_id;
+		bound.declared_type = col.char_varchar_type;
+		if (!nested && col.type.id() == LogicalTypeId::VARCHAR) {
+			bound.max_length = ParseCharVarcharWidth(col.char_varchar_type);
+		}
+		bounds.push_back(std::move(bound));
+	}
+}
+
 static void ExtractNotNullConstraints(vector<NestedNotNullConstraint> &constraints,
                                       const vector<DeltaMultiFileColumnDefinition> &columns,
                                       idx_t index = DConstants::INVALID_INDEX, const string &parent_path = "") {
@@ -656,8 +716,8 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<Identifi
 	have_bound = true;
 
 	ExtractNotNullConstraints(this->not_null_constraints, visited_schema);
-
 	has_null_constraints_in_arrays = ExtractHasNullConstraintsInArrays(visited_schema);
+	ExtractStringWidthBounds(this->string_width_bounds, visited_schema);
 
 	this->global_columns = std::move(visited_schema);
 }
@@ -1160,6 +1220,21 @@ vector<DeltaMultiFileColumnDefinition> &DeltaMultiFileList::GetLazyLoadedGlobalC
 	unique_lock<mutex> lck(lock);
 	EnsureScanInitialized();
 	return lazy_loaded_schema;
+}
+
+vector<DeltaStringWidthBound> DeltaMultiFileList::GetStringWidthBounds() const {
+	unique_lock<mutex> lck(lock);
+	EnsureSnapshotInitialized();
+	if (!have_bound) {
+		// Every table entry binds first, so this is unreachable today. Visit the schema anyway rather than fall
+		// through to an empty result: a width check that silently finds no bounds is the one failure we cannot see.
+		auto snapshot_ref = snapshot->GetLockingRef();
+		auto visited_schema = KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr());
+		vector<DeltaStringWidthBound> bounds;
+		ExtractStringWidthBounds(bounds, visited_schema);
+		return bounds;
+	}
+	return string_width_bounds;
 }
 
 vector<NestedNotNullConstraint> DeltaMultiFileList::GetNestedNotNullConstraints() const {
