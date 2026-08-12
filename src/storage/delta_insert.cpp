@@ -255,11 +255,7 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 SinkResultType DeltaInsert::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 	auto &global_state = input.global_state.Cast<DeltaInsertGlobalState>();
 
-	if (chunk.size() != 1) {
-		throw InternalException(
-		    "DeltaInsert::Sink expects a single row containing output of the PhysicalCopy that should be its Source");
-	}
-
+	// The PhysicalCopyToFile reports one row per file written, so a partitioned write arrives as several.
 	AddWrittenFiles(global_state, chunk);
 
 	return SinkResultType::NEED_MORE_INPUT;
