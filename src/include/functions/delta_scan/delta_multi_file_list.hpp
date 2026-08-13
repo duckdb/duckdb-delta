@@ -147,9 +147,8 @@ protected:
 	ffi::Handle<ffi::SharedSnapshot> BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const;
 
 	//! Builder for `target_version` (INVALID_INDEX for HEAD), with log tail and catalog bounds applied
-	ffi::Handle<ffi::MutableFfiSnapshotBuilder> CreateSnapshotBuilder(ffi::KernelStringSlice path_slice,
-	                                                                  idx_t target_version,
-	                                                                  bool &using_incremental) const;
+	ffi::Handle<ffi::MutableFfiSnapshotBuilder>
+	CreateSnapshotBuilder(ffi::KernelStringSlice path_slice, idx_t target_version, bool &using_incremental) const;
 
 	void InitializeEngine(ClientContext &context) const;
 

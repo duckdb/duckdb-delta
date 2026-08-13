@@ -738,8 +738,8 @@ DeltaMultiFileList::BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> bu
 
 // req: this.lock must already be owned
 ffi::Handle<ffi::MutableFfiSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBuilder(ffi::KernelStringSlice path_slice,
-                                                                                     idx_t target_version,
-                                                                                     bool &using_incremental) const {
+                                                                                      idx_t target_version,
+                                                                                      bool &using_incremental) const {
 	ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
 	using_incremental = false;
 
