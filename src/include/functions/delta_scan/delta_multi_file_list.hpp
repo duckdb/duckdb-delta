@@ -20,6 +20,10 @@
 
 namespace duckdb {
 
+//! Builds a kernel engine for a table path, applying the DuckDB secret matching that path. Callable
+//! before any snapshot exists, which is what the CREATE TABLE path needs.
+KernelExternEngine CreateDeltaEngine(ClientContext &context, const string &path);
+
 struct DeltaFileMetaData {
 	DeltaFileMetaData() {};
 
@@ -90,6 +94,16 @@ public:
 	string path;
 };
 
+//! A CHAR(n)/VARCHAR(n) width declared on a top-level column via `__CHAR_VARCHAR_TYPE_STRING` field metadata
+struct DeltaStringWidthBound {
+	//! Index into the table's top-level columns
+	idx_t column_index;
+	//! Verbatim metadata value, e.g. "char(5)". Empty when only a descendant of this column declares a width
+	string declared_type;
+	//! Bound in codepoints. Unset when the width sits on a field nested inside declared_type, e.g. "array<char(5)>"
+	optional_idx max_length;
+};
+
 //! The DeltaMultiFileList implements the MultiFileList API to allow injecting it into the regular DuckDB parquet scan
 class DeltaMultiFileList : public SimpleMultiFileList {
 	friend struct ScanDataCallBack;
@@ -125,6 +139,7 @@ public:
 	vector<DeltaMultiFileColumnDefinition> &GetLazyLoadedGlobalColumns() const;
 	vector<NestedNotNullConstraint> GetNestedNotNullConstraints() const;
 	bool HasNullConstraintsInArrays() const;
+	vector<DeltaStringWidthBound> GetStringWidthBounds() const;
 
 protected:
 	//! Get the i-th expanded file
@@ -191,6 +206,7 @@ protected:
 	mutable vector<OpenFileInfo> resolved_files;
 	mutable DeltaTableFilters table_filters;
 
+	mutable vector<DeltaStringWidthBound> string_width_bounds;
 	mutable vector<NestedNotNullConstraint> not_null_constraints;
 	mutable bool has_null_constraints_in_arrays = false;
 

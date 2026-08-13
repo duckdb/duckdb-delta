@@ -66,6 +66,10 @@ public:
 
 	optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info) override;
 
+	//! Opts this catalog in to PARTITIONED BY and WITH (...), which the base Catalog rejects for
+	//! every catalog that does not claim them.
+	ErrorData SupportsCreateTable(BoundCreateTableInfo &info) override;
+
 	void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
 
 	optional_ptr<SchemaCatalogEntry> LookupSchema(CatalogTransaction transaction, const EntryLookupInfo &schema_lookup,

@@ -14,6 +14,12 @@ TMP_PATH = '/tmp'
 
 from delta_rs_generator import *
 from pyspark_generator import *
+from duckdb_generator import install_duckdb_backend
+
+# With DELTA_FIXTURE_GENERATOR=duckdb, fixtures that CREATE + INSERT can express are
+# written by the extension itself; the rest keep their original backend.
+generate_test_data_pyspark, generate_test_data_delta_rs = install_duckdb_backend(
+    generate_test_data_pyspark, generate_test_data_delta_rs)
 
 ################################################
 ### Simple tables for simple tests

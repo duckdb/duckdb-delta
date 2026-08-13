@@ -4,6 +4,7 @@
 #include "duckdb/storage/database_size.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 
@@ -42,6 +43,16 @@ optional_ptr<CatalogEntry> DeltaCatalog::CreateSchema(CatalogTransaction transac
 
 void DeltaCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	throw BinderException("Delta tables do not support dropping schemas");
+}
+
+ErrorData DeltaCatalog::SupportsCreateTable(BoundCreateTableInfo &info) {
+	auto &base = info.Base().Cast<CreateTableInfo>();
+	// Delta has partition columns and table properties, but nothing that SORTED BY maps onto.
+	if (!base.sort_keys.empty()) {
+		return ErrorData(ExceptionType::CATALOG,
+		                 StringUtil::Format("SORTED BY is not supported for tables in a %s catalog", GetCatalogType()));
+	}
+	return ErrorData();
 }
 
 void DeltaCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {

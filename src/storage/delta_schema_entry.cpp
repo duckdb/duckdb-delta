@@ -1,5 +1,6 @@
 #include "storage/delta_schema_entry.hpp"
 
+#include "delta_schema_builder.hpp"
 #include "delta_utils.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "storage/delta_catalog.hpp"
@@ -9,9 +10,15 @@
 #include "storage/delta_table_entry.hpp"
 #include "storage/delta_transaction.hpp"
 
+#include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/path.hpp"
+#include "duckdb/common/to_string.hpp"
 #include "duckdb/common/unordered_set.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
@@ -33,8 +40,185 @@ DeltaTransaction &GetDeltaTransaction(CatalogTransaction transaction) {
 	return transaction.transaction->Cast<DeltaTransaction>();
 }
 
+//! Canonical form for comparing two spellings of one table location. `Path::ToString` is base +
+//! path + trailing separator, so dropping the separator is just leaving the last part off.
+static string CanonicalTablePath(const string &path) {
+	auto parsed = Path::FromString(path);
+	return parsed.GetBase() + parsed.GetPath();
+}
+
+//! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (path =
+//! '...')` names it explicitly. Only constants are accepted -- the binder does not evaluate table
+//! options, they arrive as raw parsed expressions.
+static string GetCreateTablePath(const CreateTableInfo &base, DeltaCatalog &delta_catalog) {
+	auto option = base.options.find("path");
+	if (option == base.options.end()) {
+		return delta_catalog.GetDBPath();
+	}
+	if (option->second->GetExpressionClass() != ExpressionClass::CONSTANT) {
+		throw BinderException("Delta CREATE TABLE option 'path' must be a constant, found '%s'",
+		                      option->second->ToString());
+	}
+	auto path = option->second->Cast<ConstantExpression>().GetValue().ToString();
+
+	// A Delta catalog is a single table at a single path, so a divergent path would produce a
+	// catalog entry that does not describe what was attached. Compare normalized, so a trailing
+	// slash or a relative spelling of the attached path is not a spurious mismatch.
+	auto attached_path = delta_catalog.GetDBPath();
+	if (CanonicalTablePath(path) != CanonicalTablePath(attached_path)) {
+		throw NotImplementedException(
+		    "Delta CREATE TABLE can only create a table at the attached path ('%s'), not at '%s'", attached_path, path);
+	}
+	return path;
+}
+
+//! Whether a Delta table has been created at `path` yet, judged the same way kernel judges it: by
+//! the presence of `_delta_log`. Deliberately a cheap existence probe rather than a snapshot build,
+//! because callers need "is there a table here" to be answerable before there is one.
+static bool DeltaTableExistsAt(ClientContext &context, const string &path) {
+	auto &fs = FileSystem::GetFileSystem(context);
+	return fs.DirectoryExists(Path::FromString(path).Join("_delta_log").ToString());
+}
+
+//! Applies DuckDB's CREATE conflict semantics ahead of the kernel call. Kernel remains the
+//! authoritative existence check; this only decides what DuckDB should do when the table is already
+//! there. Returns false when the statement should be skipped entirely.
+static bool HandleCreateConflict(ClientContext &context, const CreateTableInfo &base, const string &path) {
+	if (base.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
+		// Replacing means dropping, and Delta tables do not support dropping yet.
+		throw NotImplementedException("Delta tables do not support CREATE OR REPLACE TABLE");
+	}
+	if (base.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT) {
+		return true;
+	}
+
+	return !DeltaTableExistsAt(context, path);
+}
+
+//! Kernel rejects a table location that does not exist. Object stores conjure prefixes on write, but
+//! a local filesystem needs the directory to be there first.
+static void EnsureTableDirectory(ClientContext &context, const string &path) {
+	if (!Path::FromString(path).IsLocal()) {
+		return;
+	}
+	auto &fs = FileSystem::GetFileSystem(context);
+	if (!fs.DirectoryExists(path)) {
+		fs.CreateDirectoriesRecursive(path);
+	}
+}
+
+static vector<string> GetCreateTablePartitionColumns(const CreateTableInfo &base) {
+	vector<string> result;
+	for (auto &key : base.partition_keys) {
+		if (key->GetExpressionClass() != ExpressionClass::COLUMN_REF) {
+			throw BinderException("Delta CREATE TABLE only supports plain column names in PARTITIONED BY, found '%s'",
+			                      key->ToString());
+		}
+		auto &colref = key->Cast<ColumnRefExpression>();
+		if (colref.IsQualified()) {
+			throw BinderException("Delta CREATE TABLE does not support qualified partition columns ('%s')",
+			                      key->ToString());
+		}
+		result.push_back(colref.GetColumnName().GetIdentifierName());
+	}
+	return result;
+}
+
 optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
-	throw BinderException("Delta tables do not support creating tables");
+	if (!transaction.HasContext()) {
+		throw NotImplementedException("Can not create a Delta table without context");
+	}
+	auto &context = transaction.GetContext();
+	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
+	auto &base = info.Base();
+
+	if (delta_catalog.access_mode == AccessMode::READ_ONLY) {
+		throw InvalidInputException("Can not create a table in a read only Delta catalog");
+	}
+
+	// LookupEntry only ever resolves the single attached table, so any other name would create a
+	// table that could never be read back.
+	auto table_name = base.GetTableName().GetIdentifierName();
+	if (table_name != catalog.GetName() && table_name != delta_catalog.internal_table_name) {
+		throw NotImplementedException("Delta CREATE TABLE must use the attached name ('%s'), found '%s'",
+		                              catalog.GetName().GetIdentifierName(), table_name);
+	}
+	// SORTED BY is rejected by DeltaCatalog::SupportsCreateTable, which the binder consults first.
+	for (auto &constraint : base.constraints) {
+		// Delta requires columns to be nullable unless the `invariants` writer feature is enabled,
+		// which we do not request yet.
+		if (constraint->type == ConstraintType::NOT_NULL) {
+			throw NotImplementedException("Delta CREATE TABLE does not support NOT NULL constraints");
+		}
+		throw NotImplementedException("Delta CREATE TABLE does not support constraints");
+	}
+
+	auto path = GetCreateTablePath(base, delta_catalog);
+	if (!HandleCreateConflict(context, base, path)) {
+		return nullptr;
+	}
+	auto partition_columns = GetCreateTablePartitionColumns(base);
+
+	EnsureTableDirectory(context, path);
+	auto engine = CreateDeltaEngine(context, path);
+
+	// The builder holds a borrowed pointer to `schema_builder`, and kernel runs the visitor during
+	// get_create_table_builder -- both must outlive that call.
+	DeltaSchemaBuilder schema_builder(base.columns);
+	auto engine_schema = schema_builder.CreateEngineSchema();
+
+	ffi::ExclusiveCreateTableBuilder *create_builder;
+	auto builder_res =
+	    KernelUtils::TryUnpackResult(ffi::get_create_table_builder(KernelUtils::ToDeltaString(path), &engine_schema,
+	                                                               KernelUtils::ToDeltaString("DuckDB"), engine.get()),
+	                                 create_builder);
+	if (builder_res.HasError()) {
+		// A schema-lowering failure surfaces from kernel as a generic schema error; the specific
+		// cause (e.g. an unsupported column type) is only on the builder.
+		if (schema_builder.GetError().HasError()) {
+			schema_builder.GetError().Throw();
+		}
+		builder_res.Throw();
+	}
+
+	if (!partition_columns.empty()) {
+		vector<ffi::KernelStringSlice> slices;
+		for (auto &partition_column : partition_columns) {
+			slices.push_back(KernelUtils::ToDeltaString(partition_column));
+		}
+		// Consumes the builder handle unconditionally, including on error.
+		auto partition_res =
+		    KernelUtils::TryUnpackResult(ffi::create_table_builder_with_partition_columns(create_builder, slices.data(),
+		                                                                                  slices.size(), engine.get()),
+		                                 create_builder);
+		if (partition_res.HasError()) {
+			partition_res.Throw();
+		}
+	}
+
+	ffi::ExclusiveCreateTransaction *create_transaction;
+	auto build_res =
+	    KernelUtils::TryUnpackResult(ffi::create_table_builder_build(create_builder, engine.get()), create_transaction);
+	if (build_res.HasError()) {
+		build_res.Throw();
+	}
+
+	ffi::ExclusiveCommittedTransaction *committed;
+	auto commit_res =
+	    KernelUtils::TryUnpackResult(ffi::create_table_commit(create_transaction, engine.get()), committed);
+	if (commit_res.HasError()) {
+		commit_res.Throw();
+	}
+	auto version = ffi::committed_transaction_version(&committed);
+	ffi::free_committed_transaction(committed);
+	DUCKDB_LOG_INTERNAL(context, "delta.CreateTable", LogLevel::LOG_DEBUG, "Created %s at version %s", path,
+	                    to_string(version));
+
+	// Serve the table we just committed through the regular lookup path, so the schema cache and the
+	// transaction's entry end up in the same state as for a table that already existed. Reading it back
+	// also means the catalog serves the new snapshot without a re-attach.
+	EntryLookupInfo lookup_info(CatalogType::TABLE_ENTRY, QualifiedName(base.GetTableName()));
+	return LookupEntry(transaction, lookup_info);
 }
 
 optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) {
@@ -197,6 +381,14 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		auto transaction_table_entry = delta_transaction.GetTableEntry(version);
 		if (transaction_table_entry) {
 			return *transaction_table_entry;
+		}
+
+		// With nothing cached the entry has to come from a snapshot, and kernel refuses to build one
+		// where no table exists. Report that as "not found" instead of letting the IO error escape:
+		// DuckDB looks the table up before CREATE TABLE, so without this no table can ever be created
+		// at a fresh path, and plain catalog enumeration of an empty attach throws too.
+		if (!GetCachedTable() && !DeltaTableExistsAt(context, delta_catalog.GetDBPath())) {
+			return nullptr;
 		}
 
 		if (delta_catalog.UseCachedSnapshot()) {

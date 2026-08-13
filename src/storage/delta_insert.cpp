@@ -21,7 +21,9 @@
 #include "duckdb/execution/operator/projection/physical_projection.hpp"
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/function/scalar/string_common.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 
 namespace duckdb {
@@ -302,6 +304,113 @@ static optional_ptr<CopyFunctionCatalogEntry> TryGetCopyFunction(DatabaseInstanc
 	return schema.GetEntry(data, CatalogType::COPY_FUNCTION_ENTRY, Identifier(name))->Cast<CopyFunctionCatalogEntry>();
 }
 
+namespace {
+
+struct DeltaStringWidthCheckData : public FunctionData {
+	DeltaStringWidthCheckData(string column_name_p, string declared_type_p, idx_t max_length_p)
+	    : column_name(std::move(column_name_p)), declared_type(std::move(declared_type_p)), max_length(max_length_p) {
+	}
+
+	string column_name;
+	string declared_type;
+	idx_t max_length;
+
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<DeltaStringWidthCheckData>(column_name, declared_type, max_length);
+	}
+
+	bool Equals(const FunctionData &other_p) const override {
+		auto &other = other_p.Cast<DeltaStringWidthCheckData>();
+		return column_name == other.column_name && declared_type == other.declared_type &&
+		       max_length == other.max_length;
+	}
+};
+
+//! Reject rather than truncate: Spark re-checks the width on every rewrite, so a truncating write would trade silent
+//! data loss for a table the reference writer later refuses.
+void DeltaStringWidthCheck(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &info = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<DeltaStringWidthCheckData>();
+
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(input);
+	auto strings = UnifiedVectorFormat::GetData<string_t>(input);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		if (!input.validity.RowIsValid(idx)) {
+			continue;
+		}
+		// Codepoints, matching both Spark's char/varchar length and DuckDB's length()
+		auto length = Length<string_t, idx_t>(strings[idx]);
+		if (length > info.max_length) {
+			throw InvalidInputException("Delta column \"%s\" is declared as %s, but the value being written is %llu "
+			                            "characters long. Delta records this width as __CHAR_VARCHAR_TYPE_STRING "
+			                            "field metadata; writing a longer value produces a table that Spark rejects.",
+			                            info.column_name, info.declared_type, length);
+		}
+	}
+	result.Reference(args.data[0]);
+}
+
+//! Deliberately not registered in the catalog: it exists only inside a physical plan built here, so there is no name
+//! to resolve and no user-facing function to misuse. Registering it would add surface, not safety.
+ScalarFunction GetStringWidthCheckFunction() {
+	ScalarFunction function("delta_check_string_width", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                        DeltaStringWidthCheck);
+	function.SetFallible();
+	return function;
+}
+
+} // namespace
+
+//! Adapts the insert child plan to what the parquet copy expects. Any further per-column rewrite on the write path
+//! belongs here, between the child and the copy: the sink only ever sees the copy's written-file summary, never data.
+static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, PhysicalOperator &child,
+                                              const ColumnList &columns,
+                                              const vector<DeltaStringWidthBound> &width_bounds) {
+	if (width_bounds.empty()) {
+		return child;
+	}
+
+	auto types = child.GetTypes();
+	if (types.size() != columns.PhysicalColumnCount()) {
+		// The binder resolves the child into table order and width, so this should not fire; refuse the write rather
+		// than check widths against columns we cannot line up.
+		throw BinderException("Cannot write to Delta table with declared CHAR/VARCHAR widths: the insert produces %llu "
+		                      "columns but the table has %llu",
+		                      types.size(), columns.PhysicalColumnCount());
+	}
+
+	vector<unique_ptr<Expression>> expressions;
+	for (idx_t i = 0; i < types.size(); i++) {
+		expressions.push_back(make_uniq<BoundReferenceExpression>(types[i], i));
+	}
+
+	for (const auto &width_bound : width_bounds) {
+		auto &column = columns.GetColumn(PhysicalIndex(width_bound.column_index));
+		if (!width_bound.max_length.IsValid()) {
+			auto declared =
+			    width_bound.declared_type.empty()
+			        ? "has a nested field declaring a CHAR/VARCHAR width"
+			        : StringUtil::Format("declares the width %s on a nested field", width_bound.declared_type);
+			throw NotImplementedException("Delta column \"%s\" %s, which duckdb-delta cannot enforce on write yet. "
+			                              "Refusing the write rather than committing values Spark would reject.",
+			                              column.Name().GetIdentifierName(), declared);
+		}
+
+		vector<unique_ptr<Expression>> check_children;
+		check_children.push_back(std::move(expressions[width_bound.column_index]));
+		expressions[width_bound.column_index] = make_uniq<BoundFunctionExpression>(
+		    BoundScalarFunction(GetStringWidthCheckFunction()), std::move(check_children),
+		    make_uniq<DeltaStringWidthCheckData>(column.Name().GetIdentifierName(), width_bound.declared_type,
+		                                         width_bound.max_length.GetIndex()));
+	}
+
+	auto &projection =
+	    planner.Make<PhysicalProjection>(std::move(types), std::move(expressions), child.estimated_cardinality);
+	projection.children.push_back(child);
+	return projection;
+}
+
 PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
                                            optional_ptr<PhysicalOperator> plan) {
 	if (op.return_chunk) {
@@ -398,7 +507,8 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	physical_copy_ref.per_thread_output = false;
 	physical_copy_ref.return_type = CopyFunctionReturnType::WRITTEN_FILE_STATISTICS;
 	physical_copy_ref.write_partition_columns = true;
-	physical_copy_ref.children.push_back(*plan);
+	physical_copy_ref.children.push_back(
+	    PlanInsertProjection(planner, *plan, columns, table_entry->snapshot->GetStringWidthBounds()));
 	physical_copy_ref.names = StringsToIdentifiers(names_to_write);
 	physical_copy_ref.expected_types = types_to_write;
 	physical_copy_ref.hive_file_pattern = true;
