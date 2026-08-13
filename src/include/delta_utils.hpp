@@ -274,6 +274,9 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 
 	vector<DeltaMultiFileColumnDefinition> children;
 	bool nullable = true;
+	//! Verbatim `__CHAR_VARCHAR_TYPE_STRING` field metadata, e.g. "char(5)" or "array<varchar(5)>": a width the Delta
+	//! type system cannot express, which Spark enforces client-side and the kernel does not interpret at all.
+	string char_varchar_type;
 };
 
 // KernelSchemaVisitor is used to parse the schema of a Delta table from the Kernel
@@ -310,6 +313,7 @@ private:
 		if (!name.empty()) {
 			col_def.identifier = Value(name);
 		}
+		col_def.char_varchar_type = KernelUtils::FetchFromStringMap(engine, metadata, "__CHAR_VARCHAR_TYPE_STRING");
 		col_def.default_expression = make_uniq<ConstantExpression>(Value(col_def.type));
 	}
 

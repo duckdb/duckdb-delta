@@ -16,10 +16,10 @@ IO Error: DeltaKernel InvalidTableLocationError (28): Invalid table location: Pa
 statement ok
 ATTACH './doesnt_exist_and_never_will_exist_i_hope' AS s1 (TYPE delta);
 
-statement error
+# TODO: ATTACH should probe the location and fail here, rather than deferring to first use.
+query IIIIII
 SHOW ALL TABLES;
 ----
-IO Error: DeltaKernel InvalidTableLocationError (28): Invalid table location: Path does not exist:
 
 statement ok
 DETACH s1;

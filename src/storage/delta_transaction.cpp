@@ -41,10 +41,6 @@ void DeltaTransaction::Start() {
 	transaction_state = DeltaTransactionState::TRANSACTION_NOT_YET_STARTED;
 }
 
-static void *allocate_string(const struct ffi::KernelStringSlice slice) {
-	return new string(slice.ptr, slice.len);
-}
-
 struct DeltaCommitInfo {
 public:
 	static vector<LogicalType> GetTypes() {

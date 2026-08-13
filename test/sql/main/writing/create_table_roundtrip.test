@@ -1,0 +1,111 @@
+# name: test/sql/main/writing/create_table_roundtrip.test
+# description: DeltaSchemaBuilder -> delta log -> SchemaVisitor must round trip losslessly
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Every type the builder supports, written and read back
+#
+# DeltaSchemaBuilder claims to mirror SchemaVisitor's mapping. This is the test of
+# that claim: CREATE lowers DuckDB types into the delta log, and the type shown
+# afterwards is what SchemaVisitor reconstructed from that log.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_roundtrip' AS rt (TYPE delta);
+
+statement ok
+CREATE TABLE rt.rt (
+    c_bool BOOLEAN,
+    c_tinyint TINYINT,
+    c_smallint SMALLINT,
+    c_int INTEGER,
+    c_bigint BIGINT,
+    c_float FLOAT,
+    c_double DOUBLE,
+    c_varchar VARCHAR,
+    c_blob BLOB,
+    c_date DATE,
+    c_ts_tz TIMESTAMP WITH TIME ZONE,
+    c_ts_ntz TIMESTAMP,
+    c_decimal DECIMAL(18,4),
+    c_struct STRUCT(a INTEGER, b VARCHAR),
+    c_list INTEGER[],
+    c_map MAP(VARCHAR, INTEGER)
+);
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'rt' ORDER BY column_index;
+----
+c_bool	BOOLEAN
+c_tinyint	TINYINT
+c_smallint	SMALLINT
+c_int	INTEGER
+c_bigint	BIGINT
+c_float	FLOAT
+c_double	DOUBLE
+c_varchar	VARCHAR
+c_blob	BLOB
+c_date	DATE
+c_ts_tz	TIMESTAMP WITH TIME ZONE
+c_ts_ntz	TIMESTAMP
+c_decimal	DECIMAL(18,4)
+c_struct	STRUCT(a INTEGER, b VARCHAR)
+c_list	INTEGER[]
+c_map	MAP(VARCHAR, INTEGER)
+
+# -----------------------------------------------------------------------------
+# Same schema after a fresh attach
+#
+# The assertion above could in principle be served by state cached in the schema
+# entry. Re-attaching forces the schema to come from the committed log only.
+#
+
+statement ok
+DETACH rt;
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_roundtrip' AS rt2 (TYPE delta);
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'rt2' ORDER BY column_index;
+----
+c_bool	BOOLEAN
+c_tinyint	TINYINT
+c_smallint	SMALLINT
+c_int	INTEGER
+c_bigint	BIGINT
+c_float	FLOAT
+c_double	DOUBLE
+c_varchar	VARCHAR
+c_blob	BLOB
+c_date	DATE
+c_ts_tz	TIMESTAMP WITH TIME ZONE
+c_ts_ntz	TIMESTAMP
+c_decimal	DECIMAL(18,4)
+c_struct	STRUCT(a INTEGER, b VARCHAR)
+c_list	INTEGER[]
+c_map	MAP(VARCHAR, INTEGER)
+
+# -----------------------------------------------------------------------------
+# Partitioned tables keep their column order and types
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_roundtrip_part' AS rtp (TYPE delta);
+
+statement ok
+CREATE TABLE rtp.rtp (id BIGINT, part_a VARCHAR, part_b DATE, payload DOUBLE) PARTITIONED BY (part_a, part_b);
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'rtp' ORDER BY column_index;
+----
+id	BIGINT
+part_a	VARCHAR
+part_b	DATE
+payload	DOUBLE
