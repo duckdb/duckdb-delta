@@ -165,8 +165,6 @@ protected:
 	ffi::Handle<ffi::MutableFfiSnapshotBuilder>
 	CreateSnapshotBuilder(ffi::KernelStringSlice path_slice, idx_t target_version, bool &using_incremental) const;
 
-	void InitializeEngine(ClientContext &context) const;
-
 	//! The version `timestamp_ms` names, adopting the HEAD snapshot built on the way when it already is
 	//! the answer. Requires extern_engine.
 	idx_t ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice, int64_t timestamp_ms) const;
