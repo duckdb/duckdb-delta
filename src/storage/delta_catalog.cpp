@@ -51,24 +51,16 @@ timestamp_tz_t DeltaTimeTravelSpec::GetTimestamp() const {
 DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_clause) {
 	auto &unit = at_clause.Unit();
 
+	// Casting throws its own conversion error, which names the offending value and target type, so
+	// wrapping it says nothing extra. This also matches how the ATTACH options read the same two units.
 	if (unit == "version") {
-		Value version_value = at_clause.GetValue();
-		if (!version_value.DefaultTryCastAs(LogicalType::UBIGINT, false)) {
-			throw InvalidInputException("Failed to parse version number '%s' into a valid version",
-			                            at_clause.GetValue().ToString().c_str());
-		}
-		return FromVersion(version_value.GetValue<idx_t>());
+		return FromVersion(at_clause.GetValue().DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>());
 	}
 
 	if (unit == "timestamp") {
 		// Anything without a zone -- a naive TIMESTAMP or a string with no offset -- resolves through
 		// the session timezone.
-		Value timestamp_value = at_clause.GetValue();
-		if (!timestamp_value.DefaultTryCastAs(LogicalType::TIMESTAMP_TZ, false)) {
-			throw InvalidInputException("Failed to parse timestamp '%s' into a valid timestamp",
-			                            at_clause.GetValue().ToString().c_str());
-		}
-		return FromTimestamp(timestamp_value.GetValue<timestamp_tz_t>());
+		return FromTimestamp(at_clause.GetValue().DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
 	}
 
 	throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version' or 'timestamp'");
