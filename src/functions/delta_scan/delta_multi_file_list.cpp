@@ -5,6 +5,8 @@
 
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/common/operator/multiply.hpp"
+#include "duckdb/common/types/interval.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -842,6 +844,16 @@ ffi::Handle<ffi::MutableFfiSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBu
 	return builder;
 }
 
+//! Delta timestamps are epoch milliseconds; logs are for humans. The kernel supplies some of these,
+//! so an unrepresentable value falls back to the raw number rather than throwing out of a log call.
+static string FormatEpochMs(int64_t timestamp_ms) {
+	int64_t micros;
+	if (!TryMultiplyOperator::Operation(timestamp_ms, Interval::MICROS_PER_MSEC, micros)) {
+		return to_string(timestamp_ms) + "ms";
+	}
+	return Value::TIMESTAMPTZ(timestamp_tz_t(micros)).ToString();
+}
+
 // req: this.lock must already be owned
 idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice,
                                            int64_t timestamp_ms) const {
@@ -853,19 +865,24 @@ idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelSt
 	auto head = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(head_builder));
 
 	idx_t head_version;
-	idx_t resolved;
+	ffi::FfiCommitAt commit;
 	{
 		auto head_ref = head->GetLockingRef();
 		head_version = ffi::version(head_ref.GetPtr());
-		auto commit = TryUnpackKernelResult(ffi::latest_version_as_of(
-		    head_ref.GetPtr(), extern_engine.get(), timestamp_ms, ffi::FfiHistoryCommitType::Recreatable));
-		resolved = commit.version;
+		commit = TryUnpackKernelResult(ffi::latest_version_as_of(head_ref.GetPtr(), extern_engine.get(), timestamp_ms,
+		                                                         ffi::FfiHistoryCommitType::Recreatable));
 	}
+	auto resolved = static_cast<idx_t>(commit.version);
 
-	DUCKDB_LOG_INTERNAL(context, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-	                    "Resolved timestamp %s ms for '%s' to version %s (incremental=%s)", to_string(timestamp_ms),
-	                    string(path_slice.ptr, path_slice.len), to_string(resolved),
-	                    using_incremental ? "true" : "false");
+	// The commit's own timestamp is what makes this readable after the fact: it is the gap between what
+	// was asked for and what was read, and it says whether the table has in-commit timestamps (exact)
+	// or is falling back to file modification times (approximate).
+	DUCKDB_LOG_INTERNAL(context, "delta.TimeTravel", LogLevel::LOG_DEBUG,
+	                    "Timestamp %s resolved to version %s committed at %s; head is version %s "
+	                    "(incremental=%s) for '%s'",
+	                    FormatEpochMs(timestamp_ms), to_string(resolved), FormatEpochMs(commit.timestamp),
+	                    to_string(head_version), using_incremental ? "true" : "false",
+	                    string(path_slice.ptr, path_slice.len));
 
 	if (resolved == head_version) {
 		snapshot = std::move(head);

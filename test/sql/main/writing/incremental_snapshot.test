@@ -204,8 +204,7 @@ SELECT count() FROM t5 AT (TIMESTAMP => now());
 # Resolution seeds off the cached snapshot rather than replaying the log from scratch
 query I
 SELECT count() > 0 FROM duckdb_logs
-WHERE type = 'delta.DeltaMultiFileList'
-AND message LIKE '%Resolved timestamp%'
+WHERE type = 'delta.TimeTravel'
 AND message LIKE '%incremental=true%';
 ----
 true
