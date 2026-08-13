@@ -61,8 +61,8 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 		for (idx_t i = 0; i < children.size(); i++) {
 			child_ids.push_back(VisitField(state, children[i].first.GetIdentifierName(), children[i].second, true));
 		}
-		return Unpack(ffi::visit_field_struct(state, name_slice, child_ids.data(), child_ids.size(), nullable,
-		                                      allocate_error));
+		return Unpack(
+		    ffi::visit_field_struct(state, name_slice, child_ids.data(), child_ids.size(), nullable, allocate_error));
 	}
 	case LogicalTypeId::LIST: {
 		auto element_id = VisitField(state, "element", ListType::GetChildType(type), true);

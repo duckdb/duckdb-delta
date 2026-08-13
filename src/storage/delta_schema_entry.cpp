@@ -168,10 +168,10 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	auto engine_schema = schema_builder.CreateEngineSchema();
 
 	ffi::ExclusiveCreateTableBuilder *create_builder;
-	auto builder_res = KernelUtils::TryUnpackResult(
-	    ffi::get_create_table_builder(KernelUtils::ToDeltaString(path), &engine_schema,
-	                                  KernelUtils::ToDeltaString("DuckDB"), engine.get()),
-	    create_builder);
+	auto builder_res =
+	    KernelUtils::TryUnpackResult(ffi::get_create_table_builder(KernelUtils::ToDeltaString(path), &engine_schema,
+	                                                               KernelUtils::ToDeltaString("DuckDB"), engine.get()),
+	                                 create_builder);
 	if (builder_res.HasError()) {
 		// A schema-lowering failure surfaces from kernel as a generic schema error; the specific
 		// cause (e.g. an unsupported column type) is only on the builder.
@@ -187,17 +187,18 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 			slices.push_back(KernelUtils::ToDeltaString(partition_column));
 		}
 		// Consumes the builder handle unconditionally, including on error.
-		auto partition_res = KernelUtils::TryUnpackResult(
-		    ffi::create_table_builder_with_partition_columns(create_builder, slices.data(), slices.size(), engine.get()),
-		    create_builder);
+		auto partition_res =
+		    KernelUtils::TryUnpackResult(ffi::create_table_builder_with_partition_columns(create_builder, slices.data(),
+		                                                                                  slices.size(), engine.get()),
+		                                 create_builder);
 		if (partition_res.HasError()) {
 			partition_res.Throw();
 		}
 	}
 
 	ffi::ExclusiveCreateTransaction *create_transaction;
-	auto build_res = KernelUtils::TryUnpackResult(ffi::create_table_builder_build(create_builder, engine.get()),
-	                                              create_transaction);
+	auto build_res =
+	    KernelUtils::TryUnpackResult(ffi::create_table_builder_build(create_builder, engine.get()), create_transaction);
 	if (build_res.HasError()) {
 		build_res.Throw();
 	}
