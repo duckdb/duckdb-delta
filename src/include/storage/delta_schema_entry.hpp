@@ -52,8 +52,7 @@ private:
 	                                              optional_ptr<const DeltaMultiFileList> old_snapshot);
 
 	//! The version `timestamp` names. Reads the log, so callers should bind once and reuse the result.
-	idx_t ResolveTimestamp(ClientContext &context, timestamp_tz_t timestamp,
-	                       optional_ptr<const DeltaMultiFileList> old_snapshot);
+	idx_t ResolveTimestamp(ClientContext &context, timestamp_tz_t timestamp);
 
 private:
 	//! Delta tables may be cached in the SchemaEntry. Since the TableEntry holds the snapshot, this allows sharing a

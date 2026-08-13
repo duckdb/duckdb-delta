@@ -121,11 +121,16 @@ shared_ptr<DeltaMultiFileList> DeltaSchemaEntry::CreateFileList(ClientContext &c
 	return snapshot;
 }
 
-idx_t DeltaSchemaEntry::ResolveTimestamp(ClientContext &context, timestamp_tz_t timestamp,
-                                         optional_ptr<const DeltaMultiFileList> old_snapshot) {
+// req: this.lock must already be owned, since it reads cached_table
+idx_t DeltaSchemaEntry::ResolveTimestamp(ClientContext &context, timestamp_tz_t timestamp) {
+	// Seed from the cached snapshot so resolving reads only the commits after it. Only the version is
+	// wanted here, so the list is discarded without ever building a snapshot at it.
+	optional_ptr<const DeltaMultiFileList> old_snapshot;
+	if (cached_table) {
+		old_snapshot = cached_table->snapshot.get();
+	}
 	auto resolver = CreateFileList(context, DConstants::INVALID_INDEX, old_snapshot);
-	resolver->PinTimestamp(timestamp);
-	return resolver->GetVersion();
+	return resolver->ResolveTimestampToVersion(timestamp);
 }
 
 unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version,
@@ -207,8 +212,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		if (delta_catalog.has_specific_timestamp && delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
 			unique_lock<mutex> l(lock);
 			if (delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
-				delta_catalog.use_specific_version =
-				    ResolveTimestamp(context, delta_catalog.specific_timestamp, nullptr);
+				delta_catalog.use_specific_version = ResolveTimestamp(context, delta_catalog.specific_timestamp);
 			}
 		}
 
@@ -219,7 +223,12 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		auto at_clause = lookup_info.GetAtClause();
 		if (at_clause) {
 			auto spec = DeltaTimeTravelSpec::FromAtClause(*at_clause);
-			version = spec.IsTimestamp() ? ResolveTimestamp(context, spec.timestamp, nullptr) : spec.version;
+			if (spec.IsTimestamp()) {
+				unique_lock<mutex> l(lock);
+				version = ResolveTimestamp(context, spec.timestamp);
+			} else {
+				version = spec.version;
+			}
 		}
 
 		auto transaction_table_entry = delta_transaction.GetTableEntry(version);

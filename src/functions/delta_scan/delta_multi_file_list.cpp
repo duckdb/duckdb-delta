@@ -772,30 +772,56 @@ ffi::Handle<ffi::MutableFfiSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBu
 	return builder;
 }
 
-void DeltaMultiFileList::ResolveRequestedTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice) const {
+// req: this.lock must already be owned
+void DeltaMultiFileList::InitializeEngine(ClientContext &context) const {
+	auto interface_builder = CreateBuilder(context, paths[0].path);
+	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
+}
+
+// req: this.lock must already be owned
+idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice,
+                                           int64_t timestamp_ms) const {
 	// The kernel searches the version range the snapshot spans, so a HEAD snapshot has to exist before
-	// the timestamp can name anything.
+	// the timestamp can name anything. Seeded from old_snapshot when there is one, so this reads only
+	// the commits after it rather than replaying the whole log.
 	bool using_incremental = false;
 	auto head_builder = CreateSnapshotBuilder(path_slice, DConstants::INVALID_INDEX, using_incremental);
 	auto head = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(head_builder));
 
 	idx_t head_version;
+	idx_t resolved;
 	{
 		auto head_ref = head->GetLockingRef();
 		head_version = ffi::version(head_ref.GetPtr());
-		auto commit = TryUnpackKernelResult(ffi::latest_version_as_of(head_ref.GetPtr(), extern_engine.get(),
-		                                                             requested_timestamp_ms,
-		                                                             ffi::FfiHistoryCommitType::Recreatable));
-		version = commit.version;
+		auto commit = TryUnpackKernelResult(ffi::latest_version_as_of(
+		    head_ref.GetPtr(), extern_engine.get(), timestamp_ms, ffi::FfiHistoryCommitType::Recreatable));
+		resolved = commit.version;
 	}
 
 	DUCKDB_LOG_INTERNAL(context, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
-	                    "Resolved timestamp %s ms for '%s' to version %s", to_string(requested_timestamp_ms),
-	                    string(path_slice.ptr, path_slice.len), to_string(version));
+	                    "Resolved timestamp %s ms for '%s' to version %s (incremental=%s)", to_string(timestamp_ms),
+	                    string(path_slice.ptr, path_slice.len), to_string(resolved),
+	                    using_incremental ? "true" : "false");
 
-	if (version == head_version) {
+	if (resolved == head_version) {
 		snapshot = std::move(head);
 	}
+	return resolved;
+}
+
+idx_t DeltaMultiFileList::ResolveTimestampToVersion(timestamp_tz_t timestamp) const {
+	unique_lock<mutex> lck(lock);
+	if (initialized_snapshot) {
+		throw InternalException("DeltaMultiFileList::ResolveTimestampToVersion called after the snapshot was "
+		                        "initialized");
+	}
+	D_ASSERT(!client_ctx.expired());
+	auto client_ctx_shared = client_ctx.lock();
+	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
+
+	InitializeEngine(*client_ctx_shared);
+	version = ResolveTimestamp(*client_ctx_shared, path_slice, DeltaTimestampToEpochMs(timestamp));
+	return version;
 }
 
 void DeltaMultiFileList::InitializeSnapshot() const {
@@ -804,11 +830,10 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	auto client_ctx_shared = client_ctx.lock();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
 
-	auto interface_builder = CreateBuilder(*client_ctx_shared, paths[0].path);
-	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
+	InitializeEngine(*client_ctx_shared);
 
 	if (!snapshot && has_requested_timestamp) {
-		ResolveRequestedTimestamp(*client_ctx_shared, path_slice);
+		version = ResolveTimestamp(*client_ctx_shared, path_slice, requested_timestamp_ms);
 	}
 
 	if (!snapshot) {
