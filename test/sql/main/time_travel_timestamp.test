@@ -54,11 +54,17 @@ SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake
 ----
 mutually exclusive
 
-# A naive TIMESTAMP names a different instant per session timezone.
-statement error
+# A value with no zone -- naive TIMESTAMP or offset-less string -- resolves through the session
+# timezone, which is UTC when none is set.
+query I
 SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', timestamp => TIMESTAMP '2999-01-01 00:00:00');
 ----
-requires a timezone-aware timestamp
+12
+
+query I
+SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', timestamp => '2999-01-01 00:00:00');
+----
+12
 
 # -----------------------------------------------------------------------------
 # AT (TIMESTAMP => ...)
@@ -84,10 +90,10 @@ SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '1971-01-01 00:00:00+00');
 ----
 LogHistoryError
 
-statement error
+query I
 SELECT count() FROM t AT (TIMESTAMP => TIMESTAMP '2999-01-01 00:00:00');
 ----
-requires a timezone-aware timestamp
+12
 
 statement ok
 DETACH t;

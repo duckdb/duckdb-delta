@@ -35,7 +35,8 @@ FROM delta_scan('file:///some/path/on/local/machine');
 ## Time travel
 
 A table can be read at an earlier version, either by version number or by timestamp. A timestamp
-selects the latest version committed at or before it, and must be timezone-aware:
+selects the latest version committed at or before it. A timestamp carrying no zone -- a `TIMESTAMP`
+rather than a `TIMESTAMPTZ`, or a string with no offset -- resolves through the session timezone:
 
 ```SQL
 FROM delta_scan('file:///some/path', version => 3);

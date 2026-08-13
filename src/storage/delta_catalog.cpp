@@ -34,15 +34,9 @@ DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_cl
 	}
 
 	if (unit == "timestamp") {
+		// Anything without a zone -- a naive TIMESTAMP or a string with no offset -- resolves through
+		// the session timezone.
 		Value timestamp_value = at_clause.GetValue();
-		// A naive TIMESTAMP names a different instant in every session timezone, so refuse it rather
-		// than silently picking one.
-		if (timestamp_value.type().id() == LogicalTypeId::TIMESTAMP) {
-			throw InvalidInputException(
-			    "Delta time travel by timestamp requires a timezone-aware timestamp, got '%s'. Use "
-			    "TIMESTAMPTZ, or a string with an explicit UTC offset.",
-			    timestamp_value.ToString().c_str());
-		}
 		if (!timestamp_value.DefaultTryCastAs(LogicalType::TIMESTAMP_TZ, false)) {
 			throw InvalidInputException("Failed to parse timestamp '%s' into a valid timestamp",
 			                            at_clause.GetValue().ToString().c_str());

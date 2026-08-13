@@ -319,11 +319,6 @@ bool DeltaMultiFileReader::ParseOption(const Identifier &key, const Value &val, 
 		if (requested_version != DConstants::INVALID_INDEX) {
 			throw InvalidInputException("delta_scan: 'version' and 'timestamp' are mutually exclusive");
 		}
-		if (val.type().id() == LogicalTypeId::TIMESTAMP) {
-			throw InvalidInputException("delta_scan: 'timestamp' requires a timezone-aware timestamp, got '%s'. Use "
-			                            "TIMESTAMPTZ, or a string with an explicit UTC offset.",
-			                            val.ToString().c_str());
-		}
 		has_requested_timestamp = true;
 		requested_timestamp = val.DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>();
 		return true;

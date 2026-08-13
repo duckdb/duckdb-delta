@@ -60,7 +60,7 @@ SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timesta
 LogHistoryError
 
 # -----------------------------------------------------------------------------
-# Strings coerce to TIMESTAMPTZ
+# Accepted spellings of the same instant
 #
 
 query I
@@ -74,7 +74,18 @@ SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timesta
 ----
 11
 
-# A string without an offset resolves through the session timezone; see time_travel_ict_timezone.test
+# A value with no zone at all -- naive TIMESTAMP or offset-less string -- resolves through the
+# session timezone, which is UTC when none is set. See time_travel_ict_timezone.test for a session
+# timezone that is not UTC.
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMP '2023-11-14 22:14:20');
+----
+11
+
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => '2023-11-14 22:14:20');
+----
+11
 
 # -----------------------------------------------------------------------------
 # AT (TIMESTAMP => ...)

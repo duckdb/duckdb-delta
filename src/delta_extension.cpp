@@ -49,11 +49,6 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 			if (res->use_specific_version != DConstants::INVALID_INDEX) {
 				throw InvalidInputException("ATTACH: 'version' and 'timestamp' are mutually exclusive");
 			}
-			if (option.second.type().id() == LogicalTypeId::TIMESTAMP) {
-				throw InvalidInputException("ATTACH: 'timestamp' requires a timezone-aware timestamp, got '%s'. Use "
-				                            "TIMESTAMPTZ, or a string with an explicit UTC offset.",
-				                            option.second.ToString().c_str());
-			}
 			res->use_cache = true;
 			res->has_specific_timestamp = true;
 			res->specific_timestamp = option.second.DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>();
