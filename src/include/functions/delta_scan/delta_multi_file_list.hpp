@@ -120,6 +120,8 @@ public:
 	DeltaFileMetaData &GetMetaData(idx_t index) const;
 	idx_t GetVersion();
 	void PinVersion(idx_t v);
+	//! Pin the version naming `timestamp`; resolved against the log when the snapshot is built
+	void PinTimestamp(timestamp_tz_t timestamp);
 	vector<string> GetPartitionColumns();
 
 	vector<DeltaMultiFileColumnDefinition> &GetLazyLoadedGlobalColumns() const;
@@ -138,6 +140,15 @@ protected:
 
 	//! Restates the kernel's catalog-managed refusal in terms the caller can act on
 	ffi::Handle<ffi::SharedSnapshot> BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const;
+
+	//! Builder for `target_version` (INVALID_INDEX for HEAD), with log tail and catalog bounds applied
+	ffi::Handle<ffi::MutableFfiSnapshotBuilder> CreateSnapshotBuilder(ffi::KernelStringSlice path_slice,
+	                                                                  idx_t target_version,
+	                                                                  bool &using_incremental) const;
+
+	//! Resolve requested_timestamp_ms into `version`, adopting the intermediate snapshot when it already
+	//! is the answer. Requires extern_engine.
+	void ResolveRequestedTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice) const;
 
 	void EnsureSnapshotInitialized() const;
 	void EnsureScanInitialized() const;
@@ -167,6 +178,10 @@ protected:
 	//       const, but not physically.
 	mutable mutex lock;
 	mutable idx_t version;
+
+	//! Time travel by timestamp, in milliseconds since the unix epoch (the delta protocol's unit)
+	mutable bool has_requested_timestamp = false;
+	mutable int64_t requested_timestamp_ms = 0;
 
 	//! Delta Kernel Structures
 	mutable shared_ptr<SharedKernelSnapshot> old_snapshot;

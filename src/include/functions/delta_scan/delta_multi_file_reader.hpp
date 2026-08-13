@@ -72,6 +72,9 @@ struct DeltaMultiFileReader : public MultiFileReader {
 	// Version requested via the `version` named parameter, captured in ParseOption. Transferred to the
 	// snapshot before Bind (see DeltaMultiFileReader::Bind) when no snapshot was injected via function_info.
 	idx_t requested_version = DConstants::INVALID_INDEX;
+	// Same, for the mutually exclusive `timestamp` named parameter.
+	bool has_requested_timestamp = false;
+	timestamp_tz_t requested_timestamp = timestamp_tz_t(0);
 };
 
 } // namespace duckdb

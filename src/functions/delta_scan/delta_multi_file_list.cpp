@@ -1,6 +1,7 @@
 #include "functions/delta_scan/delta_scan.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
+#include "storage/delta_catalog.hpp"
 
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/logging/logger.hpp"
@@ -736,6 +737,67 @@ DeltaMultiFileList::BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> bu
 }
 
 // req: this.lock must already be owned
+ffi::Handle<ffi::MutableFfiSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBuilder(ffi::KernelStringSlice path_slice,
+                                                                                     idx_t target_version,
+                                                                                     bool &using_incremental) const {
+	ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
+	using_incremental = false;
+
+	if (old_snapshot) {
+		auto old_snapshot_ref = old_snapshot->GetLockingRef();
+		auto old_version = ffi::version(old_snapshot_ref.GetPtr());
+		if (target_version == DConstants::INVALID_INDEX || target_version >= old_version) {
+			// Going forward (or HEAD): use old snapshot as hint
+			using_incremental = true;
+			builder =
+			    TryUnpackKernelResult(ffi::get_snapshot_builder_from(old_snapshot_ref.GetPtr(), extern_engine.get()));
+		} else {
+			// Going backward: kernel rejects builder_from for older versions
+			builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
+		}
+	} else {
+		builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
+	}
+
+	if (target_version != DConstants::INVALID_INDEX) {
+		ffi::snapshot_builder_set_version(&builder, target_version);
+	}
+	if (delta_log_path) {
+		TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&builder, delta_log_path->GetFFIPtr()));
+	}
+	if (max_catalog_version >= 0) {
+		ffi::snapshot_builder_set_max_catalog_version(&builder, static_cast<uint64_t>(max_catalog_version));
+	}
+
+	return builder;
+}
+
+void DeltaMultiFileList::ResolveRequestedTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice) const {
+	// The kernel searches the version range the snapshot spans, so a HEAD snapshot has to exist before
+	// the timestamp can name anything.
+	bool using_incremental = false;
+	auto head_builder = CreateSnapshotBuilder(path_slice, DConstants::INVALID_INDEX, using_incremental);
+	auto head = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(head_builder));
+
+	idx_t head_version;
+	{
+		auto head_ref = head->GetLockingRef();
+		head_version = ffi::version(head_ref.GetPtr());
+		auto commit = TryUnpackKernelResult(ffi::latest_version_as_of(head_ref.GetPtr(), extern_engine.get(),
+		                                                             requested_timestamp_ms,
+		                                                             ffi::FfiHistoryCommitType::Recreatable));
+		version = commit.version;
+	}
+
+	DUCKDB_LOG_INTERNAL(context, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
+	                    "Resolved timestamp %s ms for '%s' to version %s", to_string(requested_timestamp_ms),
+	                    string(path_slice.ptr, path_slice.len), to_string(version));
+
+	if (version == head_version) {
+		snapshot = std::move(head);
+	}
+}
+
 void DeltaMultiFileList::InitializeSnapshot() const {
 	// D_ASSERT(lock.is_locked())  -- no such check available; could use recursive mutex
 	D_ASSERT(!client_ctx.expired());
@@ -745,39 +807,19 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 	auto interface_builder = CreateBuilder(*client_ctx_shared, paths[0].path);
 	extern_engine = TryUnpackKernelResult(ffi::builder_build(interface_builder));
 
+	if (!snapshot && has_requested_timestamp) {
+		ResolveRequestedTimestamp(*client_ctx_shared, path_slice);
+	}
+
 	if (!snapshot) {
-		ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
 		bool using_incremental = false;
-		if (old_snapshot) {
-			auto old_snapshot_ref = old_snapshot->GetLockingRef();
-			auto old_version = ffi::version(old_snapshot_ref.GetPtr());
-			if (version == DConstants::INVALID_INDEX || version >= old_version) {
-				// Going forward (or HEAD): use old snapshot as hint
-				using_incremental = true;
-				builder = TryUnpackKernelResult(
-				    ffi::get_snapshot_builder_from(old_snapshot_ref.GetPtr(), extern_engine.get()));
-			} else {
-				// Going backward: kernel rejects builder_from for older versions
-				builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
-			}
-		} else {
-			builder = TryUnpackKernelResult(ffi::get_snapshot_builder(path_slice, extern_engine.get()));
-		}
+		auto builder = CreateSnapshotBuilder(path_slice, version, using_incremental);
 
 		DUCKDB_LOG_INTERNAL(*client_ctx_shared, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
 		                    "Loading snapshot for '%s': version=%s, log_tail=%s, incremental=%s",
 		                    string(path_slice.ptr, path_slice.len),
 		                    version == DConstants::INVALID_INDEX ? "HEAD" : to_string(version),
 		                    delta_log_path ? "true" : "false", using_incremental ? "true" : "false");
-		if (version != DConstants::INVALID_INDEX) {
-			ffi::snapshot_builder_set_version(&builder, version);
-		}
-		if (delta_log_path) {
-			TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&builder, delta_log_path->GetFFIPtr()));
-		}
-		if (max_catalog_version >= 0) {
-			ffi::snapshot_builder_set_max_catalog_version(&builder, static_cast<uint64_t>(max_catalog_version));
-		}
 		snapshot = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(builder));
 
 		auto snapshot_ref = snapshot->GetLockingRef();
@@ -1140,6 +1182,15 @@ void DeltaMultiFileList::PinVersion(idx_t v) {
 		throw InternalException("DeltaMultiFileList::PinVersion called after the snapshot was initialized");
 	}
 	version = v;
+}
+
+void DeltaMultiFileList::PinTimestamp(timestamp_tz_t timestamp) {
+	unique_lock<mutex> lck(lock);
+	if (initialized_snapshot) {
+		throw InternalException("DeltaMultiFileList::PinTimestamp called after the snapshot was initialized");
+	}
+	has_requested_timestamp = true;
+	requested_timestamp_ms = DeltaTimestampToEpochMs(timestamp);
 }
 
 DeltaFileMetaData &DeltaMultiFileList::GetMetaData(idx_t index) const {

@@ -17,7 +17,26 @@
 namespace duckdb {
 class DeltaSchemaEntry;
 
-idx_t ParseDeltaVersionFromAtClause(const BoundAtClause &at_clause);
+//! A time travel target as written by the user: either a version, or a timestamp that still has to
+//! be resolved into one. Once resolved, a timestamp is a version like any other.
+struct DeltaTimeTravelSpec {
+	static DeltaTimeTravelSpec FromAtClause(const BoundAtClause &at_clause);
+
+	bool IsTimestamp() const {
+		return is_timestamp;
+	}
+
+	//! Only valid when !IsTimestamp()
+	idx_t version = DConstants::INVALID_INDEX;
+	//! Only valid when IsTimestamp()
+	timestamp_tz_t timestamp = timestamp_tz_t(0);
+
+private:
+	bool is_timestamp = false;
+};
+
+//! Milliseconds since the unix epoch, which is how the delta protocol spells timestamps
+int64_t DeltaTimestampToEpochMs(timestamp_tz_t timestamp);
 
 class DeltaClearCacheFunction : public TableFunction {
 public:
@@ -35,6 +54,10 @@ public:
 	AccessMode access_mode;
 	bool use_cache;
 	idx_t use_specific_version;
+	//! Time travel target from `ATTACH ... (TIMESTAMP => ...)`. Resolved into use_specific_version on
+	//! the first table lookup, since resolving needs a snapshot and ATTACH must not read the log.
+	bool has_specific_timestamp = false;
+	timestamp_tz_t specific_timestamp = timestamp_tz_t(0);
 	bool pushdown_partition_info;
 	DeltaFilterPushdownMode filter_pushdown_mode;
 

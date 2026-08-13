@@ -6,21 +6,53 @@
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/common/types/timestamp.hpp"
 
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 
 namespace duckdb {
 
-idx_t ParseDeltaVersionFromAtClause(const BoundAtClause &at_clause) {
-	if (at_clause.Unit() != "version") {
-		throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version'");
+int64_t DeltaTimestampToEpochMs(timestamp_tz_t timestamp) {
+	if (!timestamp.IsFinite()) {
+		throw InvalidInputException("Delta time travel requires a finite timestamp");
 	}
-	Value version_value = at_clause.GetValue();
-	if (!version_value.DefaultTryCastAs(LogicalType::UBIGINT, false)) {
-		throw InvalidInputException("Failed to parse version number '%s' into a valid version",
-		                            at_clause.GetValue().ToString().c_str());
+	return Timestamp::GetEpochMs(timestamp_t(timestamp));
+}
+
+DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_clause) {
+	auto &unit = at_clause.Unit();
+	DeltaTimeTravelSpec result;
+
+	if (unit == "version") {
+		Value version_value = at_clause.GetValue();
+		if (!version_value.DefaultTryCastAs(LogicalType::UBIGINT, false)) {
+			throw InvalidInputException("Failed to parse version number '%s' into a valid version",
+			                            at_clause.GetValue().ToString().c_str());
+		}
+		result.version = version_value.GetValue<idx_t>();
+		return result;
 	}
-	return version_value.GetValue<idx_t>();
+
+	if (unit == "timestamp") {
+		Value timestamp_value = at_clause.GetValue();
+		// A naive TIMESTAMP names a different instant in every session timezone, so refuse it rather
+		// than silently picking one.
+		if (timestamp_value.type().id() == LogicalTypeId::TIMESTAMP) {
+			throw InvalidInputException(
+			    "Delta time travel by timestamp requires a timezone-aware timestamp, got '%s'. Use "
+			    "TIMESTAMPTZ, or a string with an explicit UTC offset.",
+			    timestamp_value.ToString().c_str());
+		}
+		if (!timestamp_value.DefaultTryCastAs(LogicalType::TIMESTAMP_TZ, false)) {
+			throw InvalidInputException("Failed to parse timestamp '%s' into a valid timestamp",
+			                            at_clause.GetValue().ToString().c_str());
+		}
+		result.is_timestamp = true;
+		result.timestamp = timestamp_value.GetValue<timestamp_tz_t>();
+		return result;
+	}
+
+	throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version' or 'timestamp'");
 }
 
 DeltaCatalog::DeltaCatalog(AttachedDatabase &db_p, const string &path, AccessMode access_mode)

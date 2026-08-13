@@ -32,6 +32,29 @@ To scan a local table, use the full path prefixes with `file://`
 FROM delta_scan('file:///some/path/on/local/machine');
 ```
 
+## Time travel
+
+A table can be read at an earlier version, either by version number or by timestamp. A timestamp
+selects the latest version committed at or before it, and must be timezone-aware:
+
+```SQL
+FROM delta_scan('file:///some/path', version => 3);
+FROM delta_scan('file:///some/path', timestamp => TIMESTAMPTZ '2026-01-01 12:00:00+00');
+```
+
+The same applies to an attached table, both per query and for the whole attachment:
+
+```SQL
+ATTACH 'file:///some/path' AS tbl (TYPE delta);
+FROM tbl AT (VERSION => 3);
+FROM tbl AT (TIMESTAMP => TIMESTAMPTZ '2026-01-01 12:00:00+00');
+
+ATTACH 'file:///some/path' AS tbl_old (TYPE delta, TIMESTAMP TIMESTAMPTZ '2026-01-01 12:00:00+00');
+```
+
+`version` and `timestamp` are mutually exclusive, and a table attached at a specific version or
+timestamp cannot be time travelled again per query.
+
 ## Cloud Storage authentication
 
 Note that using DuckDB [Secrets](https://duckdb.org/docs/configuration/secrets_manager.html) for Cloud authentication is supported.
@@ -82,6 +105,7 @@ regular parquet scanning logic:
   - skipping complete files (based on delta partition info)
 - projection pushdown
 - blind inserts
+- time travel by version or timestamp
 - scanning tables with deletion vectors
 - all primitive types
 - structs

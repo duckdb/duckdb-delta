@@ -1,0 +1,101 @@
+# name: test/sql/inlined/time_travel_ict.test
+# description: timestamp time travel picks the latest version committed at or before the timestamp
+# group: [inlined]
+
+#
+# The fixture carries in-commit timestamps, so its commits sit at exactly 2023-11-14 22:13:20,
+# 22:14:20 and 22:15:20 UTC regardless of when the files were checked out. Row counts identify the
+# version: v0 has 10 rows, v1 has 11, v2 has 12.
+
+require parquet
+
+require delta
+
+# -----------------------------------------------------------------------------
+# delta_scan(timestamp => ...)
+#
+
+# Exactly on a commit selects that commit, not the one before it.
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-14 22:13:20+00');
+----
+10
+
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-14 22:14:20+00');
+----
+11
+
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-14 22:15:20+00');
+----
+12
+
+# Between two commits selects the earlier one, right up to the instant before the later one.
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-14 22:13:50+00');
+----
+10
+
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-14 22:14:19.999+00');
+----
+10
+
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-14 22:15:19.999+00');
+----
+11
+
+# Past the last commit stays on it.
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-15 00:00:00+00');
+----
+12
+
+# One millisecond before v0 there is nothing to name.
+statement error
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => TIMESTAMPTZ '2023-11-14 22:13:19.999+00');
+----
+LogHistoryError
+
+# -----------------------------------------------------------------------------
+# AT (TIMESTAMP => ...)
+#
+
+statement ok
+ATTACH 'data/inlined/ict_timetravel/delta_lake' AS ict (TYPE delta);
+
+query I
+SELECT count() FROM ict AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:14:19.999+00');
+----
+10
+
+query I rowsort
+SELECT i FROM ict AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:15:00+00') WHERE i >= 10;
+----
+10
+
+# The AT clause and the named parameter agree on the same instant.
+query I
+SELECT count() FROM ict AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:15:20+00');
+----
+12
+
+statement ok
+DETACH ict;
+
+# -----------------------------------------------------------------------------
+# ATTACH ... (TIMESTAMP => ...)
+#
+
+statement ok
+ATTACH 'data/inlined/ict_timetravel/delta_lake' AS ict_v1 (TYPE delta, TIMESTAMP TIMESTAMPTZ '2023-11-14 22:14:20+00');
+
+query I
+SELECT count() FROM ict_v1;
+----
+11
+
+statement ok
+DETACH ict_v1;

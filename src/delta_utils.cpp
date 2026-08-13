@@ -872,9 +872,10 @@ string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
 	                                           "InvalidCheckpoint",
 	                                           "LiteralExpressionTransformError",
 	                                           "CheckpointWriteError",
-	                                           "SchemaError"};
+	                                           "SchemaError",
+	                                           "LogHistoryError"};
 
-	static_assert(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *) - 1 == (int)ffi::KernelError::SchemaError,
+	static_assert(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *) - 1 == (int)ffi::KernelError::LogHistoryError,
 	              "KernelErrorEnumStrings mismatched with kernel");
 
 	if ((int)err < sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *)) {

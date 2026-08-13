@@ -113,6 +113,8 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 		function.named_parameters["pushdown_partition_info"] = LogicalType::BOOLEAN;
 		function.named_parameters["pushdown_filters"] = LogicalType::VARCHAR;
 		function.named_parameters["version"] = LogicalType::UBIGINT;
+		// ANY, not TIMESTAMP_TZ: a declared type would coerce a naive TIMESTAMP before we can reject it
+		function.named_parameters["timestamp"] = LogicalType::ANY;
 
 		function.SetName("delta_scan");
 	}
