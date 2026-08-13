@@ -53,8 +53,8 @@ FROM tbl AT (TIMESTAMP => TIMESTAMPTZ '2026-01-01 12:00:00+00');
 ATTACH 'file:///some/path' AS tbl_old (TYPE delta, TIMESTAMP TIMESTAMPTZ '2026-01-01 12:00:00+00');
 ```
 
-`version` and `timestamp` are mutually exclusive, and a table attached at a specific version or
-timestamp cannot be time travelled again per query.
+`version` and `timestamp` are mutually exclusive. An attached version or timestamp is the default for
+the attachment rather than a pin, so a per-query `AT` clause overrides it.
 
 ## Cloud Storage authentication
 

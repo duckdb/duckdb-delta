@@ -130,5 +130,49 @@ SELECT count() FROM ict_v1;
 ----
 11
 
+# The attached timestamp is a default: an AT clause in either unit overrides it, and the default
+# survives the override.
+query I
+SELECT count() FROM ict_v1 AT (VERSION => 0);
+----
+10
+
+query I
+SELECT count() FROM ict_v1 AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:15:20+00');
+----
+12
+
+query I
+SELECT count() FROM ict_v1;
+----
+11
+
 statement ok
 DETACH ict_v1;
+
+# Mirrors test/sql/generated/timetravel.test: an attach pinned by version still honours an AT clause.
+statement ok
+ATTACH 'data/inlined/ict_timetravel/delta_lake' AS ict_v0 (TYPE delta, VERSION 0);
+
+query I
+SELECT count() FROM ict_v0;
+----
+10
+
+query I
+SELECT count() FROM ict_v0 AT (VERSION => 1);
+----
+11
+
+query I
+SELECT count() FROM ict_v0 AT (VERSION => 2);
+----
+12
+
+query I
+SELECT count() FROM ict_v0 AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:14:20+00');
+----
+11
+
+statement ok
+DETACH ict_v0;

@@ -214,16 +214,10 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 
 		idx_t version = delta_catalog.use_specific_version;
 
-		// If there's an AT clause we are doing timetravel
+		// If there's an AT clause we are doing timetravel. An attached version or timestamp is only the
+		// default, so the AT clause overrides it.
 		auto at_clause = lookup_info.GetAtClause();
 		if (at_clause) {
-			// The attach already fixed which version this database is; re-binding it here would
-			// silently query a different one.
-			if (version != DConstants::INVALID_INDEX) {
-				throw InvalidInputException("Delta: cannot time travel a database that is already attached at a "
-				                            "specific version or timestamp. Attach without 'version'/'timestamp', or "
-				                            "attach at the version or timestamp you want.");
-			}
 			auto spec = DeltaTimeTravelSpec::FromAtClause(*at_clause);
 			version = spec.IsTimestamp() ? ResolveTimestamp(context, spec.timestamp, nullptr) : spec.version;
 		}
