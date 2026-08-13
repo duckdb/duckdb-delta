@@ -17,7 +17,7 @@ statement ok
 ATTACH './doesnt_exist_and_never_will_exist_i_hope' AS s1 (TYPE delta);
 
 # TODO: ATTACH should probe the location and fail here, rather than deferring to first use.
-query TTTTTT
+query IIIIII
 SHOW ALL TABLES;
 ----
 
