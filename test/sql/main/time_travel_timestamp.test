@@ -118,14 +118,53 @@ mutually exclusive
 statement ok
 DETACH t_ts;
 
-# An attach already fixes the version; re-binding it by timestamp would query something else.
+# An attach already fixes the version; re-binding it would query something else. This holds for both
+# units, and whichever unit the attach used.
 statement ok
 ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_v1 (TYPE delta, VERSION 1);
 
 statement error
 SELECT count() FROM t_v1 AT (TIMESTAMP => TIMESTAMPTZ '2999-01-01 00:00:00+00');
 ----
-cannot time travel by timestamp on a database attached at a specific version
+already attached at a specific version or timestamp
+
+statement error
+SELECT count() FROM t_v1 AT (VERSION => 0);
+----
+already attached at a specific version or timestamp
+
+statement error
+SELECT count() FROM t_v1 AT (VERSION => 1);
+----
+already attached at a specific version or timestamp
 
 statement ok
 DETACH t_v1;
+
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_at_ts (TYPE delta, TIMESTAMP TIMESTAMPTZ '2999-01-01 00:00:00+00');
+
+statement error
+SELECT count() FROM t_at_ts AT (VERSION => 0);
+----
+already attached at a specific version or timestamp
+
+statement ok
+DETACH t_at_ts;
+
+# An unpinned attach still time travels freely, by either unit.
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_open (TYPE delta);
+
+query I
+SELECT count() FROM t_open AT (VERSION => 0);
+----
+10
+
+query I
+SELECT count() FROM t_open AT (TIMESTAMP => TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+12
+
+statement ok
+DETACH t_open;
