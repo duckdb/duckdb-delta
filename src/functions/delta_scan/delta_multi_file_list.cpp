@@ -1201,21 +1201,21 @@ idx_t DeltaMultiFileList::GetVersion() {
 	return version;
 }
 
-void DeltaMultiFileList::PinVersion(idx_t v) {
+void DeltaMultiFileList::Pin(const DeltaTimeTravelSpec &spec) {
 	unique_lock<mutex> lck(lock);
 	if (initialized_snapshot) {
-		throw InternalException("DeltaMultiFileList::PinVersion called after the snapshot was initialized");
+		throw InternalException("DeltaMultiFileList::Pin called after the snapshot was initialized");
 	}
-	version = v;
-}
-
-void DeltaMultiFileList::PinTimestamp(timestamp_tz_t timestamp) {
-	unique_lock<mutex> lck(lock);
-	if (initialized_snapshot) {
-		throw InternalException("DeltaMultiFileList::PinTimestamp called after the snapshot was initialized");
+	// Taking the whole spec at once is what keeps a version and a timestamp from both being set: one
+	// call, one kind, and the other is cleared.
+	if (spec.IsTimestamp()) {
+		version = DConstants::INVALID_INDEX;
+		has_requested_timestamp = true;
+		requested_timestamp_ms = DeltaTimestampToEpochMs(spec.GetTimestamp());
+	} else if (spec.IsVersion()) {
+		version = spec.GetVersion();
+		has_requested_timestamp = false;
 	}
-	has_requested_timestamp = true;
-	requested_timestamp_ms = DeltaTimestampToEpochMs(timestamp);
 }
 
 DeltaFileMetaData &DeltaMultiFileList::GetMetaData(idx_t index) const {

@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "delta_time_travel.hpp"
 #include "functions/delta_scan/delta_scan.hpp"
 #include "delta_schema_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
@@ -16,27 +17,6 @@
 
 namespace duckdb {
 class DeltaSchemaEntry;
-
-//! A time travel target as written by the user: either a version, or a timestamp that still has to
-//! be resolved into one. Once resolved, a timestamp is a version like any other.
-struct DeltaTimeTravelSpec {
-	static DeltaTimeTravelSpec FromAtClause(const BoundAtClause &at_clause);
-
-	bool IsTimestamp() const {
-		return is_timestamp;
-	}
-
-	//! Only valid when !IsTimestamp()
-	idx_t version = DConstants::INVALID_INDEX;
-	//! Only valid when IsTimestamp()
-	timestamp_tz_t timestamp = timestamp_tz_t(0);
-
-private:
-	bool is_timestamp = false;
-};
-
-//! Milliseconds since the unix epoch, which is how the delta protocol spells timestamps
-int64_t DeltaTimestampToEpochMs(timestamp_tz_t timestamp);
 
 class DeltaClearCacheFunction : public TableFunction {
 public:

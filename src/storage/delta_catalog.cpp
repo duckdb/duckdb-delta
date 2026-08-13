@@ -19,9 +19,36 @@ int64_t DeltaTimestampToEpochMs(timestamp_tz_t timestamp) {
 	return Timestamp::GetEpochMs(timestamp_t(timestamp));
 }
 
+DeltaTimeTravelSpec DeltaTimeTravelSpec::FromVersion(idx_t version) {
+	DeltaTimeTravelSpec result;
+	result.kind = Kind::VERSION;
+	result.version = version;
+	return result;
+}
+
+DeltaTimeTravelSpec DeltaTimeTravelSpec::FromTimestamp(timestamp_tz_t timestamp) {
+	DeltaTimeTravelSpec result;
+	result.kind = Kind::TIMESTAMP;
+	result.timestamp = timestamp;
+	return result;
+}
+
+idx_t DeltaTimeTravelSpec::GetVersion() const {
+	if (!IsVersion()) {
+		throw InternalException("DeltaTimeTravelSpec::GetVersion on a spec that does not name a version");
+	}
+	return version;
+}
+
+timestamp_tz_t DeltaTimeTravelSpec::GetTimestamp() const {
+	if (!IsTimestamp()) {
+		throw InternalException("DeltaTimeTravelSpec::GetTimestamp on a spec that does not name a timestamp");
+	}
+	return timestamp;
+}
+
 DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_clause) {
 	auto &unit = at_clause.Unit();
-	DeltaTimeTravelSpec result;
 
 	if (unit == "version") {
 		Value version_value = at_clause.GetValue();
@@ -29,8 +56,7 @@ DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_cl
 			throw InvalidInputException("Failed to parse version number '%s' into a valid version",
 			                            at_clause.GetValue().ToString().c_str());
 		}
-		result.version = version_value.GetValue<idx_t>();
-		return result;
+		return FromVersion(version_value.GetValue<idx_t>());
 	}
 
 	if (unit == "timestamp") {
@@ -41,9 +67,7 @@ DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_cl
 			throw InvalidInputException("Failed to parse timestamp '%s' into a valid timestamp",
 			                            at_clause.GetValue().ToString().c_str());
 		}
-		result.is_timestamp = true;
-		result.timestamp = timestamp_value.GetValue<timestamp_tz_t>();
-		return result;
+		return FromTimestamp(timestamp_value.GetValue<timestamp_tz_t>());
 	}
 
 	throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version' or 'timestamp'");
@@ -114,6 +138,9 @@ optional_idx DeltaCatalog::GetCatalogVersion(ClientContext &context) {
 		return transaction_table_entry->snapshot->GetVersion();
 	}
 
+	// TODO: a catalog attached at a timestamp reports Invalid until the first lookup binds the
+	// timestamp to a version, then reports that version -- so it looks like a moving catalog for
+	// exactly one query. Binding at ATTACH would make it fixed from the start, as the option implies.
 	return use_specific_version == DConstants::INVALID_INDEX ? optional_idx::Invalid() : use_specific_version;
 }
 

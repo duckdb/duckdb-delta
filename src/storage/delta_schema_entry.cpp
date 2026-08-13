@@ -225,9 +225,9 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 			auto spec = DeltaTimeTravelSpec::FromAtClause(*at_clause);
 			if (spec.IsTimestamp()) {
 				unique_lock<mutex> l(lock);
-				version = ResolveTimestamp(context, spec.timestamp);
+				version = ResolveTimestamp(context, spec.GetTimestamp());
 			} else {
-				version = spec.version;
+				version = spec.GetVersion();
 			}
 		}
 

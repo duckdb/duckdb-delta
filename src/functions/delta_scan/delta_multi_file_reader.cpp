@@ -112,12 +112,8 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 	// to DeltaMultiFileList's constructor. Transfer it here, before delta_snapshot.Bind() triggers
 	// snapshot initialization. If a snapshot was injected via function_info (catalog-driven path),
 	// `snapshot` is non-null and PinVersion would have nothing to do, so we skip it.
-	if (!snapshot) {
-		if (requested_version != DConstants::INVALID_INDEX) {
-			delta_snapshot.PinVersion(requested_version);
-		} else if (has_requested_timestamp) {
-			delta_snapshot.PinTimestamp(requested_timestamp);
-		}
+	if (!snapshot && !requested.IsLatest()) {
+		delta_snapshot.Pin(requested);
 	}
 
 	delta_snapshot.Bind(return_types, names);
@@ -308,19 +304,19 @@ bool DeltaMultiFileReader::ParseOption(const Identifier &key, const Value &val, 
 	}
 
 	if (key == "version") {
-		if (has_requested_timestamp) {
+		if (!requested.IsLatest()) {
 			throw InvalidInputException("delta_scan: 'version' and 'timestamp' are mutually exclusive");
 		}
-		requested_version = val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>();
+		requested = DeltaTimeTravelSpec::FromVersion(val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>());
 		return true;
 	}
 
 	if (key == "timestamp") {
-		if (requested_version != DConstants::INVALID_INDEX) {
+		if (!requested.IsLatest()) {
 			throw InvalidInputException("delta_scan: 'version' and 'timestamp' are mutually exclusive");
 		}
-		has_requested_timestamp = true;
-		requested_timestamp = val.DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>();
+		requested =
+		    DeltaTimeTravelSpec::FromTimestamp(val.DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
 		return true;
 	}
 
