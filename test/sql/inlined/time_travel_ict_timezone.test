@@ -1,0 +1,32 @@
+# name: test/sql/inlined/time_travel_ict_timezone.test
+# description: a timestamp string without an offset resolves through the session timezone
+# group: [inlined]
+
+#
+# Same fixture as time_travel_ict.test: commits at 22:13:20, 22:14:20 and 22:15:20 UTC, with row
+# counts 10, 11 and 12. Both queries below name the same instant, so both land on v1.
+
+require parquet
+
+require delta
+
+require icu
+
+statement ok
+SET TimeZone='UTC';
+
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => '2023-11-14 22:14:20');
+----
+11
+
+statement ok
+SET TimeZone='Europe/Amsterdam';
+
+query I
+SELECT count() FROM delta_scan('data/inlined/ict_timetravel/delta_lake', timestamp => '2023-11-14 23:14:20');
+----
+11
+
+statement ok
+RESET TimeZone;

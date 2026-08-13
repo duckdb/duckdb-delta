@@ -201,7 +201,9 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 	if (type == CatalogType::TABLE_ENTRY && (name == catalog.GetName() || name == delta_catalog.internal_table_name)) {
 		auto &delta_transaction = GetDeltaTransaction(transaction);
 
-		// An attached timestamp binds to a version on first use; from there it is an attached version
+		// An attached timestamp binds to a version on first use; from there it is an attached version.
+		// TODO: bind at ATTACH instead, once ATTACH stops deferring its work -- deferring here means an
+		// unreadable table or an out-of-range timestamp is reported by the first query, not by ATTACH.
 		if (delta_catalog.has_specific_timestamp && delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
 			unique_lock<mutex> l(lock);
 			if (delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
