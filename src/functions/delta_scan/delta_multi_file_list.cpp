@@ -1346,14 +1346,4 @@ bool DeltaMultiFileList::HasNullConstraintsInArrays() const {
 	return has_null_constraints_in_arrays;
 };
 
-unique_ptr<MultiFileReader> DeltaMultiFileReader::CreateInstance(const TableFunction &table_function) {
-	auto result = make_uniq<DeltaMultiFileReader>();
-
-	if (table_function.function_info) {
-		result->snapshot = table_function.function_info->Cast<DeltaFunctionInfo>().snapshot;
-	}
-
-	return std::move(result);
-}
-
 } // namespace duckdb

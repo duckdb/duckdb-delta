@@ -47,7 +47,7 @@ void KernelExpressionVisitor::VisitComparisonExpression(void *state, uintptr_t s
 }
 
 ffi::EngineExpressionVisitor KernelExpressionVisitor::CreateVisitor(KernelExpressionVisitor &state) {
-	ffi::EngineExpressionVisitor visitor;
+	ffi::EngineExpressionVisitor visitor = {}; // nullptr init for unspecified fns
 
 	visitor.data = &state;
 	visitor.make_field_list = (uintptr_t(*)(void *, uintptr_t)) & MakeFieldList;

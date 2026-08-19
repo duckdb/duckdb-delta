@@ -1,0 +1,210 @@
+# name: test/sql/inlined/column_mapping/write_field_ids.test
+# description: writes to a column-mapped table address columns by physical name and field id
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# The fixtures under data/inlined/column_mapping/ are hand-written Delta logs carrying
+# delta.columnMapping.physicalName and delta.columnMapping.id per field. They ship no data files, so
+# every parquet file asserted on below is one this test just wrote.
+#
+# These assertions prove what DuckDB emits, which is what another engine resolves against. They do
+# not prove another engine accepts it; scripts/verify_column_mapping_roundtrip.py does that.
+
+# -----------------------------------------------------------------------------
+# name mode -- physical names and ids on every field, mode = name
+#
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/name_mode', '{TEMP_DIR}/cm_name');
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_name' AS n (TYPE delta);
+
+statement ok
+INSERT INTO n VALUES (1, 'ABC');
+
+# The values must survive, not just the row count: an unresolved column reads back NULL, which
+# leaves the count right and the row unfindable.
+query II
+SELECT id, code FROM n ORDER BY id;
+----
+1	ABC
+
+query I
+SELECT count(*) FROM n;
+----
+1
+
+query II
+SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/cm_name/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema' ORDER BY name;
+----
+col-aaaa	1
+col-bbbb	2
+
+# Asserting the logical name is *absent* is the half that matters: stats keyed logically are
+# silently unusable to a reader resolving physically, and every other assertion here still passes.
+query II
+SELECT add.stats LIKE '%col-bbbb%', add.stats LIKE '%"code"%'
+FROM read_json('{TEMP_DIR}/cm_name/_delta_log/00000000000000000001.json') WHERE add IS NOT NULL;
+----
+true	false
+
+# An explicit column list writes the same file: the mapping is keyed off the table schema, not off
+# what the statement happened to name.
+statement ok
+INSERT INTO n (code) VALUES ('only-code');
+
+query II
+SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/cm_name/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema' ORDER BY name;
+----
+col-aaaa	1
+col-aaaa	1
+col-bbbb	2
+col-bbbb	2
+
+statement ok
+DETACH n;
+
+# -----------------------------------------------------------------------------
+# id mode -- same schema as above, mode = id
+#
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/id_mode', '{TEMP_DIR}/cm_id');
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_id' AS i (TYPE delta);
+
+statement ok
+INSERT INTO i VALUES (2, 'XYZ');
+
+query II
+SELECT id, code FROM i ORDER BY id;
+----
+2	XYZ
+
+query II
+SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/cm_id/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema' ORDER BY name;
+----
+col-aaaa	1
+col-bbbb	2
+
+query II
+SELECT add.stats LIKE '%col-bbbb%', add.stats LIKE '%"code"%'
+FROM read_json('{TEMP_DIR}/cm_id/_delta_log/00000000000000000001.json') WHERE add IS NOT NULL;
+----
+true	false
+
+statement ok
+DETACH i;
+
+# -----------------------------------------------------------------------------
+# NOT NULL is still enforced, and names the column the user declared
+#
+# The constraint is keyed on the logical name while the stats arrive under the physical one, so a
+# lookup that forgets to translate stops enforcing the constraint and reports nothing.
+#
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/not_null_name_mode', '{TEMP_DIR}/cm_nn');
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_nn' AS nn (TYPE delta);
+
+statement error
+INSERT INTO nn VALUES (NULL, 'x');
+----
+NOT NULL constraint failed: nn.id
+
+query I
+SELECT count(*) FROM nn;
+----
+0
+
+statement ok
+DETACH nn;
+
+# -----------------------------------------------------------------------------
+# A table without column mapping is untouched
+#
+# simple_table is the repo's plain single-column fixture, and unlike the others it ships a data file
+# -- hence the duckdb-*.parquet glob below, which matches only what this test wrote.
+#
+
+statement ok
+FROM copy_dir('data/inlined/simple_table/delta_lake', '{TEMP_DIR}/cm_none');
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_none' AS p (TYPE delta);
+
+statement ok
+INSERT INTO p VALUES (42);
+
+query I
+SELECT count(*) FROM p WHERE i = 42;
+----
+1
+
+query II
+SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/cm_none/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema' ORDER BY name;
+----
+i	NULL
+
+statement ok
+DETACH p;
+
+# -----------------------------------------------------------------------------
+# Shapes that cannot be mapped completely are refused
+#
+# Only top-level columns get a physical name and a field id here, so a nested or partitioned mapped
+# table would be written mapped in part. In id mode that is worse than writing nothing mapped: a file
+# carrying some field ids no longer trips the reader's refusal rule, and the unmapped fields come back
+# as nulls with no error anywhere.
+#
+
+# nested_name_mode adds a struct column: the struct and its child each carry their own physical
+# name and id, so the fixture is well-formed and it is our writer that cannot map it completely.
+statement ok
+FROM copy_dir('data/inlined/column_mapping/nested_name_mode', '{TEMP_DIR}/cm_nested');
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_nested' AS nested (TYPE delta);
+
+statement error
+INSERT INTO nested VALUES (1, {'x': 9});
+----
+column mapping on a nested column is not supported
+
+statement ok
+DETACH nested;
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/partitioned_name_mode', '{TEMP_DIR}/cm_part');
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_part' AS part (TYPE delta);
+
+statement error
+INSERT INTO part VALUES (1, 'x');
+----
+partitioned Delta table that uses column mapping is not supported
+
+# The refusal must land before anything is written, not after
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/cm_part/**/*.parquet');
+----
+0
+
+statement ok
+DETACH part;

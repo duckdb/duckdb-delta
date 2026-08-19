@@ -171,13 +171,19 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			auto column_names = ParseQuotedList(col_name, '.');
 			auto stats = ParseColumnStats(col_stats);
 
-			// Find type of column for stats TODO: column mapped names
+			// The copy reports stats under the names it was given, which on a column-mapped table are the
+			// physical ones -- and that is also how the log wants them keyed, so they pass through untouched.
+			// Constraints and messages resolve on the logical name, which would otherwise miss silently and
+			// stop enforcing the constraint.
 			bool found = false;
 			LogicalType coltype;
+			string logical_name;
 			for (auto &col : global_state.columns) {
-				if (col.name == column_names[0]) {
+				const auto &written_name = col.physical_name.empty() ? col.name.GetIdentifierName() : col.physical_name;
+				if (written_name == column_names[0]) {
 					found = true;
 					coltype = col.type;
+					logical_name = col.name.GetIdentifierName();
 					break;
 				}
 			}
@@ -187,19 +193,21 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			}
 
 			if (stats.has_null_count && stats.null_count > 0) {
-				auto constraint = global_state.not_null_constraints.find(column_names[0]);
+				auto constraint = global_state.not_null_constraints.find(logical_name);
 				if (constraint != global_state.not_null_constraints.end()) {
 					// We may have a not null constraint for this col, it's not nested so it
 					if (column_names.size() == 1) {
 						throw ConstraintException("NOT NULL constraint failed: %s.%s", global_state.table_name,
-						                          column_names[0]);
+						                          logical_name);
 					}
 
 					// Check paths
 					for (auto &constr : constraint->second) {
 						if (col_name == constr.path) {
+							auto logical_path = column_names;
+							logical_path[0] = logical_name;
 							throw ConstraintException("NOT NULL constraint failed: %s.%s", global_state.table_name,
-							                          StringUtil::Join(column_names, "."));
+							                          StringUtil::Join(logical_path, "."));
 						}
 					}
 				}
@@ -411,6 +419,52 @@ static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, Ph
 	return projection;
 }
 
+//! Rewrites the parquet column names to their physical names and attaches the field ids, for a table that uses
+//! column mapping. Nested and partitioned mapped tables reach here too: they are only mapped in part, and
+//! DeltaTableEntry::ThrowOnUnsupportedFieldForInserting refuses them later, when the insert executes.
+static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyInfo &info, vector<string> &names) {
+	// The snapshot schema, which the sink resolves its stats against too -- one source of truth for physical
+	// names at both ends of the write. The kernel's write context is the more direct answer but is not usable
+	// here: the only accessor is the unpartitioned one, which throws outright on a partitioned table.
+	auto &schema = table_entry.snapshot->GetLazyLoadedGlobalColumns();
+
+	unordered_map<string, const_reference<DeltaMultiFileColumnDefinition>> by_logical_name;
+	bool mapped = false;
+	for (auto &col : schema) {
+		by_logical_name.emplace(col.name.GetIdentifierName(), col);
+		mapped |= col.IsColumnMapped();
+	}
+	if (!mapped) {
+		return;
+	}
+
+	child_list_t<Value> field_ids;
+	for (auto &name : names) {
+		// Paired by name rather than by position: the two schemas are visited separately -- this one from the
+		// scan, `names` from the catalog entry's bind -- and pairing them positionally would silently write a
+		// column under its neighbour's identity if they ever diverged.
+		auto entry = by_logical_name.find(name);
+		if (entry == by_logical_name.end()) {
+			throw InternalException("Delta column \"%s\" is missing from the write schema of table %s", name,
+			                        table_entry.name.GetIdentifierName());
+		}
+		auto &col = entry->second.get();
+		if (!col.physical_name.empty()) {
+			name = col.physical_name;
+		}
+		if (col.field_id.IsValid()) {
+			// Keyed by whatever this column is actually written as, so the two cannot drift. Checked cast: the
+			// protocol's ids are 32-bit, so a wider one means a malformed log, not a value to silently truncate
+			// into a different column's id.
+			field_ids.emplace_back(name, Value::INTEGER(NumericCast<int32_t>(col.field_id.GetIndex())));
+		}
+	}
+
+	if (!field_ids.empty()) {
+		info.options["field_ids"] = {Value::STRUCT(std::move(field_ids))};
+	}
+}
+
 PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
                                            optional_ptr<PhysicalOperator> plan) {
 	if (op.return_chunk) {
@@ -464,10 +518,13 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 
 	// Bind Copy Function
 	auto &columns = table_entry->GetColumns();
-	CopyFunctionBindInput bind_input(*info);
 
 	auto names_to_write = columns.GetColumnNames();
 	auto types_to_write = columns.GetColumnTypes();
+
+	ApplyColumnMappingToWriteSchema(*table_entry, *info, names_to_write);
+
+	CopyFunctionBindInput bind_input(*info);
 
 	auto function_data =
 	    copy_fun->function.copy_to_bind(context, bind_input, StringsToIdentifiers(names_to_write), types_to_write);

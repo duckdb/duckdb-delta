@@ -61,7 +61,7 @@ queries = [
     'ALTER TABLE simple_table_column_mapped_by_id ADD COLUMN new_col BIGINT;',
     'INSERT INTO simple_table_column_mapped_by_id VALUES (9, 1, 1337);'
 ]
-generate_test_data_pyspark(BASE_PATH,'simple_table_column_mapped_by_id', 'simple_table_column_mapped_by_id', base_query=base_query, queries=queries, mapping_mode='name')
+generate_test_data_pyspark(BASE_PATH,'simple_table_column_mapped_by_id', 'simple_table_column_mapped_by_id', base_query=base_query, queries=queries, mapping_mode='id')
 
 ################################################
 ### TPC-H
@@ -230,7 +230,7 @@ queries = [
     'ALTER TABLE evolution_simple_id_mode ADD COLUMN b BIGINT;',
     'INSERT INTO evolution_simple_id_mode VALUES (2, 2);'
 ]
-generate_test_data_pyspark(BASE_PATH,'evolution_simple_id_mode', 'evolution_simple_id_mode', base_query=base_query, queries=queries, mapping_mode='name')
+generate_test_data_pyspark(BASE_PATH,'evolution_simple_id_mode', 'evolution_simple_id_mode', base_query=base_query, queries=queries, mapping_mode='id')
 
 ## Table with simple evolution with id mode: adding a column
 base_query = 'select CAST(1 as INT) as a;'

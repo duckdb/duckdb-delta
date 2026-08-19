@@ -103,6 +103,16 @@ void FinalizeBindBaseOverride(MultiFileReaderData &reader_data, const MultiFileO
 	}
 }
 
+unique_ptr<MultiFileReader> DeltaMultiFileReader::CreateInstance(const TableFunction &table_function) {
+	auto result = make_uniq<DeltaMultiFileReader>();
+
+	if (table_function.function_info) {
+		result->snapshot = table_function.function_info->Cast<DeltaFunctionInfo>().snapshot;
+	}
+
+	return std::move(result);
+}
+
 bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files, vector<LogicalType> &return_types,
                                 vector<Identifier> &names, MultiFileReaderBindData &bind_data) {
 	auto &delta_snapshot = dynamic_cast<DeltaMultiFileList &>(files);
