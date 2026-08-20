@@ -1332,7 +1332,9 @@ vector<DeltaStringWidthBound> DeltaMultiFileList::GetStringWidthBounds() const {
 		// Every table entry binds first, so this is unreachable today. Visit the schema anyway rather than fall
 		// through to an empty result: a width check that silently finds no bounds is the one failure we cannot see.
 		auto snapshot_ref = snapshot->GetLockingRef();
-		auto visited_schema = KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr());
+		auto mapping_mode = KernelUtils::ReadColumnMappingMode(snapshot_ref.GetPtr());
+		auto visited_schema =
+		    KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr(), mapping_mode);
 		vector<DeltaStringWidthBound> bounds;
 		ExtractStringWidthBounds(bounds, visited_schema);
 		return bounds;
