@@ -14,6 +14,7 @@
 
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/common/index_vector.hpp"
+#include "duckdb/common/optional.hpp"
 
 namespace duckdb {
 
@@ -69,7 +70,7 @@ public:
 
 struct DeltaPartition {
 	idx_t partition_column_idx;
-	string partition_value;
+	optional<string> partition_value; // absent -> NULL
 };
 
 struct DeltaColumnStats {

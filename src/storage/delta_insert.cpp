@@ -230,12 +230,15 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			auto &partition_children = MapValue::GetChildren(partition_info);
 			for (idx_t col_idx = 0; col_idx < partition_children.size(); col_idx++) {
 				auto &struct_children = StructValue::GetChildren(partition_children[col_idx]);
-				// from PROTOCOL doc, Partition Value Serialization: null values are serialized as "".
-				auto part_value = struct_children[1].IsNull() ? string() : StringValue::Get(struct_children[1]);
 
 				DeltaPartition file_partition_info;
 				file_partition_info.partition_column_idx = col_idx;
-				file_partition_info.partition_value = part_value;
+				// The kernel reads a null map value as a null partition and "" as the empty string. The
+				// protocol's "an empty string for any type translates to a null partition value" cannot
+				// hold for STRING columns, where "" is itself a legal value.
+				if (!struct_children[1].IsNull()) {
+					file_partition_info.partition_value = StringValue::Get(struct_children[1]);
+				}
 				data_file.partition_values.push_back(std::move(file_partition_info));
 			}
 		}

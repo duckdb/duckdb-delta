@@ -171,6 +171,26 @@ static Value CreateValueLogicalTypeFromStatNode(const unordered_map<string, Stat
 	return Value::STRUCT(children);
 }
 
+// `add.path` is a URI (PROTOCOL.md, Add File). The copy writer already percent-encodes partition
+// values into the directory name, so those '%' have to be escaped again -- otherwise a conforming
+// reader decodes one level too far and looks for a directory that does not exist. '/' and '=' are
+// legal in a path segment and stay as they are, which keeps the conventional part=value shape.
+static string EncodePathAsUri(const string &path) {
+	static const char *HEX_DIGIT = "0123456789ABCDEF";
+	string result;
+	for (auto c : path) {
+		if (StringUtil::CharacterIsAlphaNumeric(c) || c == '_' || c == '-' || c == '~' || c == '.' || c == '/' ||
+		    c == '=') {
+			result += c;
+		} else {
+			result += '%';
+			result += HEX_DIGIT[static_cast<unsigned char>(c) >> 4];
+			result += HEX_DIGIT[static_cast<unsigned char>(c) & 15];
+		}
+	}
+	return result;
+}
+
 struct WriteMetaData {
 	static LogicalType GetStatsType(optional_ptr<const DeltaDataFile> file) {
 		if (file && !file->column_stats.empty()) {
@@ -231,15 +251,21 @@ struct WriteMetaData {
 			auto file_name_offset = table_path.size();
 			for (; file.file_name[file_name_offset] == '/'; ++file_name_offset) {
 			}
-			auto file_name = file.file_name.substr(file_name_offset);
+			auto file_name = EncodePathAsUri(file.file_name.substr(file_name_offset));
 			D_ASSERT(!StringUtil::StartsWith(file_name, "/"));
 
-			InsertionOrderPreservingMap<string> partitions = {};
+			vector<Value> partition_keys;
+			vector<Value> partition_vals;
 			for (const auto &part : file.partition_values) {
-				partitions.insert({snapshot.GetPartitionColumns()[part.partition_column_idx], part.partition_value});
+				partition_keys.emplace_back(snapshot.GetPartitionColumns()[part.partition_column_idx]);
+				partition_vals.push_back(part.partition_value ? Value(*part.partition_value)
+				                                              : Value(LogicalType::VARCHAR));
 			}
 
-			Append(file_name, Value::MAP(partitions), file);
+			Append(file_name,
+			       Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, std::move(partition_keys),
+			                  std::move(partition_vals)),
+			       file);
 		}
 	}
 
@@ -521,8 +547,21 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction_with_committer(
 			    snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(), uc_committer));
 		} else {
-			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
-			    ffi::transaction(path_slice, table_entry->snapshot->extern_engine.get()));
+			// This builds its own snapshot from the path, so a max_catalog_version given at ATTACH does not
+			// reach it -- and the kernel's own advice, to supply one when loading, is what the caller did.
+			auto res = KernelUtils::TryUnpackResult(
+			    ffi::transaction(path_slice, table_entry->snapshot->extern_engine.get()), new_kernel_transaction);
+			if (res.HasError()) {
+				if (StringUtil::Contains(res.RawMessage(), "Catalog-managed table requires max_catalog_version")) {
+					throw InvalidInputException(
+					    "Table at '%s' is a catalog-managed Delta table: writing to it directly from storage would "
+					    "bypass the catalog that orders its commits. Attach the catalog that owns it instead (e.g. "
+					    "ATTACH '<catalog>' AS <name> (TYPE unity_catalog)) and write through that catalog. "
+					    "max_catalog_version pins a snapshot to read from and does not permit writes.",
+					    path);
+				}
+				res.Throw();
+			}
 		}
 	}
 

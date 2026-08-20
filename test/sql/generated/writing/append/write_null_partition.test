@@ -1,5 +1,5 @@
 # name: test/sql/generated/writing/append/write_null_partition.test
-# description: null partition values must round-trip: written as "" in the log, read back as NULL
+# description: null partition values must round-trip: carried as a null in the log, read back as NULL
 # group: [append]
 
 require parquet
@@ -26,15 +26,15 @@ SELECT count(*), sum(i) FROM t;
 statement ok
 INSERT INTO t VALUES (99, NULL);
 
-# from protocol's Partition Value Serialization: "An empty string for any
-# type translates to a null partition value" — the written log entry must
-# have "" for the null value.
+# The kernel reads a null map value as a null partition and drops it when materializing the map, so
+# the null arrives either as a JSON null or as an absent key — both read back as SQL NULL here.
+# Writing "" instead would be indistinguishable from the empty string on a STRING partition column.
 query I
 SELECT json_extract_string(add.partitionValues, '$.part')
 FROM read_json('{TEMP_DIR}/write_null_partition/simple_partitioned/delta_lake/_delta_log/00000000000000000001.json')
 WHERE add IS NOT NULL;
 ----
-(empty)
+NULL
 
 # Verify round-trip: 11 rows total, only 10 have a non-null part
 query II

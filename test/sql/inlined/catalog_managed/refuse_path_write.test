@@ -1,0 +1,60 @@
+# name: test/sql/inlined/catalog_managed/refuse_path_write.test
+# description: refusing a write to a catalog-managed table must say something the caller can act on
+# group: [catalog_managed]
+
+require parquet
+
+require delta
+
+# max_catalog_version admits a read, so the refusal has to say why it does not also admit a write.
+# The kernel's own message advises supplying a value the caller has already supplied.
+#
+# The table is copied out of the fixture first: the write is expected to be refused before anything
+# is committed, and a regression that let it through would otherwise edit the fixture in place.
+
+statement ok
+FROM copy_dir('data/inlined/catalog_managed/delta_lake', '{TEMP_DIR}/cmt');
+
+statement ok
+ATTACH '{TEMP_DIR}/cmt' AS cm (TYPE delta, max_catalog_version 0);
+
+# -----------------------------------------------------------------------------
+# The read this attachment does allow
+#
+# Stated first, because it is what makes the write refusal confusing enough to need its own message.
+#
+
+query I
+SELECT count(*) FROM cm;
+----
+10
+
+# -----------------------------------------------------------------------------
+# The write it does not
+#
+
+statement error
+INSERT INTO cm VALUES (99);
+----
+is a catalog-managed Delta table
+
+# The message must point at the fix rather than only at the refusal
+statement error
+INSERT INTO cm VALUES (99);
+----
+TYPE unity_catalog
+
+# ... and must say that the option already in effect is not the missing piece, or the caller is sent
+# to set something they have already set.
+statement error
+INSERT INTO cm VALUES (99);
+----
+does not permit writes
+
+query I
+SELECT count(*) FROM cm;
+----
+10
+
+statement ok
+DETACH cm;
