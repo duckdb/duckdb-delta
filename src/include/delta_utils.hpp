@@ -420,6 +420,33 @@ private:
 		col_def.default_expression = make_uniq<ConstantExpression>(Value(col_def.type));
 	}
 
+	// Lift a synthetic child's (map key/value, list element) field id from the parent's
+	// `delta.columnMapping.nested.ids` (a JSON object like {"col_4.key":11,"col_4.value":12}) and set
+	// it as the child's INTEGER identifier. The kernel does not attach a column-mapping id to these
+	// synthetic fields, so without this HasFieldIdsRecursive() returns false for any schema containing
+	// a map or list and ResolveByFieldId falls the whole schema back to name matching -- which misses
+	// columns whose physical parquet name was sanitized away from the logical name.
+	static void ApplyNestedFieldIds(KernelSchemaVisitor &state, const ffi::CStringMap *metadata,
+	                                DeltaMultiFileColumnDefinition &child, const string &suffix) {
+		auto nested = KernelUtils::FetchFromStringMap(state.engine, metadata, "delta.columnMapping.nested.ids");
+		if (nested.empty()) {
+			return;
+		}
+		auto needle = suffix + "\":";
+		auto pos = nested.find(needle);
+		if (pos == string::npos) {
+			return;
+		}
+		pos += needle.size();
+		auto end = pos;
+		while (end < nested.size() && nested[end] >= '0' && nested[end] <= '9') {
+			end++;
+		}
+		if (end > pos) {
+			child.identifier = Value(nested.substr(pos, end - pos)).DefaultCastAs(LogicalType::INTEGER);
+		}
+	}
+
 	template <LogicalTypeId TypeId>
 	static SimpleTypeVisitorFunction *VisitSimpleType() {
 		return (SimpleTypeVisitorFunction *)&VisitSimpleTypeImpl<TypeId>;
