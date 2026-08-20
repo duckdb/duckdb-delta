@@ -1,0 +1,72 @@
+# name: test/sql/inlined/catalog_managed/time_travel_timestamp.test
+# description: time travel by timestamp on a catalog-managed table carries the catalog bounds
+# group: [catalog_managed]
+
+#
+# Resolving a timestamp builds its own HEAD snapshot to bound the kernel's search. On a
+# catalog-managed table that snapshot needs the same max_catalog_version (and log tail) the lookup
+# would use -- without them the kernel refuses the table outright, so these queries fail loudly
+# rather than quietly resolving against something else.
+#
+# The fixture is a single commit (v0, 10 rows) whose in-commit timestamp is 2023-11-14 22:13:20 UTC.
+
+require parquet
+
+require delta
+
+# -----------------------------------------------------------------------------
+# ATTACH at a timestamp
+#
+
+statement ok
+ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt_ts (TYPE delta, max_catalog_version 0, TIMESTAMP TIMESTAMPTZ '2023-11-14 22:13:20+00');
+
+query I
+SELECT count(*) FROM cmt_ts;
+----
+10
+
+statement ok
+DETACH cmt_ts;
+
+# -----------------------------------------------------------------------------
+# AT (TIMESTAMP => ...) against a catalog-managed attach
+#
+
+statement ok
+ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt (TYPE delta, max_catalog_version 0);
+
+query I
+SELECT count(*) FROM cmt AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:13:20+00');
+----
+10
+
+# Past the only commit still names it
+query I
+SELECT count(*) FROM cmt AT (TIMESTAMP => TIMESTAMPTZ '2030-01-01 00:00:00+00');
+----
+10
+
+# Before it there is nothing to name -- the kernel's range check, not a catalog-managed refusal
+statement error
+SELECT count(*) FROM cmt AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:13:19.999+00');
+----
+LogHistoryError
+
+statement ok
+DETACH cmt;
+
+# -----------------------------------------------------------------------------
+# Without the catalog bound the refusal still fires, by timestamp as by any other read
+#
+
+statement ok
+ATTACH 'data/inlined/catalog_managed/delta_lake' AS cmt_unbounded (TYPE delta);
+
+statement error
+SELECT count(*) FROM cmt_unbounded AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:13:20+00');
+----
+is a catalog-managed Delta table
+
+statement ok
+DETACH cmt_unbounded;

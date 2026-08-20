@@ -7,21 +7,63 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/common/types/timestamp.hpp"
 
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 
 namespace duckdb {
 
-idx_t ParseDeltaVersionFromAtClause(const BoundAtClause &at_clause) {
-	if (at_clause.Unit() != "version") {
-		throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version'");
+int64_t DeltaTimestampToEpochMs(timestamp_tz_t timestamp) {
+	if (!timestamp.IsFinite()) {
+		throw InvalidInputException("Delta time travel requires a finite timestamp");
 	}
-	auto version_value = at_clause.GetValue().DefaultTryCastAs(LogicalType::UBIGINT);
-	if (!version_value) {
-		throw InvalidInputException("Failed to parse version number '%s' into a valid version",
-		                            at_clause.GetValue().ToString().c_str());
+	return Timestamp::GetEpochMs(timestamp_t(timestamp));
+}
+
+DeltaTimeTravelSpec DeltaTimeTravelSpec::FromVersion(idx_t version) {
+	DeltaTimeTravelSpec result;
+	result.kind = Kind::VERSION;
+	result.version = version;
+	return result;
+}
+
+DeltaTimeTravelSpec DeltaTimeTravelSpec::FromTimestamp(timestamp_tz_t timestamp) {
+	DeltaTimeTravelSpec result;
+	result.kind = Kind::TIMESTAMP;
+	result.timestamp = timestamp;
+	return result;
+}
+
+idx_t DeltaTimeTravelSpec::GetVersion() const {
+	if (!IsVersion()) {
+		throw InternalException("DeltaTimeTravelSpec::GetVersion on a spec that does not name a version");
 	}
-	return version_value->GetValue<idx_t>();
+	return version;
+}
+
+timestamp_tz_t DeltaTimeTravelSpec::GetTimestamp() const {
+	if (!IsTimestamp()) {
+		throw InternalException("DeltaTimeTravelSpec::GetTimestamp on a spec that does not name a timestamp");
+	}
+	return timestamp;
+}
+
+DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_clause) {
+	auto &unit = at_clause.Unit();
+
+	// Casting throws its own conversion error, which names the offending value and target type, so
+	// wrapping it says nothing extra. This also matches how the ATTACH options read the same two units.
+	if (unit == "version") {
+		return FromVersion(at_clause.GetValue().DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>());
+	}
+
+	if (unit == "timestamp") {
+		// Anything without a zone -- a naive TIMESTAMP or a string with no offset -- resolves through
+		// the session timezone.
+		return FromTimestamp(at_clause.GetValue().DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
+	}
+
+	throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version' or 'timestamp'");
 }
 
 DeltaCatalog::DeltaCatalog(AttachedDatabase &db_p, const string &path, AccessMode access_mode)
@@ -99,6 +141,9 @@ optional_idx DeltaCatalog::GetCatalogVersion(ClientContext &context) {
 		return transaction_table_entry->snapshot->GetVersion();
 	}
 
+	// TODO: a catalog attached at a timestamp reports Invalid until the first lookup binds the
+	// timestamp to a version, then reports that version -- so it looks like a moving catalog for
+	// exactly one query. Binding at ATTACH would make it fixed from the start, as the option implies.
 	return use_specific_version == DConstants::INVALID_INDEX ? optional_idx::Invalid() : use_specific_version;
 }
 

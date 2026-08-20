@@ -289,8 +289,8 @@ static bool CatalogTypeIsSupported(CatalogType type) {
 	}
 }
 
-unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version,
-                                                               optional_ptr<const DeltaMultiFileList> old_snapshot) {
+shared_ptr<DeltaMultiFileList> DeltaSchemaEntry::CreateFileList(ClientContext &context, idx_t version,
+                                                                optional_ptr<const DeltaMultiFileList> old_snapshot) {
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 	auto snapshot = make_shared_ptr<DeltaMultiFileList>(context, delta_catalog.GetDBPath(), version, old_snapshot);
 
@@ -301,6 +301,26 @@ unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &co
 	if (delta_catalog.max_catalog_version >= 0) {
 		snapshot->max_catalog_version = delta_catalog.max_catalog_version;
 	}
+
+	return snapshot;
+}
+
+// req: this.lock must already be owned, since it reads cached_table
+idx_t DeltaSchemaEntry::ResolveTimestamp(ClientContext &context, timestamp_tz_t timestamp) {
+	// Seed from the cached snapshot so resolving reads only the commits after it. Only the version is
+	// wanted here, so the list is discarded without ever building a snapshot at it.
+	optional_ptr<const DeltaMultiFileList> old_snapshot;
+	if (cached_table) {
+		old_snapshot = cached_table->snapshot.get();
+	}
+	auto resolver = CreateFileList(context, DConstants::INVALID_INDEX, old_snapshot);
+	return resolver->ResolveTimestampToVersion(timestamp);
+}
+
+unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version,
+                                                               optional_ptr<const DeltaMultiFileList> old_snapshot) {
+	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
+	auto snapshot = CreateFileList(context, version, old_snapshot);
 
 	// Get the names and types from the delta snapshot
 	vector<LogicalType> return_types;
@@ -370,12 +390,29 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 	if (type == CatalogType::TABLE_ENTRY && (name == catalog.GetName() || name == delta_catalog.internal_table_name)) {
 		auto &delta_transaction = GetDeltaTransaction(transaction);
 
+		// An attached timestamp binds to a version on first use; from there it is an attached version.
+		// TODO: bind at ATTACH instead, once ATTACH stops deferring its work -- deferring here means an
+		// unreadable table or an out-of-range timestamp is reported by the first query, not by ATTACH.
+		if (delta_catalog.has_specific_timestamp && delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
+			unique_lock<mutex> l(lock);
+			if (delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
+				delta_catalog.use_specific_version = ResolveTimestamp(context, delta_catalog.specific_timestamp);
+			}
+		}
+
 		idx_t version = delta_catalog.use_specific_version;
 
-		// If there's an AT clause we are doing timetravel
+		// If there's an AT clause we are doing timetravel. An attached version or timestamp is only the
+		// default, so the AT clause overrides it.
 		auto at_clause = lookup_info.GetAtClause();
 		if (at_clause) {
-			version = ParseDeltaVersionFromAtClause(*at_clause);
+			auto spec = DeltaTimeTravelSpec::FromAtClause(*at_clause);
+			if (spec.IsTimestamp()) {
+				unique_lock<mutex> l(lock);
+				version = ResolveTimestamp(context, spec.GetTimestamp());
+			} else {
+				version = spec.GetVersion();
+			}
 		}
 
 		auto transaction_table_entry = delta_transaction.GetTableEntry(version);

@@ -1,0 +1,181 @@
+# name: test/sql/main/time_travel_timestamp.test
+# description: Time travel by timestamp, via delta_scan, ATTACH and the AT clause
+# group: [main]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Setup: build versions 0/1/2 (v0 = 0..9, then one row per commit)
+#
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/time_travel_timestamp');
+
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES (10);
+
+statement ok
+INSERT INTO t VALUES (11);
+
+statement ok
+DETACH t;
+
+# -----------------------------------------------------------------------------
+# delta_scan(timestamp => ...)
+#
+
+# A timestamp after every commit names HEAD (= v2).
+query I
+SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', timestamp => TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+12
+
+# A timestamp before the table existed has no version to name.
+statement error
+SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', timestamp => TIMESTAMPTZ '1971-01-01 00:00:00+00');
+----
+LogHistoryError
+
+# version and timestamp name the same thing, so only one may be given.
+statement error
+SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', version => 1, timestamp => TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+mutually exclusive
+
+statement error
+SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', timestamp => TIMESTAMPTZ '2999-01-01 00:00:00+00', version => 1);
+----
+mutually exclusive
+
+# A value with no zone -- naive TIMESTAMP or offset-less string -- resolves through the session
+# timezone, which is UTC when none is set.
+query I
+SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', timestamp => TIMESTAMP '2999-01-01 00:00:00');
+----
+12
+
+query I
+SELECT count() FROM delta_scan('{TEMP_DIR}/main/time_travel_timestamp/delta_lake', timestamp => '2999-01-01 00:00:00');
+----
+12
+
+# -----------------------------------------------------------------------------
+# AT (TIMESTAMP => ...)
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t (TYPE delta);
+
+query I
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+12
+
+# The resolved version behaves like any other: it stays put while HEAD moves on.
+query I rowsort
+SELECT i FROM t AT (TIMESTAMP => TIMESTAMPTZ '2999-01-01 00:00:00+00') WHERE i >= 10;
+----
+10
+11
+
+statement error
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '1971-01-01 00:00:00+00');
+----
+LogHistoryError
+
+query I
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMP '2999-01-01 00:00:00');
+----
+12
+
+statement ok
+DETACH t;
+
+# -----------------------------------------------------------------------------
+# ATTACH ... (TIMESTAMP => ...)
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_ts (TYPE delta, TIMESTAMP TIMESTAMPTZ '2999-01-01 00:00:00+00');
+
+query I
+SELECT count() FROM t_ts;
+----
+12
+
+statement error
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_both (TYPE delta, VERSION 1, TIMESTAMP TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+mutually exclusive
+
+statement ok
+DETACH t_ts;
+
+# An attached version or timestamp is the default, not a pin: an AT clause overrides it, in either
+# unit and whichever unit the attach used.
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_v1 (TYPE delta, VERSION 1);
+
+query I
+SELECT count() FROM t_v1;
+----
+11
+
+query I
+SELECT count() FROM t_v1 AT (VERSION => 0);
+----
+10
+
+query I
+SELECT count() FROM t_v1 AT (TIMESTAMP => TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+12
+
+# Overriding does not disturb the attached default.
+query I
+SELECT count() FROM t_v1;
+----
+11
+
+statement ok
+DETACH t_v1;
+
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_at_ts (TYPE delta, TIMESTAMP TIMESTAMPTZ '2999-01-01 00:00:00+00');
+
+query I
+SELECT count() FROM t_at_ts;
+----
+12
+
+query I
+SELECT count() FROM t_at_ts AT (VERSION => 0);
+----
+10
+
+statement ok
+DETACH t_at_ts;
+
+# An unpinned attach time travels freely too.
+statement ok
+ATTACH '{TEMP_DIR}/main/time_travel_timestamp/delta_lake' AS t_open (TYPE delta);
+
+query I
+SELECT count() FROM t_open AT (VERSION => 0);
+----
+10
+
+query I
+SELECT count() FROM t_open AT (TIMESTAMP => TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+12
+
+statement ok
+DETACH t_open;

@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "delta_time_travel.hpp"
 #include "functions/delta_scan/delta_scan.hpp"
 #include "delta_schema_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
@@ -16,8 +17,6 @@
 
 namespace duckdb {
 class DeltaSchemaEntry;
-
-idx_t ParseDeltaVersionFromAtClause(const BoundAtClause &at_clause);
 
 class DeltaClearCacheFunction : public TableFunction {
 public:
@@ -35,6 +34,10 @@ public:
 	AccessMode access_mode;
 	bool use_cache;
 	idx_t use_specific_version;
+	//! Time travel target from `ATTACH ... (TIMESTAMP => ...)`. Resolved into use_specific_version on
+	//! the first table lookup, since resolving needs a snapshot and ATTACH must not read the log.
+	bool has_specific_timestamp = false;
+	timestamp_tz_t specific_timestamp = timestamp_tz_t(0);
 	bool pushdown_partition_info;
 	DeltaFilterPushdownMode filter_pushdown_mode;
 

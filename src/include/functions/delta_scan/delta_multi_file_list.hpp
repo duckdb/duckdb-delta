@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "delta_time_travel.hpp"
+
 #include "delta_functions.hpp"
 #include "delta_utils.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
@@ -133,7 +135,12 @@ public:
 	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const override;
 	DeltaFileMetaData &GetMetaData(idx_t index) const;
 	idx_t GetVersion();
-	void PinVersion(idx_t v);
+	//! Pin what this list will read. A timestamp is resolved against the log when the snapshot is
+	//! built; a version is used as-is. Passing the whole spec is what keeps the two from both being set.
+	void Pin(const DeltaTimeTravelSpec &spec);
+	//! The version `timestamp` names, without building a snapshot at it. Reads only the log HEAD needs,
+	//! reusing the previous snapshot when this list was given one.
+	idx_t ResolveTimestampToVersion(timestamp_tz_t timestamp) const;
 	vector<string> GetPartitionColumns();
 
 	vector<DeltaMultiFileColumnDefinition> &GetLazyLoadedGlobalColumns() const;
@@ -153,6 +160,14 @@ protected:
 
 	//! Restates the kernel's catalog-managed refusal in terms the caller can act on
 	ffi::Handle<ffi::SharedSnapshot> BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const;
+
+	//! Builder for `target_version` (INVALID_INDEX for HEAD), with log tail and catalog bounds applied
+	ffi::Handle<ffi::MutableFfiSnapshotBuilder>
+	CreateSnapshotBuilder(ffi::KernelStringSlice path_slice, idx_t target_version, bool &using_incremental) const;
+
+	//! The version `timestamp_ms` names, adopting the HEAD snapshot built on the way when it already is
+	//! the answer. Requires extern_engine.
+	idx_t ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice, int64_t timestamp_ms) const;
 
 	void EnsureSnapshotInitialized() const;
 	void EnsureScanInitialized() const;
@@ -182,6 +197,10 @@ protected:
 	//       const, but not physically.
 	mutable mutex lock;
 	mutable idx_t version;
+
+	//! Time travel by timestamp, in milliseconds since the unix epoch (the delta protocol's unit)
+	mutable bool has_requested_timestamp = false;
+	mutable int64_t requested_timestamp_ms = 0;
 
 	//! Delta Kernel Structures
 	mutable shared_ptr<SharedKernelSnapshot> old_snapshot;

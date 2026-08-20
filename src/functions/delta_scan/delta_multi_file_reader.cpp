@@ -114,8 +114,8 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 	// These mirror the ATTACH options set in delta_schema_entry.cpp, so a scan and an attach of the
 	// same table read identically.
 	if (!snapshot) {
-		if (requested_version != DConstants::INVALID_INDEX) {
-			delta_snapshot.PinVersion(requested_version);
+		if (!requested.IsLatest()) {
+			delta_snapshot.Pin(requested);
 		}
 		auto log_tail_setting = options.custom_options.find("log_tail");
 		if (log_tail_setting != options.custom_options.end()) {
@@ -315,7 +315,19 @@ bool DeltaMultiFileReader::ParseOption(const Identifier &key, const Value &val, 
 	}
 
 	if (key == "version") {
-		requested_version = val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>();
+		if (!requested.IsLatest()) {
+			throw InvalidInputException("delta_scan: 'version' and 'timestamp' are mutually exclusive");
+		}
+		requested = DeltaTimeTravelSpec::FromVersion(val.DefaultCastAs(LogicalType::UBIGINT).GetValue<idx_t>());
+		return true;
+	}
+
+	if (key == "timestamp") {
+		if (!requested.IsLatest()) {
+			throw InvalidInputException("delta_scan: 'version' and 'timestamp' are mutually exclusive");
+		}
+		requested =
+		    DeltaTimeTravelSpec::FromTimestamp(val.DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
 		return true;
 	}
 

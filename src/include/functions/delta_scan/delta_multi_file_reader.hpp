@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "delta_time_travel.hpp"
+
 #include "delta_utils.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_data.hpp"
@@ -69,9 +71,10 @@ struct DeltaMultiFileReader : public MultiFileReader {
 	// A snapshot can be injected into the multifilereader, this ensures the GetMultiFileList can return this snapshot
 	// (note that the path should match the one passed to CreateFileList)
 	shared_ptr<DeltaMultiFileList> snapshot;
-	// Version requested via the `version` named parameter, captured in ParseOption. Transferred to the
-	// snapshot before Bind (see DeltaMultiFileReader::Bind) when no snapshot was injected via function_info.
-	idx_t requested_version = DConstants::INVALID_INDEX;
+	// Time travel requested via the `version` or `timestamp` named parameter, captured in ParseOption.
+	// Transferred to the snapshot before Bind (see DeltaMultiFileReader::Bind) when no snapshot was
+	// injected via function_info.
+	DeltaTimeTravelSpec requested;
 };
 
 } // namespace duckdb
