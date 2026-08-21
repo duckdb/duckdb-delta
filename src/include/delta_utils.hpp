@@ -317,22 +317,20 @@ private:
 
 	static void ApplyDeltaColumnMapping(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *metadata,
 	                                    DeltaMultiFileColumnDefinition &col_def) {
-		// Column mapping gives every field a physical name and a numeric id. Both ids below are the SAME
-		// number: the kernel derives `parquet.field.id` from `delta.columnMapping.id` when it builds a
-		// physical schema. We only ever visit logical schemas, so in practice the first read finds nothing
-		// and the second is the one that fires.
-		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
-		if (!id.empty()) {
-			col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
+		// The two keys carry the same number: the kernel derives `parquet.field.id` from
+		// `delta.columnMapping.id` when it builds a physical schema. Read whichever the schema at hand
+		// spells it with.
+		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.id");
+		if (id.empty()) {
+			id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
 		}
-		auto mapping_id = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.id");
-		if (!mapping_id.empty()) {
-			col_def.field_id = optional_idx(Value(mapping_id).DefaultCastAs(LogicalType::UBIGINT).GetValue<uint64_t>());
+		if (!id.empty()) {
+			col_def.field_id = optional_idx(Value(id).DefaultCastAs(LogicalType::UBIGINT).GetValue<uint64_t>());
 		}
 		auto name = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.physicalName");
 		if (!name.empty()) {
-			// Overwrites the id above rather than choosing between them: mode is a table-level property and
-			// this sees one field, so there is nothing here to choose by.
+			// Always the name, never the id: nothing sets MultiFileColumnMappingMode, so it stays BY_NAME
+			// and a table declaring `mode = id` is still resolved by physical name.
 			col_def.identifier = Value(name);
 			col_def.physical_name = name;
 		}
