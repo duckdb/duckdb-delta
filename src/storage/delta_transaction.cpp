@@ -401,7 +401,7 @@ ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::Comm
 		}
 		// Special function that expects a 2-sized ANY datachunk containing the input on row 1 that will place the
 		// output on row 2
-		transaction->commit_function->functions.functions[0].function(*current_context, data, output);
+		transaction->commit_function->functions.functions[0]->function(*current_context, data, output);
 
 		auto result = output.GetValue(1, 0);
 		if (result.IsNull()) {

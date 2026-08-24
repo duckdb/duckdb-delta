@@ -187,6 +187,22 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 	}
 }
 
+//! BY_FIELD_ID mapping requires an INTEGER field_id identifier on every column the mapper
+//! visits, nested children included. DeltaMultiFileList has already vetted the scan schema;
+//! this re-checks the assembled vector, which may carry extra columns appended from the
+//! bind-time schema.
+static bool AllColumnsHaveFieldIds(const vector<MultiFileColumnDefinition> &columns) {
+	for (const auto &column : columns) {
+		if (column.identifier.IsNull() || column.identifier.type().id() != LogicalTypeId::INTEGER) {
+			return false;
+		}
+		if (!AllColumnsHaveFieldIds(column.children)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData &reader_data,
                                                             const MultiFileBindData &bind_data,
                                                             const vector<MultiFileColumnDefinition> &global_columns,
@@ -214,8 +230,18 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 
 	FinalizeBind(reader_data, bind_data.file_options, bind_data.reader_bind, overridden_global_columns,
 	             global_column_ids, context, global_state);
+
+	// Per the Delta protocol's "Reader Requirements for Column Mapping", `id` mode resolves
+	// parquet columns by field_id; `name` and `none` mode resolve by name. Only `id` mode
+	// needs the field_id mapper -- in `name` mode the identifier holds the physical name and
+	// in `none` mode it is unset, both of which the name mapper handles.
+	auto mapping_mode = bind_data.reader_bind.mapping;
+	if (snapshot.ResolvesByFieldId() && AllColumnsHaveFieldIds(overridden_global_columns)) {
+		mapping_mode = MultiFileColumnMappingMode::BY_FIELD_ID;
+	}
+
 	return CreateMapping(context, reader_data, overridden_global_columns, global_column_ids, table_filters,
-	                     gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns);
+	                     gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns, mapping_mode);
 }
 
 void DeltaMultiFileReader::FinalizeBind(MultiFileReaderData &reader_data, const MultiFileOptions &file_options,

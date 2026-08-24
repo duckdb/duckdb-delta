@@ -1,0 +1,21 @@
+# name: test/sql/inlined/column_mapping_id_mode_physical_names.test
+# description: id-mode tables written with physical parquet column names still resolve
+# group: [inlined]
+
+require parquet
+
+require delta
+
+statement ok
+from copy_dir('data/inlined/column_mapping_id_mode_physical_names',
+              '__TEST_DIR__/data/inlined/column_mapping_id_mode_physical_names');
+
+# The spec-conformant writer layout (pyspark): an id-mode table whose parquet
+# columns are named with the physical names AND carry field_ids. Resolving by
+# field_id must still find them -- regression test for the all-NULL result that
+# test/sql/generated/column_mapping_id_mode.test caught.
+query II
+from delta_scan('__TEST_DIR__/data/inlined/column_mapping_id_mode_physical_names/delta_lake') order by a
+----
+1	alice
+2	bob
