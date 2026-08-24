@@ -416,7 +416,8 @@ private:
 		case DeltaColumnMappingMode::NONE:
 			break;
 		}
-		col_def.char_varchar_type = KernelUtils::FetchFromStringMap(state.engine, metadata, "__CHAR_VARCHAR_TYPE_STRING");
+		col_def.char_varchar_type =
+		    KernelUtils::FetchFromStringMap(state.engine, metadata, "__CHAR_VARCHAR_TYPE_STRING");
 		col_def.default_expression = make_uniq<ConstantExpression>(Value(col_def.type));
 	}
 
