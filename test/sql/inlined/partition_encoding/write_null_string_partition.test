@@ -1,0 +1,160 @@
+# name: test/sql/inlined/partition_encoding/write_null_string_partition.test
+# description: a NULL partition value and a genuine empty string must stay distinguishable
+# group: [partition_encoding]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# Encoding null as "" collapses it onto a value a STRING column can legitimately hold, and nothing
+# errors at any point: the row is simply unfindable by IS NULL in any engine that reads "" as itself.
+#
+# The fixture is a hand-written Delta log: protocol and metaData for a table partitioned by a STRING
+# column, and no data files. Every commit this test inspects is one it just wrote.
+#
+# A STRING partition column is the whole point. The existing coverage in
+# test/sql/generated/writing/append/write_null_partition.test partitions on an integer, where ""
+# cannot collide with any valid value, so it passes on an encoding that cannot represent the
+# distinction at all.
+#
+# One INSERT per partition throughout: a single statement spanning multiple partitions currently
+# raises an internal error, which is a separate bug.
+
+statement ok
+FROM copy_dir('data/inlined/partition_encoding/string_partition', '{TEMP_DIR}/np');
+
+statement ok
+ATTACH '{TEMP_DIR}/np' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES (1, 'ABC', 'p1');
+
+statement ok
+INSERT INTO t VALUES (2, 'XYZ', NULL);
+
+statement ok
+INSERT INTO t VALUES (3, 'EMPTY', '');
+
+# -----------------------------------------------------------------------------
+# What another engine reads
+#
+# The commits are the contract. Asserting the query results alone proves nothing here: our reader
+# and our writer share one convention, so a read-back agrees with us whether or not that convention
+# is the one other engines follow.
+#
+
+query I
+SELECT json_extract_string(add.partitionValues, '$.p')
+FROM read_json('{TEMP_DIR}/np/_delta_log/00000000000000000001.json') WHERE add IS NOT NULL;
+----
+p1
+
+# The empty string is a legitimate value on a STRING partition column, so it cannot also stand for
+# null. The kernel reads a null partition as a null map value, and drops null-valued entries when it
+# materializes the map, so an absent key means null too -- a contract that differs from the
+# protocol's "an empty string for any type translates to a null partition value". Both shapes are
+# therefore correct and neither is pinned here; only "" is wrong.
+#
+# read_json_objects reads the raw commit line, because read_json types partitionValues as a struct
+# whose shape follows the data, and json_extract_string folds JSON null onto the same SQL NULL as an
+# absent key. The text form of json_extract keeps null, "" and absent apart.
+
+# Without an add file in each commit the assertions below hold vacuously.
+query I
+SELECT count(*) FROM read_json_objects(['{TEMP_DIR}/np/_delta_log/00000000000000000002.json',
+                                        '{TEMP_DIR}/np/_delta_log/00000000000000000003.json'])
+WHERE json_extract_string(json, '$.add.path') IS NOT NULL;
+----
+2
+
+query T
+SELECT json_extract(json, '$.add.partitionValues.p')::VARCHAR
+FROM read_json_objects('{TEMP_DIR}/np/_delta_log/00000000000000000003.json')
+WHERE json_exists(json, '$.add');
+----
+""
+
+# Null: the key is absent, or present with a JSON null value. Anything but the empty string.
+query T
+SELECT json_extract(json, '$.add.partitionValues.p')::VARCHAR IS DISTINCT FROM '""'
+FROM read_json_objects('{TEMP_DIR}/np/_delta_log/00000000000000000002.json')
+WHERE json_exists(json, '$.add');
+----
+true
+
+query T
+SELECT (SELECT json_extract(json, '$.add.partitionValues.p')::VARCHAR
+        FROM read_json_objects('{TEMP_DIR}/np/_delta_log/00000000000000000002.json')
+        WHERE json_exists(json, '$.add'))
+   IS DISTINCT FROM
+       (SELECT json_extract(json, '$.add.partitionValues.p')::VARCHAR
+        FROM read_json_objects('{TEMP_DIR}/np/_delta_log/00000000000000000003.json')
+        WHERE json_exists(json, '$.add'));
+----
+true
+
+# -----------------------------------------------------------------------------
+# What the layout on disk looks like
+#
+# DuckDB writes these directories, so this pins our own layout, not the protocol's. PROTOCOL.md,
+# Data Files: the part=value format "is only used to follow existing conventions and is not required
+# by the protocol", and "actual partition values for a file must be read from the transaction log".
+# So these are documentation. __HIVE_DEFAULT_PARTITION__ is DuckDB's own sentinel for a null hive
+# key, and a change upstream breaks them without anything here being wrong.
+#
+# Path and map are pinned separately because they encode the null differently -- a sentinel
+# directory here, a null map value there -- and only the map is what a reader takes the value from.
+#
+
+query T
+SELECT regexp_extract(file, '([^/]*)/[^/]*$', 1) AS dir
+FROM glob('{TEMP_DIR}/np/*/*.parquet') ORDER BY dir;
+----
+p=
+p=__HIVE_DEFAULT_PARTITION__
+p=p1
+
+# Each commit's add.path must sit in the directory for the value it was written with. One commit per
+# query: reading both at once would make the expected rows depend on scan order.
+
+query T
+SELECT regexp_extract(json_extract_string(json, '$.add.path'), '^([^/]*)/', 1)
+FROM read_json_objects('{TEMP_DIR}/np/_delta_log/00000000000000000002.json')
+WHERE json_exists(json, '$.add');
+----
+p=__HIVE_DEFAULT_PARTITION__
+
+query T
+SELECT regexp_extract(json_extract_string(json, '$.add.path'), '^([^/]*)/', 1)
+FROM read_json_objects('{TEMP_DIR}/np/_delta_log/00000000000000000003.json')
+WHERE json_exists(json, '$.add');
+----
+p=
+
+# -----------------------------------------------------------------------------
+# What the round trip yields
+#
+# The row written with a NULL partition value is found by IS NULL, and only that row.
+#
+
+query I
+SELECT id FROM t WHERE p IS NULL;
+----
+2
+
+query I
+SELECT id FROM t WHERE p = '';
+----
+3
+
+query II
+SELECT count(*), count(p) FROM t;
+----
+3	2
+
+statement ok
+DETACH t;
