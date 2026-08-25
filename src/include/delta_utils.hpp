@@ -275,6 +275,19 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 
 	vector<DeltaMultiFileColumnDefinition> children;
 	bool nullable = true;
+	//! Verbatim `__CHAR_VARCHAR_TYPE_STRING` field metadata, e.g. "char(5)" or "array<varchar(5)>": a width the Delta
+	//! type system cannot express, which Spark enforces client-side and the kernel does not interpret at all.
+	string char_varchar_type;
+
+	//! Column-mapping identity, write path only: a write needs both, a read resolves through `identifier`
+	string physical_name;
+	optional_idx field_id;
+
+	//! Either half alone still means the column is mapped: writing it under its logical name, or without its
+	//! id, produces a file a mapped reader resolves against nothing.
+	bool IsColumnMapped() const {
+		return !physical_name.empty() || field_id.IsValid();
+	}
 };
 
 // KernelSchemaVisitor is used to parse the schema of a Delta table from the Kernel
@@ -303,14 +316,24 @@ private:
 
 	static void ApplyDeltaColumnMapping(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *metadata,
 	                                    DeltaMultiFileColumnDefinition &col_def) {
-		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
+		// The two keys carry the same number: the kernel derives `parquet.field.id` from
+		// `delta.columnMapping.id` when it builds a physical schema. Read whichever the schema at hand
+		// spells it with.
+		auto id = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.id");
+		if (id.empty()) {
+			id = KernelUtils::FetchFromStringMap(engine, metadata, "parquet.field.id");
+		}
 		if (!id.empty()) {
-			col_def.identifier = Value(id).DefaultCastAs(LogicalType::BIGINT);
+			col_def.field_id = optional_idx(Value(id).DefaultCastAs(LogicalType::UBIGINT).GetValue<uint64_t>());
 		}
 		auto name = KernelUtils::FetchFromStringMap(engine, metadata, "delta.columnMapping.physicalName");
 		if (!name.empty()) {
+			// Always the name, never the id: nothing sets MultiFileColumnMappingMode, so it stays BY_NAME
+			// and a table declaring `mode = id` is still resolved by physical name.
 			col_def.identifier = Value(name);
+			col_def.physical_name = name;
 		}
+		col_def.char_varchar_type = KernelUtils::FetchFromStringMap(engine, metadata, "__CHAR_VARCHAR_TYPE_STRING");
 		col_def.default_expression = make_uniq<ConstantExpression>(Value(col_def.type));
 	}
 

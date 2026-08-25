@@ -1,0 +1,96 @@
+# name: test/sql/inlined/partition_encoding/write_partition_value_uri_encoding.test
+# description: partition values needing percent-encoding must survive a write/read round trip
+# group: [partition_encoding]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# The copy writer percent-encodes the partition value into the directory name, so the add.path
+# recorded for it has to escape those '%' again. Without that a conforming reader decodes one level
+# too far and cannot open the data file at all.
+#
+# Same hand-written fixture as the null-partition test: (id INT, code STRING, p STRING) partitioned
+# by p, no data files, so every commit inspected here is one this test wrote.
+#
+# One INSERT per partition throughout: a single statement spanning multiple partitions currently
+# raises an internal error, which is a separate bug.
+
+statement ok
+FROM copy_dir('data/inlined/partition_encoding/string_partition', '{TEMP_DIR}/enc');
+
+statement ok
+ATTACH '{TEMP_DIR}/enc' AS t (TYPE delta);
+
+statement ok
+INSERT INTO t VALUES (1, 'plain', 'plain');
+
+statement ok
+INSERT INTO t VALUES (2, 'equals', 'a=b');
+
+statement ok
+INSERT INTO t VALUES (3, 'space', 'a b');
+
+statement ok
+INSERT INTO t VALUES (4, 'slash', 'a/b');
+
+statement ok
+INSERT INTO t VALUES (5, 'percent', 'a%b');
+
+statement ok
+INSERT INTO t VALUES (6, 'nonascii', 'ä');
+
+# -----------------------------------------------------------------------------
+# What the round trip yields
+#
+# Values are asserted by membership rather than printed, because sqllogictest cannot express a
+# result containing a space.
+#
+
+query I
+SELECT count(*) FROM t WHERE p IN ('plain', 'a=b', 'a b', 'a/b', 'a%b', 'ä');
+----
+6
+
+query II
+SELECT count(*), count(DISTINCT p) FROM t;
+----
+6	6
+
+# -----------------------------------------------------------------------------
+# What another engine reads
+#
+# partitionValues carries the value verbatim -- it is a JSON string, not a URI.
+#
+
+query I
+SELECT count(*) FROM read_json_objects('{TEMP_DIR}/enc/_delta_log/*.json')
+WHERE json_extract_string(json, '$.add.partitionValues.p') IN ('plain', 'a=b', 'a b', 'a/b', 'a%b', 'ä');
+----
+6
+
+# add.path is a URI, so decoding it must name a file that exists. The directory on disk is p=a%3Db,
+# and decoding an unescaped copy of that name yields p=a=b, which is never created.
+query I
+SELECT count(*) FROM (
+    SELECT url_decode(json_extract_string(json, '$.add.path')) AS rel
+    FROM read_json_objects('{TEMP_DIR}/enc/_delta_log/*.json') WHERE json_exists(json, '$.add')
+) WHERE EXISTS (SELECT 1 FROM glob('{TEMP_DIR}/enc/*/*.parquet') g WHERE ends_with(g.file, '/' || rel));
+----
+6
+
+# The shape, pinned once on a value with no whitespace: '=' stays literal because it is legal in a
+# path segment, while the '%' the copy writer introduced is escaped to '%25'.
+query T
+SELECT json_extract_string(json, '$.add.path') LIKE 'p=a%253Db/%'
+FROM read_json_objects('{TEMP_DIR}/enc/_delta_log/00000000000000000002.json')
+WHERE json_exists(json, '$.add');
+----
+true
+
+statement ok
+DETACH t;

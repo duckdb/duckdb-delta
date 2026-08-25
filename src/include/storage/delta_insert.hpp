@@ -67,6 +67,7 @@ public:
 
 struct DeltaPartition {
 	idx_t partition_column_idx;
+	bool has_partition_value = false; // false -> NULL
 	string partition_value;
 };
 

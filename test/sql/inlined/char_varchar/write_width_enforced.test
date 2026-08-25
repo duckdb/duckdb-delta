@@ -1,0 +1,170 @@
+# name: test/sql/inlined/char_varchar/write_width_enforced.test
+# description: CHAR(n)/VARCHAR(n) widths declared as __CHAR_VARCHAR_TYPE_STRING are enforced on write
+# group: [char_varchar]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+from copy_dir('data/inlined/char_varchar/basic', '{TEMP_DIR}/char_varchar_basic');
+
+statement ok
+ATTACH '{TEMP_DIR}/char_varchar_basic' AS t (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# Values within the declared width
+#
+
+statement ok
+INSERT INTO t VALUES (1, 'abcde', 'abc', 'no bound here at all');
+
+statement ok
+INSERT INTO t VALUES (2, NULL, NULL, NULL);
+
+# Width is in codepoints, not bytes: 5 characters, 8 bytes
+statement ok
+INSERT INTO t VALUES (3, 'ünïcö', 'äbc', NULL);
+
+query IIII
+SELECT id, v, c, unbounded FROM t ORDER BY id;
+----
+1	abcde	abc	no bound here at all
+2	NULL	NULL	NULL
+3	ünïcö	äbc	NULL
+
+# -----------------------------------------------------------------------------
+# Values exceeding the declared width are rejected, not truncated
+#
+
+statement error
+INSERT INTO t VALUES (4, 'abcdef', 'abc', NULL);
+----
+Delta column "v" is declared as varchar(5)
+
+statement error
+INSERT INTO t VALUES (5, 'abcde', 'abcd', NULL);
+----
+Delta column "c" is declared as char(3)
+
+# 6 codepoints is over the bound even though the at-limit case above was 8 bytes
+statement error
+INSERT INTO t VALUES (6, 'ünïcöd', NULL, NULL);
+----
+is declared as varchar(5), but the value being written is 6 characters long
+
+# A single offending value rejects the whole statement
+statement error
+INSERT INTO t SELECT i, repeat('x', i), NULL, NULL FROM range(1, 8) tbl(i);
+----
+is declared as varchar(5)
+
+# The rejected rows did not commit
+query I
+SELECT count(*) FROM t;
+----
+3
+
+# -----------------------------------------------------------------------------
+# Multi-row sources: values arrive flat or behind a selection vector, not as constants
+#
+
+statement ok
+INSERT INTO t SELECT i + 10, repeat('x', i), repeat('y', i % 4), NULL FROM range(0, 6) tbl(i);
+
+query II
+SELECT id, v FROM t WHERE id >= 10 ORDER BY id;
+----
+10	(empty)
+11	x
+12	xx
+13	xxx
+14	xxxx
+15	xxxxx
+
+# Filtered source: the child arrives with a selection vector
+statement ok
+INSERT INTO t SELECT i, 'ok', 'abc', NULL FROM range(100, 300) tbl(i) WHERE i % 37 = 0;
+
+query I
+SELECT count(*) FROM t;
+----
+15
+
+statement error
+INSERT INTO t SELECT i, repeat('z', i % 9 + 1), NULL, NULL FROM range(100, 300) tbl(i) WHERE i % 37 = 0;
+----
+is declared as varchar(5)
+
+query I
+SELECT count(*) FROM t;
+----
+15
+
+statement ok
+DETACH t;
+
+# -----------------------------------------------------------------------------
+# A bounded column that is also the partition column
+#
+# One partition per statement on purpose: a single INSERT spanning two partitions trips an
+# unrelated internal error in DeltaInsert::Sink.
+#
+
+statement ok
+from copy_dir('data/inlined/char_varchar/partitioned', '{TEMP_DIR}/char_varchar_partitioned');
+
+statement ok
+ATTACH '{TEMP_DIR}/char_varchar_partitioned' AS p (TYPE delta);
+
+statement ok
+INSERT INTO p VALUES (1, 'abc', 'ok'), (2, 'abc', 'fine');
+
+query III
+SELECT id, p, v FROM p ORDER BY id;
+----
+1	abc	ok
+2	abc	fine
+
+statement error
+INSERT INTO p VALUES (3, 'toolong', 'ok');
+----
+is declared as char(3)
+
+statement error
+INSERT INTO p VALUES (4, 'xyz', 'toolong');
+----
+is declared as varchar(5)
+
+query I
+SELECT count(*) FROM p;
+----
+2
+
+statement ok
+DETACH p;
+
+# -----------------------------------------------------------------------------
+# Widths on nested fields are refused rather than silently ignored
+#
+
+statement ok
+from copy_dir('data/inlined/char_varchar/nested', '{TEMP_DIR}/char_varchar_nested');
+
+statement ok
+ATTACH '{TEMP_DIR}/char_varchar_nested' AS n (TYPE delta);
+
+query I
+SELECT count(*) FROM n;
+----
+0
+
+statement error
+INSERT INTO n VALUES (1, ['abc']);
+----
+declares the width array<varchar(5)> on a nested field
+
+statement ok
+DETACH n;
