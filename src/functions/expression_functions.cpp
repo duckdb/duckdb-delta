@@ -32,13 +32,11 @@ static void GetDeltaTestExpression(DataChunk &input, ExpressionState &state, Vec
 	vector<Value> result_to_string;
 
 	auto kernel_testing_expr = ffi::get_testing_kernel_expression();
-	ExpressionVisitor visitor;
-	auto parsed_expressions = visitor.VisitKernelExpression(&kernel_testing_expr);
+	auto parsed_expressions = KernelExpressionVisitor::ToParsedExpression(&kernel_testing_expr);
 	AddTestExpressions(result_to_string, *parsed_expressions);
 
 	auto kernel_testing_pred = ffi::get_testing_kernel_predicate();
-	ExpressionVisitor visitor_pred;
-	auto parsed_pred = visitor_pred.VisitKernelPredicate(&kernel_testing_pred);
+	auto parsed_pred = KernelExpressionVisitor::ToParsedExpression(&kernel_testing_pred);
 	AddTestExpressions(result_to_string, *parsed_pred);
 
 	output.SetValue(0, Value::LIST(result_to_string));
