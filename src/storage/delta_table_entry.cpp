@@ -43,7 +43,8 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 	}
 	auto &delta_function_set = catalog_entry->Cast<TableFunctionCatalogEntry>();
 
-	auto delta_scan_function = delta_function_set.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
+	// copied out of the set: the bind mutates function_info and needs a mutable function
+	auto delta_scan_function = *delta_function_set.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 
 	auto &transaction = DeltaTransaction::Get(context, delta_catalog);
