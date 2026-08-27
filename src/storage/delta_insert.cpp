@@ -141,11 +141,16 @@ static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 			D_ASSERT(!column_stats.has_num_values);
 			column_stats.has_num_values = true;
 			column_stats.num_values = StringUtil::ToUnsigned(stats_value);
+		} else if (stats_name == "min_is_exact" || stats_name == "max_is_exact") {
+			// Parquet reports these false only for strings cut off at the writer's stats size limit, which
+			// PROTOCOL.md (Per-file Statistics, note 1) keeps inside tightBounds=true -- bounds stay tight.
+			// Thus accept and drop.
+			continue;
 		} else if (stats_name == "variant_type") {
 			//! Should be handled elsewhere
 			continue;
 		} else {
-			throw NotImplementedException("Unsupported stats type \"%s\" in DuckLakeInsert::Sink()", stats_name);
+			throw NotImplementedException("Unsupported stats type \"%s\" in DeltaInsert::Sink()", stats_name);
 		}
 	}
 	return column_stats;
