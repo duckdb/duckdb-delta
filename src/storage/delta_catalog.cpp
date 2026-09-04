@@ -108,10 +108,16 @@ optional_ptr<SchemaCatalogEntry> DeltaCatalog::LookupSchema(CatalogTransaction t
 	if (schema_name == DEFAULT_SCHEMA || schema_name == INVALID_SCHEMA) {
 		return main_schema.get();
 	}
-	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+	switch (if_not_found) {
+	case OnEntryNotFound::RETURN_NULL:
 		return nullptr;
+	case OnEntryNotFound::THROW_EXCEPTION:
+		throw CatalogException(schema_lookup.GetErrorContext(),
+		                       "Schema \"%s\" does not exist! A delta catalog holds one table, under \"%s\"",
+		                       schema_name, DEFAULT_SCHEMA);
+	default:
+		throw InternalException("Unknown OnEntryNotFound value %d", static_cast<int>(if_not_found));
 	}
-	return nullptr;
 }
 
 bool DeltaCatalog::InMemory() {
