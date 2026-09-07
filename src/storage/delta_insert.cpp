@@ -156,6 +156,30 @@ static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 	return column_stats;
 }
 
+//! The log records statistics in a struct mirroring the schema's own struct nesting, so a field only
+//! has somewhere to be recorded while the path to it stays on that spine. Parquet reports the leaves
+//! inside lists, maps and arrays as well -- `m.key_value.value` for a map -- naming no field of it.
+static bool StatsPathIsRecordable(const LogicalType &column_type, const vector<string> &path) {
+	reference<const LogicalType> current(column_type);
+	for (idx_t i = 1; i < path.size(); i++) {
+		if (current.get().id() != LogicalTypeId::STRUCT) {
+			return false;
+		}
+		bool found = false;
+		for (auto &child : StructType::GetChildTypes(current.get())) {
+			if (child.first == path[i]) {
+				current = child.second;
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			return true; // materializing the stats reports the mismatch
+		}
+	}
+	return !current.get().IsNested();
+}
+
 static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chunk) {
 	for (idx_t r = 0; r < chunk.size(); r++) {
 		DeltaDataFile data_file;
@@ -219,7 +243,7 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			}
 
 			// Skip types whose stats we don't yet support
-			if (coltype.id() == LogicalTypeId::VARIANT || coltype.id() == LogicalTypeId::LIST) {
+			if (coltype.id() == LogicalTypeId::VARIANT || !StatsPathIsRecordable(coltype, column_names)) {
 				continue;
 			}
 

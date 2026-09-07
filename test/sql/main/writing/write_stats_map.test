@@ -1,0 +1,48 @@
+# name: test/sql/main/writing/write_stats_map.test
+# description: verify that stats are NOT written for MAP columns on insert (no crash, no map entries in stats)
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+statement ok
+ATTACH '{TEMP_DIR}/write_stats_map' AS t (TYPE delta);
+
+statement ok
+CREATE TABLE t.t (id INTEGER, m MAP(VARCHAR, INTEGER), s STRUCT(inner MAP(VARCHAR, INTEGER), leaf INTEGER));
+
+statement ok
+INSERT INTO t.t VALUES (5, MAP(['k'], [9]), {'inner': MAP(['j'], [7]), 'leaf': 3});
+
+query IIII
+SELECT id, m['k'], s.inner['j'], s.leaf FROM t.t;
+----
+5	9	7	3
+
+# -----------------------------------------------------------------------------
+# The stats a map holds
+#
+# Parquet reports statistics for the leaves inside a map, which the log's stats
+# struct has no field for. Everything the struct spine does reach is still recorded.
+#
+
+query IIIIII
+SELECT
+    json_extract(add.stats, '$.nullCount.m') IS NULL,
+    json_extract(add.stats, '$.minValues.m') IS NULL,
+    json_extract(add.stats, '$.nullCount.s.inner') IS NULL,
+    json_extract(add.stats, '$.minValues.s.inner') IS NULL,
+    json_extract(add.stats, '$.minValues.id'),
+    json_extract(add.stats, '$.minValues.s.leaf')
+FROM read_json('{TEMP_DIR}/write_stats_map/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL
+----
+true	true	true	true	5	3
+
+statement ok
+DETACH t;
