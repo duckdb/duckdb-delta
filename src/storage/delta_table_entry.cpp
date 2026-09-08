@@ -15,8 +15,12 @@
 namespace duckdb {
 
 DeltaTableEntry::DeltaTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
-    : TableCatalogEntry(catalog, schema, info) {
+    : TableCatalogEntry(catalog, schema, info), columns(info.columns.Copy()) {
 	this->internal = false;
+}
+
+const ColumnList &DeltaTableEntry::GetColumns() const {
+	return columns;
 }
 
 DeltaTableEntry::~DeltaTableEntry() = default;
