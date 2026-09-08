@@ -31,6 +31,8 @@ public:
 
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
 
+	const ColumnList &GetColumns() const override;
+
 	void BindUpdateConstraints(Binder &binder, LogicalGet &get, LogicalProjection &proj, LogicalUpdate &update,
 	                           ClientContext &context) override;
 
@@ -39,6 +41,7 @@ public:
 
 public:
 	shared_ptr<DeltaMultiFileList> snapshot;
+	ColumnList columns; // copied from CreateTableInfo
 
 protected:
 	TableFunction GetScanFunctionInternal(ClientContext &context, unique_ptr<FunctionData> &bind_data,
