@@ -23,6 +23,8 @@ public:
 	~DeltaTableEntry();
 
 public:
+	const ColumnList &GetColumns() const override;
+
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
@@ -30,8 +32,6 @@ public:
 	                              const EntryLookupInfo &lookup_info) override;
 
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
-
-	const ColumnList &GetColumns() const override;
 
 	void BindUpdateConstraints(Binder &binder, LogicalGet &get, LogicalProjection &proj, LogicalUpdate &update,
 	                           ClientContext &context) override;
@@ -41,9 +41,10 @@ public:
 
 public:
 	shared_ptr<DeltaMultiFileList> snapshot;
-	ColumnList columns; // copied from CreateTableInfo
 
 protected:
+	ColumnList columns;
+
 	TableFunction GetScanFunctionInternal(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                                      optional_ptr<const EntryLookupInfo> lookup_info);
 };
