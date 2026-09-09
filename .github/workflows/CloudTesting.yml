@@ -9,7 +9,7 @@ defaults:
 env:
   BUILD_EXTENSION_TEST_DEPS: full
   GEN: Ninja
-  VCPKG_COMMIT_ID: 84bab45d415d22042bd0b9081aea57f362da3f35
+  VCPKG_COMMIT_ID: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3 # Release 2026.06.24
   VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
   # Pull prebuilt vcpkg packages (OpenSSL etc.) from duckdb's hosted read-only cache,
   # same as LocalTesting -- avoids compiling them from source every run.
