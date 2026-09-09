@@ -15,11 +15,15 @@
 namespace duckdb {
 
 DeltaTableEntry::DeltaTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
-    : TableCatalogEntry(catalog, schema, info) {
+    : TableCatalogEntry(catalog, schema, info), columns(std::move(info.columns)) {
 	this->internal = false;
 }
 
 DeltaTableEntry::~DeltaTableEntry() = default;
+
+const ColumnList &DeltaTableEntry::GetColumns() const {
+	return columns;
+}
 
 unique_ptr<BaseStatistics> DeltaTableEntry::GetStatistics(ClientContext &context, column_t column_id) {
 	return nullptr;

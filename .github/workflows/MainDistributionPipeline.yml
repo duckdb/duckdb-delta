@@ -19,7 +19,7 @@ jobs:
     with:
       # Main config
       extension_name: &ext_name delta
-      duckdb_version: &duckdb_ref main
+      duckdb_version: &duckdb_ref 816a3eb2d512ce359efb40d9319f6db59788422a # v2.0-cyanoptera 2026-09-08 pin
       ci_tools_version: &ci_tools_ref main
       enable_rust: true
       exclude_archs: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"

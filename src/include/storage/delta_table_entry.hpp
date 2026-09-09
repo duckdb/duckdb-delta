@@ -23,6 +23,8 @@ public:
 	~DeltaTableEntry();
 
 public:
+	const ColumnList &GetColumns() const override;
+
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
@@ -41,6 +43,8 @@ public:
 	shared_ptr<DeltaMultiFileList> snapshot;
 
 protected:
+	ColumnList columns;
+
 	TableFunction GetScanFunctionInternal(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                                      optional_ptr<const EntryLookupInfo> lookup_info);
 };

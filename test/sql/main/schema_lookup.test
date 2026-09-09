@@ -1,0 +1,43 @@
+# name: test/sql/main/schema_lookup.test
+# description: An unknown schema on a delta catalog is a catalog error, not an internal one
+# group: [main]
+
+require parquet
+
+require delta
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/schema_lookup');
+
+statement ok
+ATTACH '{TEMP_DIR}/main/schema_lookup/delta_lake' AS t (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# The one schema a delta catalog has
+#
+
+statement ok
+SELECT * FROM t.main.t LIMIT 1;
+
+# -----------------------------------------------------------------------------
+# Any other name, where the caller wants an exception
+#
+# It dereferences what the lookup returns, so answering with an unset optional crashes the engine
+# instead of naming the schema.
+#
+
+statement error
+CREATE TABLE t.other_schema.x (i INT);
+----
+Catalog Error: Schema "other_schema" does not exist!
+
+# -----------------------------------------------------------------------------
+# Any other name, where the caller wants a null
+#
+# Same lookup, other branch: the binder builds its own message and must keep getting the chance to.
+#
+
+statement error
+SELECT * FROM t.other_schema.t;
+----
+Catalog Error: Table with name "other_schema.t" does not exist
