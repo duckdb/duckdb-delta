@@ -2,11 +2,12 @@
 # description: test azure delta_scan with workload_identity credential chain (common in AKS)
 # group: [azure]
 
-# This test is not run in CI, since AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_FEDERATED_TOKEN_FILE are never set there.
+# NOTE: This test is not run in CI, since AZURE_FEDERATED_TOKEN_FILE is not available there.
+#
 # It is useful for local manual verification against a real AKS workload-identity token (See PR #321 discussion).
 # To run locally, export the AZURE_* vars below from an AKS pod, along with copying the token file, and then include
-# AZURE_STORAGE_ACCOUNT and AZURE_DELTA_TEST_PATH to point to a delta table that the workload identity can read and
-# comment out the `mode skip` line temporarily.
+# AZURE_STORAGE_ACCOUNT, AZURE_DELTA_TEST_PATH, AZURE_PARQUET_TEST_PATH to point to a delta table that the workload 
+# identity can read and comment out the `mode skip` line temporarily.
 
 mode skip
 

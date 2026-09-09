@@ -290,19 +290,24 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			if (chain.find("cli") != std::string::npos) {
 				set_option(builder, "use_azure_cli", "true");
 			}
-			// Authentication option 1b: using a workload_identity
+			// Authentication option 1b: using a workload_identity w/ AZURE_FEDERATED_TOKEN_FILE
+			// as required trigger. Fail if common vars client_id or tenant_id missing.
 			// Explicitly forward workload identity vars so object_store selects
 			// WorkloadIdentityOAuthProvider instead of falling back to IMDS
 			if (chain.find("workload_identity") != std::string::npos) {
-				const char *fed_token = getenv("AZURE_FEDERATED_TOKEN_FILE");
-				const char *env_client_id = getenv("AZURE_CLIENT_ID");
-				const char *env_tenant_id = getenv("AZURE_TENANT_ID");
-				if (fed_token)
-					set_option(builder, "federated_token_file", fed_token);
-				if (env_client_id)
-					set_option(builder, "azure_client_id", env_client_id);
-				if (env_tenant_id)
-					set_option(builder, "azure_tenant_id", env_tenant_id);
+				auto env_fed_token = FileSystem::GetEnvVariable("AZURE_FEDERATED_TOKEN_FILE");
+				auto env_client_id = FileSystem::GetEnvVariable("AZURE_CLIENT_ID");
+				auto env_tenant_id = FileSystem::GetEnvVariable("AZURE_TENANT_ID");
+				if (!env_fed_token.empty()) {
+					if (env_client_id.empty() || env_tenant_id.empty()) {
+						throw InvalidInputException("Azure workload_identity requires AZURE_CLIENT_ID and "
+						                            "AZURE_TENANT_ID in environment.");
+					} else {
+						set_option(builder, "federated_token_file", env_fed_token);
+						set_option(builder, "azure_client_id", env_client_id);
+						set_option(builder, "azure_tenant_id", env_tenant_id);
+					}
+				}
 			}
 			// Authentication option 1c: non-cli credential chains will just "hope for the best" technically since we
 			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
