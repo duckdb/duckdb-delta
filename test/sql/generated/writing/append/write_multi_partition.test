@@ -1,0 +1,117 @@
+# name: test/sql/generated/writing/append/write_multi_partition.test
+# description: an append spanning several partitions must commit every file it writes
+# group: [append]
+
+# https://github.com/duckdb/duckdb-delta/issues/334
+
+require parquet
+
+require delta
+
+require json
+
+require-env GENERATED_DATA_AVAILABLE
+
+statement ok
+from copy_dir('data/generated/simple_partitioned', '__TEST_DIR__/write_multi_partition/simple_partitioned');
+
+statement ok
+ATTACH '__TEST_DIR__/write_multi_partition/simple_partitioned/delta_lake' AS t (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# Baseline
+#
+
+query II
+SELECT count(*), sum(i) FROM t;
+----
+10	45
+
+query II
+SELECT part, count(*) FROM t GROUP BY part ORDER BY part;
+----
+0	5
+1	5
+
+# -----------------------------------------------------------------------------
+# One statement, two partitions
+#
+
+# The reported count must cover every file, not just the first one.
+query I
+INSERT INTO t SELECT i, i%2 AS part FROM range(100,106) tbl(i);
+----
+6
+
+query II
+SELECT count(*), sum(i) FROM t;
+----
+16	660
+
+query II
+SELECT part, count(*) FROM t GROUP BY part ORDER BY part;
+----
+0	8
+1	8
+
+# Both partitions are recorded in the one commit. Counting distinct partition
+# values rather than add entries, since a partition may be split over files.
+query I
+SELECT count(DISTINCT json_extract_string(add.partitionValues, '$.part'))
+FROM read_json('__TEST_DIR__/write_multi_partition/simple_partitioned/delta_lake/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+2
+
+# The rows are accounted for by the stats of the committed files, so no file was
+# written to disk but left out of the log.
+query I
+SELECT sum(json_extract(add.stats, '$.numRecords')::BIGINT)
+FROM read_json('__TEST_DIR__/write_multi_partition/simple_partitioned/delta_lake/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+6
+
+# -----------------------------------------------------------------------------
+# More partitions than the table started with
+#
+
+query I
+INSERT INTO t SELECT i, i AS part FROM range(200,204) tbl(i);
+----
+4
+
+query I
+SELECT count(DISTINCT json_extract_string(add.partitionValues, '$.part'))
+FROM read_json('__TEST_DIR__/write_multi_partition/simple_partitioned/delta_lake/_delta_log/00000000000000000002.json')
+WHERE add IS NOT NULL;
+----
+4
+
+query II
+SELECT count(*), sum(i) FROM t;
+----
+20	1466
+
+# -----------------------------------------------------------------------------
+# Re-read from the log
+#
+
+statement ok
+DETACH t;
+
+statement ok
+ATTACH '__TEST_DIR__/write_multi_partition/simple_partitioned/delta_lake' AS t (TYPE delta);
+
+query II
+SELECT count(*), sum(i) FROM t;
+----
+20	1466
+
+query II
+SELECT part, count(*) FROM t WHERE part >= 200 GROUP BY part ORDER BY part;
+----
+200	1
+201	1
+202	1
+203	1
