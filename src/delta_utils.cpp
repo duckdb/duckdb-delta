@@ -1,4 +1,5 @@
 #include "delta_utils.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/planner/filter/struct_filter.hpp"
 
 #include <list>
@@ -210,63 +211,63 @@ void KernelExpressionVisitor::VisitMultiplyExpression(void *state, uintptr_t sib
 }
 
 void KernelExpressionVisitor::VisitPrimitiveLiteralBool(void *state, uintptr_t sibling_list_id, bool value) {
-	auto expression = make_uniq<ConstantExpression>(Value::BOOLEAN(value));
+	auto expression = ConstantExpression::FromValue(Value::BOOLEAN(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralByte(void *state, uintptr_t sibling_list_id, int8_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::TINYINT(value));
+	auto expression = ConstantExpression::FromValue(Value::TINYINT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralShort(void *state, uintptr_t sibling_list_id, int16_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::SMALLINT(value));
+	auto expression = ConstantExpression::FromValue(Value::SMALLINT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralInt(void *state, uintptr_t sibling_list_id, int32_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::INTEGER(value));
+	auto expression = ConstantExpression::FromValue(Value::INTEGER(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralLong(void *state, uintptr_t sibling_list_id, int64_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::BIGINT(value));
+	auto expression = ConstantExpression::FromValue(Value::BIGINT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralFloat(void *state, uintptr_t sibling_list_id, float value) {
-	auto expression = make_uniq<ConstantExpression>(Value::FLOAT(value));
+	auto expression = ConstantExpression::FromValue(Value::FLOAT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralDouble(void *state, uintptr_t sibling_list_id, double value) {
-	auto expression = make_uniq<ConstantExpression>(Value::DOUBLE(value));
+	auto expression = ConstantExpression::FromValue(Value::DOUBLE(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitTimestampLiteral(void *state, uintptr_t sibling_list_id, int64_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::TIMESTAMPTZ(timestamp_tz_t(value)));
+	auto expression = ConstantExpression::FromValue(Value::TIMESTAMPTZ(timestamp_tz_t(value)));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitTimestampNtzLiteral(void *state, uintptr_t sibling_list_id, int64_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::TIMESTAMP(static_cast<timestamp_t>(value)));
+	auto expression = ConstantExpression::FromValue(Value::TIMESTAMP(static_cast<timestamp_t>(value)));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitDateLiteral(void *state, uintptr_t sibling_list_id, int32_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::DATE(static_cast<date_t>(value)));
+	auto expression = ConstantExpression::FromValue(Value::DATE(static_cast<date_t>(value)));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitStringLiteral(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice value) {
-	auto expression = make_uniq<ConstantExpression>(Value(string(value.ptr, value.len)));
+	auto expression = ConstantExpression::String(string(value.ptr, value.len));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitBinaryLiteral(void *state, uintptr_t sibling_list_id, const uint8_t *buffer,
                                                  uintptr_t len) {
-	auto expression = make_uniq<ConstantExpression>(Value::BLOB(buffer, len));
+	auto expression = ConstantExpression::FromValue(Value::BLOB(buffer, len));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitNullLiteral(void *state, uintptr_t sibling_list_id, uint8_t type_tag,
                                                uint8_t precision, uint8_t scale) {
 	// type_tag/precision/scale identify the kernel-side data type of the null; we don't need it
 	// since DuckDB's untyped NULL constant is cast to the correct type by the surrounding context.
-	auto expression = make_uniq<ConstantExpression>(Value());
+	auto expression = ConstantExpression::Null();
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitArrayLiteral(void *state, uintptr_t sibling_list_id, uintptr_t child_id) {
@@ -321,7 +322,7 @@ void KernelExpressionVisitor::VisitIsNullExpression(void *state, uintptr_t sibli
 		return;
 	}
 
-	children->push_back(make_uniq<ConstantExpression>(Value()));
+	children->push_back(ConstantExpression::Null());
 	unique_ptr<ParsedExpression> expression =
 	    make_uniq<FunctionExpression>("IS", std::move(*children), nullptr, nullptr, false, true);
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
@@ -343,29 +344,31 @@ void KernelExpressionVisitor::VisitLiteralMap(void *state, uintptr_t sibling_lis
 	vector<Value> key_values;
 	LogicalType key_type;
 	for (const auto &key_field : *key_children) {
-		if (key_field->GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+		Value key_value;
+		if (!KernelUtils::TryGetLiteralValue(*key_field, key_value)) {
 			state_cast->error =
 			    ErrorData("DuckDB only supports parsing Map literals from delta kernel that consist for constants!");
 			return;
 		}
-		key_values.push_back(key_field->Cast<ConstantExpression>().GetValue());
-		key_type = key_field->Cast<ConstantExpression>().GetValue().type();
+		key_type = key_value.type();
+		key_values.push_back(std::move(key_value));
 	}
 
 	vector<Value> value_values;
 	LogicalType value_type;
 	for (const auto &value_field : *value_children) {
-		if (value_field->GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+		Value value_value;
+		if (!KernelUtils::TryGetLiteralValue(*value_field, value_value)) {
 			state_cast->error =
 			    ErrorData("DuckDB only supports parsing Map literals from delta kernel that consist for constants!");
 			return;
 		}
-		value_values.push_back(value_field->Cast<ConstantExpression>().GetValue());
-		value_type = value_field->Cast<ConstantExpression>().GetValue().type();
+		value_type = value_value.type();
+		value_values.push_back(std::move(value_value));
 	}
 
 	unique_ptr<ParsedExpression> expression =
-	    make_uniq<ConstantExpression>(Value::MAP(key_type, value_type, key_values, value_values));
+	    ConstantExpression::FromValue(Value::MAP(key_type, value_type, key_values, value_values));
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
@@ -427,7 +430,7 @@ void KernelExpressionVisitor::VisitDecimalLiteral(void *state, uintptr_t sibling
 		} else {
 			decimal_value = Value::DECIMAL({value_ms, value_ls}, precision, scale);
 		}
-		auto expression = make_uniq<ConstantExpression>(decimal_value);
+		auto expression = ConstantExpression::FromValue(decimal_value);
 		static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 	} catch (Exception &e) {
 		static_cast<KernelExpressionVisitor *>(state)->error = ErrorData(e);
@@ -471,23 +474,23 @@ unique_ptr<ParsedExpression> KernelExpressionVisitor::MakeStructPatchOp(const st
 
 	children_values.push_back(
 	    make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("keep_input"),
-	                                    make_uniq<ConstantExpression>(Value::BOOLEAN(keep_input))));
+	                                    ConstantExpression::Boolean(keep_input)));
 	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
 	                                                          make_uniq<ColumnRefExpression>("optional"),
-	                                                          make_uniq<ConstantExpression>(Value::BOOLEAN(optional))));
+	                                                          ConstantExpression::Boolean(optional)));
 
 	unique_ptr<ParsedExpression> field_name_val;
 	if (field_name) {
-		field_name_val = make_uniq<ConstantExpression>(Value(*field_name));
+		field_name_val = ConstantExpression::String(*field_name);
 	} else {
-		field_name_val = make_uniq<ConstantExpression>(Value());
+		field_name_val = ConstantExpression::Null();
 	}
 	children_values.push_back(make_uniq<ComparisonExpression>(
 	    ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("field_name"), std::move(field_name_val)));
 
 	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
 	                                                          make_uniq<ColumnRefExpression>("kind"),
-	                                                          make_uniq<ConstantExpression>(Value(kind))));
+	                                                          ConstantExpression::String(kind)));
 
 	return make_uniq<FunctionExpression>("delta_transform_op", std::move(children_values));
 }
@@ -694,7 +697,7 @@ void KernelSchemaVisitor::VisitDecimal(KernelSchemaVisitor *state, uintptr_t sib
                                        uint8_t precision, uint8_t scale) {
 	auto decimal_type = LogicalType::DECIMAL(precision, scale);
 	DeltaMultiFileColumnDefinition decimal_def(KernelUtils::FromDeltaString(name), decimal_type, is_nullable);
-	decimal_def.default_expression = make_uniq<ConstantExpression>(Value().DefaultCastAs(decimal_type));
+	decimal_def.default_expression = ConstantExpression::FromValue(Value(decimal_type));
 
 	ApplyDeltaColumnMapping(state->engine, metadata, decimal_def);
 
@@ -718,7 +721,7 @@ void KernelSchemaVisitor::VisitStruct(KernelSchemaVisitor *state, uintptr_t sibl
 	auto struct_type = LogicalType::STRUCT(children_types);
 	DeltaMultiFileColumnDefinition struct_def(KernelUtils::FromDeltaString(name), struct_type, is_nullable);
 	struct_def.children = std::move(children);
-	struct_def.default_expression = make_uniq<ConstantExpression>(Value(struct_type));
+	struct_def.default_expression = ConstantExpression::FromValue(Value(struct_type));
 
 	ApplyDeltaColumnMapping(state->engine, metadata, struct_def);
 
@@ -735,7 +738,7 @@ void KernelSchemaVisitor::VisitArray(KernelSchemaVisitor *state, uintptr_t sibli
 
 	DeltaMultiFileColumnDefinition list_def(KernelUtils::FromDeltaString(name), list_type, is_nullable);
 	list_def.children.push_back(std::move(children.front()));
-	list_def.default_expression = make_uniq<ConstantExpression>(Value(list_type));
+	list_def.default_expression = ConstantExpression::FromValue(Value(list_type));
 
 	// TODO: kinda wonky, but column mapper uses this
 	list_def.children.front().name = "list";
@@ -761,7 +764,7 @@ void KernelSchemaVisitor::VisitMap(KernelSchemaVisitor *state, uintptr_t sibling
 	map_def.children.push_back(std::move(key));
 	map_def.children.push_back(std::move(value));
 
-	map_def.default_expression = make_uniq<ConstantExpression>(Value(map_type));
+	map_def.default_expression = ConstantExpression::FromValue(Value(map_type));
 
 	ApplyDeltaColumnMapping(state->engine, metadata, map_def);
 
@@ -957,6 +960,30 @@ LogicalType KernelUtils::GetLogPathType() {
 
 ffi::KernelStringSlice KernelUtils::ToDeltaString(const string &str) {
 	return {str.data(), str.size()};
+}
+
+bool KernelUtils::TryGetLiteralValue(const ParsedExpression &expr, Value &result) {
+	if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+		result = expr.Cast<ConstantExpression>().GetLiteral().ToValue();
+		return true;
+	}
+	if (expr.GetExpressionType() != ExpressionType::OPERATOR_CAST) {
+		return false;
+	}
+	auto &cast = expr.Cast<CastExpression>();
+	if (cast.IsTryCast() || cast.Child().GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+		return false;
+	}
+	auto target_type = UnboundType::TryDefaultBind(cast.TargetType());
+	if (target_type.id() == LogicalTypeId::INVALID || target_type.id() == LogicalTypeId::UNBOUND) {
+		return false;
+	}
+	auto value = cast.Child().Cast<ConstantExpression>().GetLiteral().ToValue().DefaultTryCastAs(target_type);
+	if (!value) {
+		return false;
+	}
+	result = std::move(*value);
+	return true;
 }
 
 string KernelUtils::FromDeltaString(const struct ffi::KernelStringSlice slice) {

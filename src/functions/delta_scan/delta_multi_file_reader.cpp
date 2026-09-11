@@ -183,7 +183,7 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 
 	// Set defaults
 	for (auto &col : bind_data.schema) {
-		col.default_expression = make_uniq<ConstantExpression>(Value(col.type));
+		col.default_expression = ConstantExpression::FromValue(Value(col.type));
 	}
 }
 
