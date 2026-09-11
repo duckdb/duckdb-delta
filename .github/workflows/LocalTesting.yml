@@ -17,7 +17,7 @@ env:
   BUILD_HTTPFS_SRC: ${{ github.workspace }}/build/release/_deps/httpfs_extension_fc-src
   GEN: ninja
   VCPKG_BINARY_SOURCES: clear;http,https://vcpkg-cache.duckdb.org,read
-  VCPKG_COMMIT_ID: 84bab45d415d22042bd0b9081aea57f362da3f35
+  VCPKG_COMMIT_ID: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3 # Release 2026.06.24
   VCPKG_TARGET_TRIPLET: x64-linux # NOTE: only works cuz all linux in this file
   VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
   # sccache caches BOTH C++ (duckdb auto-detects it, CMakeLists.txt NAMES ccache sccache)
