@@ -53,6 +53,8 @@ struct KernelUtils {
 	static LogicalType GetLogPathType();
 	static ffi::KernelStringSlice ToDeltaString(const string &str);
 	static string FromDeltaString(const struct ffi::KernelStringSlice slice);
+	//! Reads the value of a literal, or of a cast over a literal, as produced by ConstantExpression::FromValue
+	static bool TryGetLiteralValue(const ParsedExpression &expr, Value &result);
 	static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
 	static string FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *map,
 	                                 const string &key);
@@ -123,7 +125,7 @@ private:
 	static void VisitPrimitiveLiteral(void *state, uintptr_t sibling_list_id, CPP_TYPE value) {
 		auto state_cast = static_cast<KernelExpressionVisitor *>(state);
 		auto duckdb_value = CREATE_VALUE_FUN(value);
-		auto expression = make_uniq<ConstantExpression>(duckdb_value);
+		auto expression = ConstantExpression::FromValue(duckdb_value);
 		state_cast->AppendToList(sibling_list_id, std::move(expression));
 	}
 
@@ -185,7 +187,7 @@ private:
 		auto state_cast = static_cast<KernelExpressionVisitor *>(state);
 		auto children = state_cast->TakeFieldList(child_list_id);
 		if (!children) {
-			state_cast->AppendToList(sibling_list_id, std::move(make_uniq<ConstantExpression>(Value(42))));
+			state_cast->AppendToList(sibling_list_id, ConstantExpression::Integer(42));
 			return;
 		}
 		unique_ptr<ParsedExpression> expression = make_uniq<EXPRESSION_TYPENAME>(EXPRESSION_TYPE, std::move(*children));
@@ -203,12 +205,12 @@ private:
 		auto state_cast = static_cast<KernelExpressionVisitor *>(state);
 		auto children = state_cast->TakeFieldList(child_list_id);
 		if (!children) {
-			state_cast->AppendToList(sibling_list_id, std::move(make_uniq<ConstantExpression>(Value(42))));
+			state_cast->AppendToList(sibling_list_id, ConstantExpression::Integer(42));
 			return;
 		}
 
 		if (children->size() != 2) {
-			state_cast->AppendToList(sibling_list_id, std::move(make_uniq<ConstantExpression>(Value(42))));
+			state_cast->AppendToList(sibling_list_id, ConstantExpression::Integer(42));
 			state_cast->error =
 			    ErrorData("INCORRECT SIZE IN VISIT_BINARY_EXPRESSION" + EnumUtil::ToString(EXPRESSION_TYPE));
 			return;
@@ -335,7 +337,7 @@ private:
 			col_def.physical_name = name;
 		}
 		col_def.char_varchar_type = KernelUtils::FetchFromStringMap(engine, metadata, "__CHAR_VARCHAR_TYPE_STRING");
-		col_def.default_expression = make_uniq<ConstantExpression>(Value(col_def.type));
+		col_def.default_expression = ConstantExpression::FromValue(Value(col_def.type));
 	}
 
 	template <LogicalTypeId TypeId>

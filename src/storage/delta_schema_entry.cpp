@@ -59,7 +59,7 @@ static string GetCreateTablePath(const CreateTableInfo &base, DeltaCatalog &delt
 		throw BinderException("Delta CREATE TABLE option 'path' must be a constant, found '%s'",
 		                      option->second->ToString());
 	}
-	auto path = option->second->Cast<ConstantExpression>().GetValue().ToString();
+	auto path = option->second->Cast<ConstantExpression>().GetLiteral().ToValue().ToString();
 
 	// A Delta catalog is a single table at a single path, so a divergent path would produce a
 	// catalog entry that does not describe what was attached. Compare normalized, so a trailing
