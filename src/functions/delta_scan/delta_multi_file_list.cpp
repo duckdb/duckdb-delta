@@ -159,13 +159,16 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		secret_type = "azure";
 	}
 
-	// We need to substitute DuckDB's usage of s3 and r2 paths because delta kernel needs to just interpret them as s3
-	// protocol servers.
+	// r2:// is an S3-compatible endpoint, so the kernel interprets it as an s3 protocol server.
+	// gs:// is handled natively instead: our kernel shim registers a URL handler for it, which is
+	// what allows an OAuth bearer token to reach the store (object_store's S3 store has no bearer
+	// auth mode at all). gcs:// is normalized to gs:// because GoogleCloudStorageBuilder::with_url
+	// only recognizes the latter.
 	string cleaned_path;
-	if (StringUtil::StartsWith(path, "r2://") || StringUtil::StartsWith(path, "gs://")) {
+	if (StringUtil::StartsWith(path, "r2://")) {
 		cleaned_path = "s3://" + path.substr(5);
 	} else if (StringUtil::StartsWith(path, "gcs://")) {
-		cleaned_path = "s3://" + path.substr(6);
+		cleaned_path = "gs://" + path.substr(6);
 	} else {
 		cleaned_path = path;
 	}
@@ -186,11 +189,12 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 
 	// No secret: nothing left to do here!
 	if (!secret_match.HasMatch()) {
-		if (StringUtil::StartsWith(path, "r2://") || StringUtil::StartsWith(path, "gs://") ||
-		    StringUtil::StartsWith(path, "gcs://")) {
+		// gs:// no longer needs a secret to supply an endpoint: the native GCS store knows its own,
+		// and can fall back to application default credentials. r2:// still requires one.
+		if (StringUtil::StartsWith(path, "r2://")) {
 			throw NotImplementedException(
-			    "Can not scan a gcs:// gs:// or r2:// url without a secret providing its endpoint currently. Please "
-			    "create an R2 or GCS secret containing the credentials for this endpoint and try again.");
+			    "Can not scan an r2:// url without a secret providing its endpoint currently. Please "
+			    "create an R2 secret containing the credentials for this endpoint and try again.");
 		}
 
 		// Use multi-threaded tokio executor (required for checkpoint support)
@@ -212,7 +216,26 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		}
 	};
 
-	if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
+	if (secret_type == "gcs") {
+		// gs:// is served by the URL handler our kernel shim registers, which takes these options
+		// verbatim rather than through object_store's config-key parser. That indirection is the
+		// point: object_store 0.13.2 has no GoogleConfigKey for a bearer token, and an unknown key
+		// is silently DROPPED by parse_url_opts (builder_opts! maps a parse failure to the
+		// unchanged builder), so a token passed the ordinary way would vanish without an error.
+		string bearer_token, key_id, secret;
+		secret_reader.TryGetSecretKey("bearer_token", bearer_token);
+		secret_reader.TryGetSecretKey("key_id", key_id);
+		secret_reader.TryGetSecretKey("secret", secret);
+
+		if (!bearer_token.empty()) {
+			set_option(builder, "gcs_bearer_token", bearer_token);
+		} else if (!key_id.empty() || !secret.empty()) {
+			// HMAC interoperability keys: these only work against the S3-compatible endpoint, so
+			// the handler builds an S3 store for them instead of a native GCS one.
+			set_option(builder, "gcs_hmac_key_id", key_id);
+			set_option(builder, "gcs_hmac_secret", secret);
+		}
+	} else if (secret_type == "s3" || secret_type == "r2") {
 		string key_id, secret, session_token, region, endpoint, url_style;
 		bool use_ssl = true;
 		secret_reader.TryGetSecretKey("key_id", key_id);

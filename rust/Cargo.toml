@@ -1,0 +1,40 @@
+[package]
+name = "duckdb_delta_kernel_shim"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# This crate replaces delta_kernel_ffi as the archive CMake links: it re-exports the kernel's
+# own C ABI (see src/keepalive.rs) and adds a GCS URL handler on top, so the generated
+# delta_kernel_ffi.hpp header stays valid unchanged.
+[lib]
+crate-type = ["lib", "staticlib"]
+
+[dependencies]
+url = "2"
+
+[dependencies.delta_kernel]
+git = "https://github.com/delta-io/delta-kernel-rs"
+tag = "v0.26.0"
+features = ["arrow"]
+
+[dependencies.delta_kernel_default_engine]
+git = "https://github.com/delta-io/delta-kernel-rs"
+tag = "v0.26.0"
+features = ["arrow", "rustls"]
+
+# Depending on the FFI crate in the SAME cargo graph is what forces cargo to unify
+# delta_kernel_default_engine to a single compilation -- and therefore a single URL_REGISTRY
+# static, shared between our insert_url_handler call and the FFI's store_from_url_opts.
+# Features must match the set CMakeLists.txt passes to `cargo build --package delta_kernel_ffi`.
+[dependencies.delta_kernel_ffi]
+git = "https://github.com/delta-io/delta-kernel-rs"
+tag = "v0.26.0"
+default-features = false
+features = [
+  "default-engine-rustls",
+  "arrow",
+  "test-ffi",
+  "delta-kernel-unity-catalog",
+  "tracing",
+]
