@@ -27,8 +27,9 @@ SELECT id, m['k'], s.nested['j'], s.leaf FROM t.t;
 # -----------------------------------------------------------------------------
 # The stats a map holds
 #
-# Parquet reports statistics for the leaves inside a map, which the log's stats
-# struct has no field for. Everything the struct spine does reach is still recorded.
+# The log's stats object nests struct fields only. `m` and `s.nested` therefore get no entry: their
+# Parquet paths step into a map. `id` and `s.leaf` reach a scalar through struct fields alone, so
+# both are still recorded.
 #
 
 query IIIIII

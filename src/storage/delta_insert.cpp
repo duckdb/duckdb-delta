@@ -156,9 +156,9 @@ static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 	return column_stats;
 }
 
-//! The log records statistics in a struct mirroring the schema's own struct nesting, so a field only
-//! has somewhere to be recorded while the path to it stays on that spine. Parquet reports the leaves
-//! inside lists, maps and arrays as well -- `m.key_value.value` for a map -- naming no field of it.
+//! The log's stats object nests struct fields and nothing else, so a path is recordable only if
+//! every step of it is a struct field and it ends on a scalar. A path via map or list fails;
+//! Parquet names those segments itself, `m.key_value.value`.
 static bool StatsPathIsRecordable(const LogicalType &column_type, const vector<string> &path) {
 	reference<const LogicalType> current(column_type);
 	for (idx_t i = 1; i < path.size(); i++) {
@@ -174,7 +174,8 @@ static bool StatsPathIsRecordable(const LogicalType &column_type, const vector<s
 			}
 		}
 		if (!found) {
-			return true; // materializing the stats reports the mismatch
+			// "Shouldn't happen": ret true => ParseInnerType fails loudly w/ "did not find expected child"
+			return true;
 		}
 	}
 	return !current.get().IsNested();
