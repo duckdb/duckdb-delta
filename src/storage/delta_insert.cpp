@@ -244,7 +244,7 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			}
 
 			// Skip types whose stats we don't yet support
-			if (coltype.id() == LogicalTypeId::VARIANT || !StatsPathIsRecordable(coltype, column_names)) {
+			if (!StatsPathIsRecordable(coltype, column_names)) {
 				continue;
 			}
 
