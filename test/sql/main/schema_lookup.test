@@ -6,6 +6,8 @@ require parquet
 
 require delta
 
+require notwindows
+
 statement ok
 FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/schema_lookup');
 
