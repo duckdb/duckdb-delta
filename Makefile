@@ -1,7 +1,7 @@
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 # Configuration of extension
-EXT_NAME=deltatable
+EXT_NAME=delta
 EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
 PIP=python3 -m pip
