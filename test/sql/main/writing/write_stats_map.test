@@ -10,17 +10,18 @@ require json
 
 require notwindows
 
+# v1.5 has no CREATE TABLE for delta, so the empty table comes from a fixture with the same schema.
+statement ok
+from copy_dir('data/inlined/map_write_stats', '{TEMP_DIR}/write_stats_map');
+
 statement ok
 ATTACH '{TEMP_DIR}/write_stats_map' AS t (TYPE delta);
 
 statement ok
-CREATE TABLE t.t (id INTEGER, m MAP(VARCHAR, INTEGER), s STRUCT(nested MAP(VARCHAR, INTEGER), items INTEGER[], leaf INTEGER), d STRUCT(mid STRUCT(deep INTEGER)));
-
-statement ok
-INSERT INTO t.t VALUES (5, MAP(['k'], [9]), {'nested': MAP(['j'], [7]), 'items': [1, 2], 'leaf': 3}, {'mid': {'deep': 11}});
+INSERT INTO t VALUES (5, MAP(['k'], [9]), {'nested': MAP(['j'], [7]), 'items': [1, 2], 'leaf': 3}, {'mid': {'deep': 11}});
 
 query IIIIII
-SELECT id, m['k'], s.nested['j'], s.items[1], s.leaf, d.mid.deep FROM t.t;
+SELECT id, m['k'], s.nested['j'], s.items[1], s.leaf, d.mid.deep FROM t;
 ----
 5	9	7	1	3	11
 
