@@ -120,9 +120,8 @@ jobs:
           mkdir -p test/test_data
           touch test/test_data/attach.db
           # finally set up minio
-          ln -s "scripts/minio/minio_s3.yml" scripts/minio_s3.yml
-          sudo "scripts/minio/install_s3_test_server.sh"
-          source "scripts/minio/run_s3_test_server.sh"
+          sudo "$GITHUB_WORKSPACE/scripts/minio/install_s3_test_server.sh"
+          source "$GITHUB_WORKSPACE/scripts/minio/run_s3_test_server.sh"
           sleep 30
 
       - run: ./scripts/create_minio_credential_file.sh
