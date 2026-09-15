@@ -157,7 +157,7 @@ EXPLAIN ANALYZE SELECT value1, part
 FROM delta_scan('./data/generated/test_file_skipping/timestamp/delta_lake')
 WHERE value1 = '2024-01-03 00:00:00'::TIMESTAMP
 ----
-analyzed_plan	<REGEX>:.*File Filters:.*value1 = '2024-01-03 00:00:00'.*Scanning Files: 1/5.*
+analyzed_plan	<REGEX>:.*File Filters:.*value1='2024-01-03.*Scanning Files: 1/5.*
 
 query II
 SELECT value1, part
@@ -195,7 +195,7 @@ EXPLAIN ANALYZE SELECT value1, part
 FROM delta_scan('./data/generated/test_file_skipping/timestamptz/delta_lake')
 WHERE value1 = '2024-01-03 00:00:00+00'::TIMESTAMPTZ
 ----
-analyzed_plan	<REGEX>:.*File Filters:.*value1 = .*Scanning Files: 1/5.*
+analyzed_plan	<REGEX>:.*File Filters:.*value1='2024-01-03.*Scanning Files: 1/5.*
 
 # Compared against a literal rather than asserted as rendered text: TIMESTAMPTZ
 # renders in the session timezone, and pinning it would need icu.
