@@ -306,15 +306,32 @@ shared_ptr<DeltaMultiFileList> DeltaSchemaEntry::CreateFileList(ClientContext &c
 }
 
 // req: this.lock must already be owned, since it reads cached_table
-idx_t DeltaSchemaEntry::ResolveTimestamp(ClientContext &context, timestamp_tz_t timestamp) {
-	// Seed from the cached snapshot so resolving reads only the commits after it. Only the version is
-	// wanted here, so the list is discarded without ever building a snapshot at it.
+const DeltaMultiFileList &DeltaSchemaEntry::TransactionHead(ClientContext &context, DeltaTransaction &transaction) {
+	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
+	if (!delta_catalog.UseCachedSnapshot()) {
+		// As a plain read does, so later transactions read only the commits after this one
+		if (!cached_table) {
+			cached_table = CreateTableEntry(context, DConstants::INVALID_INDEX, nullptr);
+		}
+	} else if (!delta_catalog.has_specific_timestamp &&
+	           delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
+		// pin_snapshot: one latest version for every transaction
+		if (!cached_table) {
+			cached_table = CreateTableEntry(context, DConstants::INVALID_INDEX, nullptr);
+		}
+		return *cached_table->snapshot;
+	}
 	optional_ptr<const DeltaMultiFileList> old_snapshot;
 	if (cached_table) {
 		old_snapshot = cached_table->snapshot.get();
 	}
-	auto resolver = CreateFileList(context, DConstants::INVALID_INDEX, old_snapshot);
-	return resolver->ResolveTimestampToVersion(timestamp);
+	return *transaction.InitializeTableEntry(context, *this, DConstants::INVALID_INDEX, old_snapshot).snapshot;
+}
+
+// req: this.lock must already be owned
+idx_t DeltaSchemaEntry::ResolveTimestamp(ClientContext &context, DeltaTransaction &transaction,
+                                         timestamp_tz_t timestamp) {
+	return TransactionHead(context, transaction).ResolveTimestampWithin(context, timestamp);
 }
 
 unique_ptr<DeltaTableEntry> DeltaSchemaEntry::CreateTableEntry(ClientContext &context, idx_t version,
@@ -396,7 +413,8 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		if (delta_catalog.has_specific_timestamp && delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
 			unique_lock<mutex> l(lock);
 			if (delta_catalog.use_specific_version == DConstants::INVALID_INDEX) {
-				delta_catalog.use_specific_version = ResolveTimestamp(context, delta_catalog.specific_timestamp);
+				delta_catalog.use_specific_version =
+				    ResolveTimestamp(context, delta_transaction, delta_catalog.specific_timestamp);
 			}
 		}
 
@@ -408,8 +426,20 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		if (at_clause) {
 			auto spec = DeltaTimeTravelSpec::FromAtClause(*at_clause);
 			if (spec.IsTimestamp()) {
-				unique_lock<mutex> l(lock);
-				version = ResolveTimestamp(context, spec.GetTimestamp());
+				auto timestamp = spec.GetTimestamp();
+				auto resolved = delta_transaction.GetTimestampVersion(timestamp);
+				if (resolved.IsValid()) {
+					version = resolved.GetIndex();
+					DUCKDB_LOG_INTERNAL(
+					    context, "delta.TimeTravel", LogLevel::LOG_DEBUG,
+					    "Timestamp %s reuses version %s, resolved earlier in this transaction, for '%s'",
+					    Value::TIMESTAMPTZ(timestamp).ToString(), to_string(version),
+					    DeltaMultiFileList::ToDeltaPath(delta_catalog.GetDBPath()));
+				} else {
+					unique_lock<mutex> l(lock);
+					version = delta_transaction.SetTimestampVersion(
+					    timestamp, ResolveTimestamp(context, delta_transaction, timestamp));
+				}
 			} else {
 				version = spec.GetVersion();
 			}

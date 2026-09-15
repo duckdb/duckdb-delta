@@ -9,6 +9,8 @@
 #pragma once
 
 #include "delta_utils.hpp"
+#include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/transaction/transaction.hpp"
 
 namespace duckdb {
@@ -42,6 +44,9 @@ public:
 
 	optional_ptr<DeltaTableEntry> GetTableEntry(idx_t version);
 
+	optional_idx GetTimestampVersion(timestamp_tz_t timestamp) const;
+	idx_t SetTimestampVersion(timestamp_tz_t timestamp, idx_t version);
+
 	DeltaTableEntry &InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry, idx_t version,
 	                                      optional_ptr<const DeltaMultiFileList> old_snapshot);
 	vector<DeltaMultiFileColumnDefinition> GetWriteSchema(ClientContext &context);
@@ -72,6 +77,9 @@ private:
 
 	//! Cached table entries at specific versions
 	unordered_map<idx_t, unique_ptr<DeltaTableEntry>> versioned_table_entries;
+
+	//! Resolved timestamps by epoch ms, so repeating one does not search the log again
+	unordered_map<int64_t, idx_t> timestamp_versions;
 
 	//	DeltaConnection connection;
 	DeltaTransactionState transaction_state;
