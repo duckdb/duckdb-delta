@@ -1,0 +1,100 @@
+# name: test/sql/main/writing/timestamp_pinned_per_transaction.test
+# description: every read in a transaction sees the same table history when another connection commits
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# setup: a writable copy, v0 with 10 rows
+#
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/timestamp_pinned_per_transaction');
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/timestamp_pinned_per_transaction/delta_lake' AS t (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# test: a commit from another connection does not move a timestamp already resolved
+#
+# A timestamp past every commit names the latest version, which is the one a new commit changes.
+#
+
+statement ok con1
+BEGIN;
+
+query I con1
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '2099-01-01 00:00:00+00');
+----
+10
+
+statement ok con2
+INSERT INTO t VALUES (10);
+
+query I con1
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '2099-01-01 00:00:00+00');
+----
+10
+
+statement ok con1
+COMMIT;
+
+query I con1
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '2099-01-01 00:00:00+00');
+----
+11
+
+# -----------------------------------------------------------------------------
+# test: a timestamp resolves against the latest version the transaction already read
+#
+
+statement ok con1
+BEGIN;
+
+query I con1
+SELECT count() FROM t;
+----
+11
+
+statement ok con2
+INSERT INTO t VALUES (11);
+
+query I con1
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '2099-01-01 00:00:00+00');
+----
+11
+
+statement ok con1
+COMMIT;
+
+# -----------------------------------------------------------------------------
+# test: a plain read sees the latest version a timestamp already resolved against
+#
+
+statement ok con1
+BEGIN;
+
+query I con1
+SELECT count() FROM t AT (TIMESTAMP => TIMESTAMPTZ '2099-01-01 00:00:00+00');
+----
+12
+
+statement ok con2
+INSERT INTO t VALUES (12);
+
+query I con1
+SELECT count() FROM t;
+----
+12
+
+statement ok con1
+COMMIT;
+
+query I con1
+SELECT count() FROM t;
+----
+13

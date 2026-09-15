@@ -1,0 +1,83 @@
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1
+    hostname: duckdb-minio.com
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - /tmp/minio_test_data:/data
+      - /tmp/minio_root_data:/root/.minio
+    environment:
+      - MINIO_ROOT_USER=duckdb_minio_admin
+      - MINIO_ROOT_PASSWORD=duckdb_minio_admin_password
+      - MINIO_REGION_NAME=eu-west-1
+      - MINIO_DOMAIN=duckdb-minio.com
+      - MINIO_ACCESS_KEY=duckdb_minio_admin
+      - MINIO_SECRET_KEY=duckdb_minio_admin_password
+    command: server /data --console-address ":9001"
+
+  minio_setup:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z-cpuv1
+    depends_on:
+      - minio
+    links:
+      - minio
+    volumes:
+      - ${PWD}/duckdb/data:/duckdb/data
+      - ${PWD}/test/test_data:/duckdb/test_data
+
+    entrypoint: >
+      /bin/sh -c "
+        until (
+          /usr/bin/mc alias set myminio http://duckdb-minio.com:9000 duckdb_minio_admin duckdb_minio_admin_password
+        ) do
+          echo '...waiting...' && sleep 1;
+        done;
+
+        /usr/bin/mc admin user add myminio minio_duckdb_user minio_duckdb_user_password
+        /usr/bin/mc admin user list myminio
+        /usr/bin/mc admin user info myminio minio_duckdb_user
+        /usr/bin/mc admin policy attach myminio readwrite --user minio_duckdb_user
+
+        /usr/bin/mc admin user add myminio minio_duckdb_user_2 minio_duckdb_user_2_password
+        /usr/bin/mc admin user list myminio
+        /usr/bin/mc admin user info myminio minio_duckdb_user_2
+        /usr/bin/mc admin policy attach myminio readwrite --user minio_duckdb_user_2
+
+        /usr/bin/mc rb --force myminio/test-bucket
+        /usr/bin/mc mb myminio/test-bucket
+        /usr/bin/mc version enable myminio/test-bucket
+        /usr/bin/mc policy get myminio/test-bucket
+
+        /usr/bin/mc rb --force myminio/test-bucket-2
+        /usr/bin/mc mb myminio/test-bucket-2
+        /usr/bin/mc policy get myminio/test-bucket-2
+
+        /usr/bin/mc rb --force myminio/test-bucket-public
+        /usr/bin/mc mb myminio/test-bucket-public
+        /usr/bin/mc anonymous set public myminio/test-bucket-public
+        /usr/bin/mc policy get myminio/test-bucket-public
+
+        # This is for the test of presigned URLs
+        # !!! When missing, be sure that you have ran 'scripts/generate_presigned_url.sh' !!!
+
+        # small file upload
+        /usr/bin/mc cp /duckdb/data/csv/phonenumbers.csv myminio/test-bucket/presigned/phonenumbers.csv
+        /usr/bin/mc cp /duckdb/data/parquet-testing/glob/t1.parquet myminio/test-bucket/presigned/t1.parquet
+
+        # large file upload
+        /usr/bin/mc cp /duckdb/test_data/presigned-url-lineitem.parquet myminio/test-bucket/presigned/lineitem_large.parquet
+
+        # Upload the db for the attach 
+        /usr/bin/mc cp /duckdb/test_data/attach.db myminio/test-bucket/presigned/attach.db
+        /usr/bin/mc cp /duckdb/test_data/lineitem_sf1.db myminio/test-bucket/presigned/lineitem_sf1.db
+    
+        /usr/bin/mc share download myminio/test-bucket/presigned/phonenumbers.csv
+        /usr/bin/mc share download myminio/test-bucket/presigned/t1.parquet
+        /usr/bin/mc share download myminio/test-bucket/presigned/lineitem_large.parquet
+        /usr/bin/mc share download myminio/test-bucket/presigned/attach.db
+
+        echo 'FINISHED SETTING UP MINIO'
+        exit 0;
+      "

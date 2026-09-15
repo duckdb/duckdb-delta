@@ -1,0 +1,52 @@
+# name: test/sql/main/writing/write_stats_map.test
+# description: stats are omitted for a path through a map or list, and kept for one through struct fields
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+statement ok
+ATTACH '{TEMP_DIR}/write_stats_map' AS t (TYPE delta);
+
+statement ok
+CREATE TABLE t.t (id INTEGER, m MAP(VARCHAR, INTEGER), s STRUCT(nested MAP(VARCHAR, INTEGER), items INTEGER[], leaf INTEGER), d STRUCT(mid STRUCT(deep INTEGER)));
+
+statement ok
+INSERT INTO t.t VALUES (5, MAP(['k'], [9]), {'nested': MAP(['j'], [7]), 'items': [1, 2], 'leaf': 3}, {'mid': {'deep': 11}});
+
+query IIIIII
+SELECT id, m['k'], s.nested['j'], s.items[1], s.leaf, d.mid.deep FROM t.t;
+----
+5	9	7	1	3	11
+
+# -----------------------------------------------------------------------------
+# The stats a map holds
+#
+# The log's stats object nests struct fields only, so `m`, `s.nested` and `s.items` get no entry:
+# each Parquet path steps into a map or a list. `id`, `s.leaf` and `d.mid.deep` reach a scalar
+# through struct fields alone, at any depth, so all three are still recorded.
+#
+
+query IIIIIIIII
+SELECT
+    json_extract(add.stats, '$.nullCount.m') IS NULL,
+    json_extract(add.stats, '$.minValues.m') IS NULL,
+    json_extract(add.stats, '$.nullCount.s.nested') IS NULL,
+    json_extract(add.stats, '$.minValues.s.nested') IS NULL,
+    json_extract(add.stats, '$.nullCount.s.items') IS NULL,
+    json_extract(add.stats, '$.minValues.s.items') IS NULL,
+    json_extract(add.stats, '$.minValues.id'),
+    json_extract(add.stats, '$.minValues.s.leaf'),
+    json_extract(add.stats, '$.minValues.d.mid.deep')
+FROM read_json('{TEMP_DIR}/write_stats_map/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL
+----
+true	true	true	true	true	true	5	3	11
+
+statement ok
+DETACH t;

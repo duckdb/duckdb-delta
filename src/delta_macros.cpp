@@ -6,6 +6,7 @@
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 
 namespace duckdb {
 
@@ -62,7 +63,7 @@ void DeltaMacros::RegisterTableMacro(ExtensionLoader &loader, const string &name
 	}
 
 	for (auto &param : named_params) {
-		func->default_parameters[Identifier(param.first)] = make_uniq<ConstantExpression>(Value(param.second));
+		func->default_parameters[Identifier(param.first)] = ConstantExpression::FromValue(param.second);
 	}
 
 	CreateMacroInfo info(CatalogType::TABLE_MACRO_ENTRY);

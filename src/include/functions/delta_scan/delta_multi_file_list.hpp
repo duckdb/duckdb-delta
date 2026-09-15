@@ -138,9 +138,9 @@ public:
 	//! Pin what this list will read. A timestamp is resolved against the log when the snapshot is
 	//! built; a version is used as-is. Passing the whole spec is what keeps the two from both being set.
 	void Pin(const DeltaTimeTravelSpec &spec);
-	//! The version `timestamp` names, without building a snapshot at it. Reads only the log HEAD needs,
-	//! reusing the previous snapshot when this list was given one.
-	idx_t ResolveTimestampToVersion(timestamp_tz_t timestamp) const;
+	//! The version `timestamp` names, searching no further than this list's snapshot: commits after it
+	//! cannot change the answer.
+	idx_t ResolveTimestampWithin(ClientContext &context, timestamp_tz_t timestamp) const;
 	vector<string> GetPartitionColumns();
 
 	vector<DeltaMultiFileColumnDefinition> &GetLazyLoadedGlobalColumns() const;
@@ -168,6 +168,9 @@ protected:
 	//! The version `timestamp_ms` names, adopting the HEAD snapshot built on the way when it already is
 	//! the answer. Requires extern_engine.
 	idx_t ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice, int64_t timestamp_ms) const;
+	//! The version `timestamp_ms` names among the commits up to `head`. Requires extern_engine.
+	idx_t VersionAsOf(ClientContext &context, SharedKernelSnapshot &head, ffi::KernelStringSlice path_slice,
+	                  int64_t timestamp_ms) const;
 
 	void EnsureSnapshotInitialized() const;
 	void EnsureScanInitialized() const;

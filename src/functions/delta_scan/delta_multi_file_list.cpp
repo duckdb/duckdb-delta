@@ -436,11 +436,12 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 				                .Left()
 				                .Cast<ColumnRefExpression>()
 				                .GetName();
-				auto value = transform_op_child.GetExpression()
-				                 .Cast<ComparisonExpression>()
-				                 .Right()
-				                 .Cast<ConstantExpression>()
-				                 .GetValue();
+				auto &comparison = transform_op_child.GetExpression().Cast<ComparisonExpression>();
+				Value value;
+				if (!KernelUtils::TryGetLiteralValue(comparison.Right(), value)) {
+					throw InternalException("Unexpected value for delta_transform_op returned by delta kernel: %s",
+					                        transform_op_child.GetExpression().ToString());
+				}
 
 				if (name == "kind") {
 					kind = value.ToString();
@@ -457,12 +458,14 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 					throw InternalException("Unexpected name for delta_transform_op returned by delta kernel: %s",
 					                        name);
 				}
-			} else if (transform_op_child.GetExpression().GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-				values.push_back(transform_op_child.GetExpression().Cast<ConstantExpression>().GetValue());
 			} else {
-				throw NotImplementedException(
-				    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
-				    transform_op_child.GetExpression().ToString());
+				Value value;
+				if (!KernelUtils::TryGetLiteralValue(transform_op_child.GetExpression(), value)) {
+					throw NotImplementedException(
+					    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
+					    transform_op_child.GetExpression().ToString());
+				}
+				values.push_back(std::move(value));
 			}
 		}
 
@@ -897,20 +900,12 @@ static string FormatEpochMs(int64_t timestamp_ms) {
 	return Value::TIMESTAMPTZ(timestamp_tz_t(micros)).ToString();
 }
 
-// req: this.lock must already be owned
-idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice,
-                                           int64_t timestamp_ms) const {
-	// The kernel searches the version range the snapshot spans, so a HEAD snapshot has to exist before
-	// the timestamp can name anything. Seeded from old_snapshot when there is one, so this reads only
-	// the commits after it rather than replaying the whole log.
-	bool using_incremental = false;
-	auto head_builder = CreateSnapshotBuilder(path_slice, DConstants::INVALID_INDEX, using_incremental);
-	auto head = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(head_builder));
-
+idx_t DeltaMultiFileList::VersionAsOf(ClientContext &context, SharedKernelSnapshot &head,
+                                      ffi::KernelStringSlice path_slice, int64_t timestamp_ms) const {
 	idx_t head_version;
 	ffi::FfiCommitAt commit;
 	{
-		auto head_ref = head->GetLockingRef();
+		auto head_ref = head.GetLockingRef();
 		head_version = ffi::version(head_ref.GetPtr());
 		commit = TryUnpackKernelResult(ffi::latest_version_as_of(head_ref.GetPtr(), extern_engine.get(), timestamp_ms,
 		                                                         ffi::FfiHistoryCommitType::Recreatable));
@@ -921,31 +916,38 @@ idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelSt
 	// was asked for and what was read, and it says whether the table has in-commit timestamps (exact)
 	// or is falling back to file modification times (approximate).
 	DUCKDB_LOG_INTERNAL(context, "delta.TimeTravel", LogLevel::LOG_DEBUG,
-	                    "Timestamp %s resolved to version %s committed at %s; head is version %s "
-	                    "(incremental=%s) for '%s'",
+	                    "Timestamp %s resolved to version %s committed at %s; head is version %s for '%s'",
 	                    FormatEpochMs(timestamp_ms), to_string(resolved), FormatEpochMs(commit.timestamp),
-	                    to_string(head_version), using_incremental ? "true" : "false",
-	                    string(path_slice.ptr, path_slice.len));
+	                    to_string(head_version), string(path_slice.ptr, path_slice.len));
+	return resolved;
+}
 
-	if (resolved == head_version) {
+// req: this.lock must already be owned
+idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice,
+                                           int64_t timestamp_ms) const {
+	// The kernel searches the version range the snapshot spans, so a HEAD snapshot has to exist before
+	// the timestamp can name anything. Seeded from old_snapshot when there is one, so this reads only
+	// the commits after it rather than replaying the whole log.
+	bool using_incremental = false;
+	auto head_builder = CreateSnapshotBuilder(path_slice, DConstants::INVALID_INDEX, using_incremental);
+	DUCKDB_LOG_INTERNAL(context, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
+	                    "Loading snapshot for '%s': version=HEAD, log_tail=%s, incremental=%s",
+	                    string(path_slice.ptr, path_slice.len), delta_log_path ? "true" : "false",
+	                    using_incremental ? "true" : "false");
+	auto head = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(head_builder));
+
+	auto resolved = VersionAsOf(context, *head, path_slice, timestamp_ms);
+	if (resolved == ffi::version(head->GetLockingRef().GetPtr())) {
 		snapshot = std::move(head);
 	}
 	return resolved;
 }
 
-idx_t DeltaMultiFileList::ResolveTimestampToVersion(timestamp_tz_t timestamp) const {
+idx_t DeltaMultiFileList::ResolveTimestampWithin(ClientContext &context, timestamp_tz_t timestamp) const {
 	unique_lock<mutex> lck(lock);
-	if (initialized_snapshot) {
-		throw InternalException("DeltaMultiFileList::ResolveTimestampToVersion called after the snapshot was "
-		                        "initialized");
-	}
-	D_ASSERT(!client_ctx.expired());
-	auto client_ctx_shared = client_ctx.lock();
+	EnsureSnapshotInitialized();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
-
-	extern_engine = CreateDeltaEngine(*client_ctx_shared, paths[0].path);
-	version = ResolveTimestamp(*client_ctx_shared, path_slice, DeltaTimestampToEpochMs(timestamp));
-	return version;
+	return VersionAsOf(context, *snapshot, path_slice, DeltaTimestampToEpochMs(timestamp));
 }
 
 void DeltaMultiFileList::InitializeSnapshot() const {

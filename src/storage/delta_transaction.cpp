@@ -1,4 +1,5 @@
 #include "storage/delta_transaction.hpp"
+#include "delta_time_travel.hpp"
 
 #include "duckdb/common/helper.hpp"
 #include "path_utils.hpp"
@@ -647,7 +648,26 @@ optional_ptr<DeltaTableEntry> DeltaTransaction::GetTableEntry(idx_t version) {
 		return lookup->second;
 	}
 
+	// A timestamp later than the latest commit names the version this transaction already read as latest
+	if (table_entry && table_entry->snapshot->GetVersion() == version) {
+		return table_entry;
+	}
+
 	return nullptr;
+}
+
+optional_idx DeltaTransaction::GetTimestampVersion(timestamp_tz_t timestamp) const {
+	unique_lock<mutex> lck(lock);
+	auto lookup = timestamp_versions.find(DeltaTimestampToEpochMs(timestamp));
+	if (lookup == timestamp_versions.end()) {
+		return optional_idx();
+	}
+	return lookup->second;
+}
+
+idx_t DeltaTransaction::SetTimestampVersion(timestamp_tz_t timestamp, idx_t version) {
+	unique_lock<mutex> lck(lock);
+	return timestamp_versions.emplace(DeltaTimestampToEpochMs(timestamp), version).first->second;
 }
 
 DeltaTableEntry &DeltaTransaction::InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry,
