@@ -413,11 +413,12 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 				                .Left()
 				                .Cast<ColumnRefExpression>()
 				                .GetName();
-				auto value = transform_op_child.GetExpression()
-				                 .Cast<ComparisonExpression>()
-				                 .Right()
-				                 .Cast<ConstantExpression>()
-				                 .GetValue();
+				auto &comparison = transform_op_child.GetExpression().Cast<ComparisonExpression>();
+				Value value;
+				if (!KernelUtils::TryGetLiteralValue(comparison.Right(), value)) {
+					throw InternalException("Unexpected value for delta_transform_op returned by delta kernel: %s",
+					                        transform_op_child.GetExpression().ToString());
+				}
 
 				if (name == "kind") {
 					kind = value.ToString();
@@ -434,12 +435,14 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 					throw InternalException("Unexpected name for delta_transform_op returned by delta kernel: %s",
 					                        name);
 				}
-			} else if (transform_op_child.GetExpression().GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-				values.push_back(transform_op_child.GetExpression().Cast<ConstantExpression>().GetValue());
 			} else {
-				throw NotImplementedException(
-				    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
-				    transform_op_child.GetExpression().ToString());
+				Value value;
+				if (!KernelUtils::TryGetLiteralValue(transform_op_child.GetExpression(), value)) {
+					throw NotImplementedException(
+					    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
+					    transform_op_child.GetExpression().ToString());
+				}
+				values.push_back(std::move(value));
 			}
 		}
 

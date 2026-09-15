@@ -156,6 +156,31 @@ static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 	return column_stats;
 }
 
+//! The log's stats object nests struct fields and nothing else, so a path is recordable only if
+//! every step of it is a struct field and it ends on a scalar. A path via map or list fails;
+//! Parquet names those segments itself, `m.key_value.value`.
+static bool StatsPathIsRecordable(const LogicalType &column_type, const vector<string> &path) {
+	reference<const LogicalType> current(column_type);
+	for (idx_t i = 1; i < path.size(); i++) {
+		if (current.get().id() != LogicalTypeId::STRUCT) {
+			return false;
+		}
+		bool found = false;
+		for (auto &child : StructType::GetChildTypes(current.get())) {
+			if (child.first == path[i]) {
+				current = child.second;
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			// "Shouldn't happen": ret true => ParseInnerType fails loudly w/ "did not find expected child"
+			return true;
+		}
+	}
+	return !current.get().IsNested();
+}
+
 static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chunk) {
 	for (idx_t r = 0; r < chunk.size(); r++) {
 		DeltaDataFile data_file;
@@ -219,7 +244,7 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			}
 
 			// Skip types whose stats we don't yet support
-			if (coltype.id() == LogicalTypeId::VARIANT || coltype.id() == LogicalTypeId::LIST) {
+			if (!StatsPathIsRecordable(coltype, column_names)) {
 				continue;
 			}
 

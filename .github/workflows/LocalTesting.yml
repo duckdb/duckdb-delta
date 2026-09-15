@@ -14,7 +14,6 @@ defaults:
 env:
   BASE_BRANCH: ${{ github.base_ref || (startsWith(github.ref, 'refs/heads/features/') && 'feature' || 'main') }}
   BUILD_EXTENSION_TEST_DEPS: full # NOTE: force checkout/build of httpfs in all builds
-  BUILD_HTTPFS_SRC: ${{ github.workspace }}/build/release/_deps/httpfs_extension_fc-src
   GEN: ninja
   VCPKG_BINARY_SOURCES: clear;http,https://vcpkg-cache.duckdb.org,read
   VCPKG_COMMIT_ID: 84bab45d415d22042bd0b9081aea57f362da3f35
@@ -121,9 +120,8 @@ jobs:
           mkdir -p test/test_data
           touch test/test_data/attach.db
           # finally set up minio
-          ln -s "$BUILD_HTTPFS_SRC/scripts/minio_s3.yml" scripts/minio_s3.yml
-          sudo "$BUILD_HTTPFS_SRC/scripts/install_s3_test_server.sh"
-          source "$BUILD_HTTPFS_SRC/scripts/run_s3_test_server.sh"
+          sudo "$GITHUB_WORKSPACE/scripts/minio/install_s3_test_server.sh"
+          source "$GITHUB_WORKSPACE/scripts/minio/run_s3_test_server.sh"
           sleep 30
 
       - run: ./scripts/create_minio_credential_file.sh
