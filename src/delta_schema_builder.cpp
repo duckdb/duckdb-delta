@@ -55,6 +55,18 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 	case LogicalTypeId::DECIMAL:
 		return Unpack(ffi::visit_field_decimal(state, name_slice, DecimalType::GetWidth(type),
 		                                       DecimalType::GetScale(type), nullable, allocate_error));
+	case LogicalTypeId::VARIANT: {
+		// Kernel takes the variant's physical layout as a struct. The unshredded layout (non-null
+		// metadata and value) is the only one we emit: the write path never passes a parquet
+		// SHREDDING option, so the table must not claim variantShredding.
+		const string metadata_name = "metadata";
+		const string value_name = "value";
+		uintptr_t physical_ids[2] = {
+		    Unpack(ffi::visit_field_binary(state, KernelUtils::ToDeltaString(metadata_name), false, allocate_error)),
+		    Unpack(ffi::visit_field_binary(state, KernelUtils::ToDeltaString(value_name), false, allocate_error))};
+		auto physical_id = Unpack(ffi::visit_field_struct(state, name_slice, physical_ids, 2, false, allocate_error));
+		return Unpack(ffi::visit_field_variant(state, name_slice, physical_id, nullable, allocate_error));
+	}
 	case LogicalTypeId::STRUCT: {
 		auto &children = StructType::GetChildTypes(type);
 		vector<uintptr_t> child_ids;

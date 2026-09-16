@@ -38,7 +38,8 @@ CREATE TABLE rt.rt (
     c_decimal DECIMAL(18,4),
     c_struct STRUCT(a INTEGER, b VARCHAR),
     c_list INTEGER[],
-    c_map MAP(VARCHAR, INTEGER)
+    c_map MAP(VARCHAR, INTEGER),
+    c_variant VARIANT
 );
 
 query II
@@ -60,6 +61,7 @@ c_decimal	DECIMAL(18,4)
 c_struct	STRUCT(a INTEGER, b VARCHAR)
 c_list	INTEGER[]
 c_map	MAP(VARCHAR, INTEGER)
+c_variant	VARIANT
 
 # -----------------------------------------------------------------------------
 # Same schema after a fresh attach
@@ -93,6 +95,7 @@ c_decimal	DECIMAL(18,4)
 c_struct	STRUCT(a INTEGER, b VARCHAR)
 c_list	INTEGER[]
 c_map	MAP(VARCHAR, INTEGER)
+c_variant	VARIANT
 
 # -----------------------------------------------------------------------------
 # Partitioned tables keep their column order and types
