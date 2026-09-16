@@ -1,0 +1,56 @@
+# name: test/sql/cloud/azure/workload_identity_auth.test
+# description: test azure delta_scan with workload_identity credential chain (common in AKS)
+# group: [azure]
+
+# NOTE: This test is not run in CI, since AZURE_FEDERATED_TOKEN_FILE is not available there.
+#
+# It is useful for local manual verification against a real AKS workload-identity token (See PR #321 discussion).
+# To run locally, export the AZURE_* vars below from an AKS pod, along with copying the token file, and then include
+# AZURE_STORAGE_ACCOUNT, AZURE_DELTA_TEST_PATH, AZURE_PARQUET_TEST_PATH to point to a delta table that the workload 
+# identity can read and comment out the `mode skip` line temporarily.
+
+mode skip
+
+require azure
+
+require parquet
+
+require delta
+
+require-env AZURE_CLIENT_ID
+
+require-env AZURE_TENANT_ID
+
+require-env AZURE_FEDERATED_TOKEN_FILE
+
+require-env AZURE_STORAGE_ACCOUNT
+
+require-env AZURE_DELTA_TEST_PATH
+
+require-env AZURE_PARQUET_TEST_PATH
+
+statement ok
+set allow_persistent_secrets=false
+
+statement ok
+CREATE SECRET az_wi (
+    TYPE AZURE,
+    PROVIDER CREDENTIAL_CHAIN,
+    CHAIN 'workload_identity',
+    ACCOUNT_NAME '{AZURE_STORAGE_ACCOUNT}'
+)
+
+# Previously this failed with an IMDS timeout when workload identity
+# env vars were not forwarded to the delta-kernel-rs builder.
+query I
+SELECT count(*) > 0
+FROM delta_scan('{AZURE_DELTA_TEST_PATH}')
+----
+true
+
+query I
+SELECT count(*) > 0
+from parquet_scan('{AZURE_PARQUET_TEST_PATH}')
+----
+true
+
