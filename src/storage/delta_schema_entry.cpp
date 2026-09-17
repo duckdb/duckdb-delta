@@ -9,6 +9,8 @@
 #include "storage/delta_table_entry.hpp"
 #include "storage/delta_transaction.hpp"
 
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/path.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -24,6 +26,15 @@ DeltaSchemaEntry::DeltaSchemaEntry(Catalog &catalog, CreateSchemaInfo &info) : S
 }
 
 DeltaSchemaEntry::~DeltaSchemaEntry() {
+}
+
+//! Whether a Delta table has been created at `path` yet, judged the same way kernel judges it: by
+//! the presence of `_delta_log`. Only conclusive on a local filesystem -- S3 reports every directory
+//! as existing -- so treat a true answer as "probably", and never a false one as permission to skip
+//! work kernel would redo.
+static bool DeltaTableExistsAt(ClientContext &context, const string &path) {
+	auto &fs = FileSystem::GetFileSystem(context);
+	return fs.DirectoryExists(Path::FromString(path).Join("_delta_log").ToString());
 }
 
 DeltaTransaction &GetDeltaTransaction(CatalogTransaction transaction) {
@@ -197,6 +208,15 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::LookupEntry(CatalogTransaction tran
 		auto transaction_table_entry = delta_transaction.GetTableEntry(version);
 		if (transaction_table_entry) {
 			return *transaction_table_entry;
+		}
+
+		// With nothing cached the entry has to come from a snapshot, and kernel refuses to build one
+		// where no table exists. Answer "not found" instead of letting that IO error escape, so the
+		// caller can name what it was looking for, and so enumerating an empty attach lists nothing
+		// rather than throwing. The cost is that a mistyped attach path no longer reports itself:
+		// the error names the table, not the path.
+		if (!GetCachedTable() && !DeltaTableExistsAt(context, delta_catalog.GetDBPath())) {
+			return nullptr;
 		}
 
 		if (delta_catalog.UseCachedSnapshot()) {

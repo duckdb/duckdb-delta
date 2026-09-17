@@ -1,0 +1,61 @@
+# name: test/sql/main/table_lookup_missing_log.test
+# description: A path with no Delta log is a missing table, not a kernel IO error
+# group: [main]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# The copied table sits one level down, so the attach root holds no _delta_log of its own: the probe
+# has to look for the log beside the root, not anywhere beneath it.
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/table_lookup_missing_log/unrelated');
+
+statement ok
+ATTACH '{TEMP_DIR}/main/table_lookup_missing_log' AS t (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# Looking the table up
+#
+# Kernel cannot build a snapshot where no table exists, and the error it raises for that names no
+# table. Answering "not found" lets the caller say what it was looking for instead.
+#
+
+statement error
+SELECT * FROM t.main.t;
+----
+Catalog Error: Table with name t does not exist!
+
+# A version asks the same question of the same path, and says so.
+statement error
+SELECT * FROM t.main.t AT (VERSION => 0);
+----
+Catalog Error: Table with name t does not exist at version 0!
+
+# -----------------------------------------------------------------------------
+# Enumerating the catalog
+#
+# The same lookup reached another way: an empty attach lists nothing rather than throwing.
+#
+
+query I
+SELECT count(*) FROM (SHOW ALL TABLES) WHERE database = 't';
+----
+0
+
+# -----------------------------------------------------------------------------
+# A path that is not there at all
+#
+# Indistinguishable from an empty one here, which is the trade: the reader loses kernel's
+# "Invalid table location: Path does not exist" and gets a table name instead.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/table_lookup_missing_log/absent' AS gone (TYPE delta);
+
+statement error
+SELECT * FROM gone.main.gone;
+----
+Catalog Error: Table with name gone does not exist!
