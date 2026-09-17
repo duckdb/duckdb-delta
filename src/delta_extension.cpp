@@ -113,7 +113,17 @@ public:
 	}
 };
 
+// Provided by the kernel shim (rust/src/lib.rs). Registers a gs:// URL handler with
+// delta-kernel-rs so a GCS store can be built with an explicit OAuth bearer token, which
+// object_store 0.13.2 cannot express as a config string.
+extern "C" bool duckdb_delta_register_gcs_handler();
+
 static void LoadInternal(ExtensionLoader &loader) {
+	// Must run before any scan builds an engine: the handler is consulted at store construction.
+	if (!duckdb_delta_register_gcs_handler()) {
+		throw InternalException("Failed to register the delta GCS URL handler");
+	}
+
 	// Load Table functions
 	for (const auto &function : DeltaFunctions::GetTableFunctions(loader)) {
 		loader.RegisterFunction(function);

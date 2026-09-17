@@ -186,6 +186,33 @@ ExternalProject_Add(
   LOG_MERGED_STDOUTERR ON
   LOG_OUTPUT_ON_FAILURE ON)
 
+# Setup the kernel shim: our own crate that depends on delta_kernel_ffi in the SAME cargo
+# graph, so cargo unifies delta_kernel_default_engine to a single compilation (and therefore a
+# single URL_REGISTRY). That lets us register a GCS URL handler which builds the store via
+# GoogleCloudStorageBuilder::with_credentials -- the only way to pass an OAuth bearer token on
+# object_store 0.13.2, which has no GoogleConfigKey for one until 0.14.
+#
+# The shim archive re-exports the kernel's C ABI unchanged (rust/src/keepalive.rs), so it is a
+# drop-in replacement for libdelta_kernel_ffi.a and the generated header stays valid.
+set(DELTA_KERNEL_SHIM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust")
+set(DELTA_KERNEL_SHIM_LIBPATH
+    "${DELTA_KERNEL_SHIM_DIR}/target/${RUST_PLATFORM_TARGET}/$<IF:$<CONFIG:Debug>,debug,release>/${CMAKE_STATIC_LIBRARY_PREFIX}duckdb_delta_kernel_shim${CMAKE_STATIC_LIBRARY_SUFFIX}"
+)
+
+add_custom_command(
+  OUTPUT "${DELTA_KERNEL_SHIM_LIBPATH}"
+  COMMAND
+    ${CMAKE_COMMAND} -E env ${RUST_UNSET_ENV_VARS} ${RUST_ENV_VARS} env cargo build
+    --profile=${CARGO_PROFILE} ${RUST_PLATFORM_PARAM}
+  WORKING_DIRECTORY "${DELTA_KERNEL_SHIM_DIR}"
+  COMMENT "Building delta kernel shim (GCS bearer-token URL handler)"
+  VERBATIM)
+
+add_custom_target(delta_kernel_shim DEPENDS "${DELTA_KERNEL_SHIM_LIBPATH}")
+# The shim needs the kernel checkout present for the generated FFI header, and the header
+# generation is a byproduct of the delta_kernel target.
+add_dependencies(delta_kernel_shim delta_kernel)
+
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
@@ -202,15 +229,15 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET
 # Add the default client
 add_compile_definitions(DEFINE_DEFAULT_ENGINE DEFINE_DEFAULT_ENGINE_BASE)
 
-# Link delta-kernal-rs to static lib
-target_link_libraries(${EXTENSION_NAME} ${DELTA_KERNEL_LIBPATH}
+# Link the kernel shim (which re-exports delta-kernel-rs's C ABI) to static lib
+target_link_libraries(${EXTENSION_NAME} ${DELTA_KERNEL_SHIM_LIBPATH}
                       ${PLATFORM_LIBS})
-add_dependencies(${EXTENSION_NAME} delta_kernel)
+add_dependencies(${EXTENSION_NAME} delta_kernel_shim)
 
-# Link delta-kernal-rs to dynamic lib
-target_link_libraries(${LOADABLE_EXTENSION_NAME} ${DELTA_KERNEL_LIBPATH}
+# Link the kernel shim to dynamic lib
+target_link_libraries(${LOADABLE_EXTENSION_NAME} ${DELTA_KERNEL_SHIM_LIBPATH}
                       ${PLATFORM_LIBS})
-add_dependencies(${LOADABLE_EXTENSION_NAME} delta_kernel)
+add_dependencies(${LOADABLE_EXTENSION_NAME} delta_kernel_shim)
 
 install(
   TARGETS ${EXTENSION_NAME}
