@@ -1,0 +1,40 @@
+# name: test/sql/inlined/unsupported_types.test
+# description: a table with a column type DuckDB cannot read is refused, not read without that column
+# group: [inlined]
+
+require parquet
+
+require delta
+
+# -----------------------------------------------------------------------------
+# Intervals
+#
+# Delta has two interval types and DuckDB has one, so neither maps as is.
+#
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_year_month');
+----
+Column 'v' has the Delta type interval year to month, which DuckDB cannot read yet
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_day_time');
+----
+Column 'v' has the Delta type interval day to second, which DuckDB cannot read yet
+
+# -----------------------------------------------------------------------------
+# Geospatial
+#
+# Kernel parses these types only when built with its `geo-type-in-dev` feature, which this build
+# leaves off, so the refusal is kernel's. With the feature on, DuckDB's message names the column.
+#
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/geometry');
+----
+Unsupported Delta table type: 'geometry(EPSG:4326)'
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/geography');
+----
+Unsupported Delta table type: 'geography(EPSG:4326, spherical)'
