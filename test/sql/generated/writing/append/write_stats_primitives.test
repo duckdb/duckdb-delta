@@ -255,7 +255,7 @@ SELECT
 FROM read_json('{TEMP_DIR}/write_stats_all_types/timestamp/delta_lake/_delta_log/00000000000000000001.json')
 WHERE add IS NOT NULL
 ----
-1	0	2024-01-06T00:00:00	2024-01-06T00:00:00	true
+1	0	2024-01-06T00:00:00.000	2024-01-06T00:00:00.000	true
 
 # Skipping against the stats written above. The filter has to prune the file this
 # test just inserted: reading it back trips the URL-encoded partition bug skipped
