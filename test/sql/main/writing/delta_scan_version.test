@@ -87,3 +87,4 @@ SELECT count() FROM delta_scan(
 statement error
 SELECT count() FROM delta_scan('{TEMP_DIR}/main/writing/delta_scan_version/delta_lake', version => 999);
 ----
+not the same as the specified end version 999

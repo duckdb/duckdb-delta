@@ -87,7 +87,7 @@ jobs:
           # note: first CLI login, then allow env_azure to setup several key (non secret) vars, then clear SECRET after env script
           # to prevent accidental use of env secrets.
           az login --service-principal --user="$AZURE_CLIENT_ID" --password="$AZURE_CLIENT_SECRET" --tenant="$AZURE_TENANT_ID"
-          "$ENV_AZURE" env -u AZURE_CLIENT_SECRET ./build/release/test/unittest test/sql/cloud/azure_writes.test
+          "$ENV_AZURE" env -u AZURE_CLIENT_SECRET ./build/release/test/unittest 'test/sql/cloud/*'
 
       - name: Test with Access Token in env vars
         run: |
