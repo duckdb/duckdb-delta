@@ -58,43 +58,20 @@ SELECT count(*) FROM with_location.with_location;
 ----
 0
 
-# `path` is the older spelling of the same option
+# `path` named the same option before `location` did, and never shipped
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_with_path' AS with_path (TYPE delta);
 
-statement ok
-CREATE TABLE with_path.with_path (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_with_path');
-
-query I
-SELECT count(*) FROM with_path.with_path;
-----
-0
-
-statement ok
-ATTACH '{TEMP_DIR}/delta_create_both_names' AS both_names (TYPE delta);
-
 statement error
-CREATE TABLE both_names.both_names (i INTEGER)
-WITH (location = '{TEMP_DIR}/delta_create_both_names', path = '{TEMP_DIR}/delta_create_both_names');
+CREATE TABLE with_path.with_path (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_with_path');
 ----
-takes 'location' or 'path', not both
-
-# Neither spelling is written as a property
-statement ok
-CREATE TABLE both_names.both_names (i INTEGER) WITH (location = '{TEMP_DIR}/delta_create_both_names');
-
-query I
-SELECT metaData.configuration
-FROM read_json('{TEMP_DIR}/delta_create_both_names/_delta_log/00000000000000000000.json')
-WHERE metaData IS NOT NULL;
-----
-{}
+names the destination with 'location', not 'path'
 
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_other_path' AS other_path (TYPE delta);
 
 statement error
-CREATE TABLE other_path.other_path (i INTEGER) WITH (path = '{TEMP_DIR}/somewhere_else');
+CREATE TABLE other_path.other_path (i INTEGER) WITH (location = '{TEMP_DIR}/somewhere_else');
 ----
 can only create a table at the attached path
 
@@ -103,7 +80,7 @@ statement ok
 ATTACH '{TEMP_DIR}/delta_create_norm' AS norm (TYPE delta);
 
 statement ok
-CREATE TABLE norm.norm (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_norm/');
+CREATE TABLE norm.norm (i INTEGER) WITH (location = '{TEMP_DIR}/delta_create_norm/');
 
 query I
 SELECT count(*) FROM norm.norm;
@@ -117,7 +94,7 @@ statement ok
 ATTACH '{TEMP_DIR}/delta_create_expr' AS expr (TYPE delta);
 
 statement ok
-CREATE TABLE expr.expr (i INTEGER) WITH (path = concat('{TEMP_DIR}/delta_create', '_expr'));
+CREATE TABLE expr.expr (i INTEGER) WITH (location = concat('{TEMP_DIR}/delta_create', '_expr'));
 
 query I
 SELECT count(*) FROM expr.expr;
@@ -129,9 +106,9 @@ statement ok
 ATTACH '{TEMP_DIR}/delta_create_null_opt' AS null_opt (TYPE delta);
 
 statement error
-CREATE TABLE null_opt.null_opt (i INTEGER) WITH (path = NULL);
+CREATE TABLE null_opt.null_opt (i INTEGER) WITH (location = NULL);
 ----
-NULL is not a valid value for Delta CREATE TABLE option 'path'
+NULL is not a valid value for Delta CREATE TABLE option 'location'
 
 # -----------------------------------------------------------------------------
 # CREATE conflict handling
@@ -159,9 +136,9 @@ do not support CREATE OR REPLACE TABLE
 
 # A bad option fails even where the table already makes the statement a no-op
 statement error
-CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER) WITH (path = NULL);
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER) WITH (location = NULL);
 ----
-NULL is not a valid value for Delta CREATE TABLE option 'path'
+NULL is not a valid value for Delta CREATE TABLE option 'location'
 
 statement error
 CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.columnMapping.mode' = 'name');
@@ -275,7 +252,7 @@ ATTACH '{TEMP_DIR}/delta_create_path_and_prop' AS path_and_prop (TYPE delta);
 
 statement ok
 CREATE TABLE path_and_prop.path_and_prop (i INTEGER)
-WITH (path = '{TEMP_DIR}/delta_create_path_and_prop', 'myApp.a' = '1');
+WITH (location = '{TEMP_DIR}/delta_create_path_and_prop', 'myApp.a' = '1');
 
 query I
 SELECT json_keys(metaData.configuration)
