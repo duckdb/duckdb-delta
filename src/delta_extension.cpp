@@ -121,6 +121,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          "delta scan during explain analyze queries.",
 	                          LogicalType::BOOLEAN, Value(true));
 
+	config.AddExtensionOption("delta_column_mapping_policy",
+	                          "How to read a data file of a column-mapped table that does not conform to the Delta "
+	                          "protocol, such as an id-mode file without parquet field ids. 'strict' refuses the "
+	                          "file; 'lenient' matches its columns by name and logs a warning.",
+	                          LogicalType::VARCHAR, Value("strict"));
+
 	config.AddExtensionOption(
 	    "delta_kernel_logging",
 	    "Forwards the internal logging of the Delta Kernel to the duckdb logger. Warning: this may impact "

@@ -1,0 +1,18 @@
+# name: test/sql/inlined/column_mapping/invalid_annotations.test
+# description: a malformed column-mapping annotation is a readable error when the table is read
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# -----------------------------------------------------------------------------
+# Nested id out of range
+#
+
+# The value sits in delta.columnMapping.nested.ids, which kernel passes through unchecked. The
+# schema callback cannot throw, so DuckDB records the error and raises it once the visit returns.
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/invalid_nested_id_range');
+----
+has the nested column mapping id 99999999999 for

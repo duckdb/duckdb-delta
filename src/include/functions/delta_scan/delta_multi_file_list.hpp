@@ -103,6 +103,9 @@ public:
 	bool HasNullConstraintsInArrays() const;
 	vector<DeltaStringWidthBound> GetStringWidthBounds() const;
 
+	//! True for `id` mode tables. Initializes the scan.
+	bool ResolvesByFieldId() const;
+
 protected:
 	//! Get the i-th expanded file
 	OpenFileInfo GetFile(idx_t i) const override;
@@ -182,6 +185,11 @@ protected:
 	// The schema containing the proper column identifiers, lazily loaded to avoid prematurely initializing the kernel
 	// scan
 	mutable vector<DeltaMultiFileColumnDefinition> lazy_loaded_schema;
+
+	// Read once with the snapshot; a table property, so it cannot change underneath a scan
+	mutable DeltaColumnMappingMode column_mapping_mode = DeltaColumnMappingMode::NONE;
+
+	mutable bool resolve_by_field_id = false;
 };
 
 // Callback for the ffi::kernel_scan_data_next callback

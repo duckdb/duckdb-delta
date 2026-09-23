@@ -1,0 +1,22 @@
+# name: test/sql/inlined/column_mapping/name_mode_nested_ids.test
+# description: a name-mode table whose list and map columns carry nested.ids still resolves by physical name
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# UniForm writers add `delta.columnMapping.nested.ids` to list and map columns in name mode as well.
+# Those ids are for id-mode readers only; a name-mode read resolves the children by name.
+
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/name_mode_nested_ids') ORDER BY a;
+----
+1	[10, 11]	{k=100}
+2	[20]	{q=200}
+
+query II
+SELECT unnest(l), m['k'] FROM delta_scan('data/inlined/column_mapping/name_mode_nested_ids') WHERE a = 1;
+----
+10	100
+11	100

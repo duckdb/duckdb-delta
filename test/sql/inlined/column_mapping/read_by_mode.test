@@ -1,0 +1,96 @@
+# name: test/sql/inlined/column_mapping/read_by_mode.test
+# description: each column mapping mode resolves parquet columns the way the protocol's reader requirements say
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# The logical schema is (a, b) with physical names col-a-uuid / col-b-uuid and field ids 1 / 2 in every
+# table below; the tables differ in the mode and in what the parquet file calls its columns.
+
+# -----------------------------------------------------------------------------
+# id mode, parquet columns carry the logical names
+#
+
+# Only the field ids connect file to schema here: matching by physical name finds nothing.
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# id mode, parquet columns carry the physical names
+#
+
+# The layout Spark writes: physical names and field ids both present.
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_physical_names') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# id mode, struct children
+#
+
+# Schema nested_col STRUCT(x, y); the struct and both children carry field ids and physical names, the file
+# keeps the logical names.
+query I
+SELECT nested_col FROM delta_scan('data/inlined/column_mapping/id_mode_nested_struct') ORDER BY nested_col.x;
+----
+{'x': 1, 'y': alice}
+{'x': 2, 'y': bob}
+
+# -----------------------------------------------------------------------------
+# id mode, list and map columns
+#
+
+# Spark's layout: the file carries field ids on the columns and none on the list element or the map
+# entries, and the log has no `nested.ids`; the children resolve under their parent's id.
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_containers') ORDER BY a;
+----
+1	[10, 11]	{k=100}
+2	[20]	{q=200}
+
+query II
+SELECT unnest(l), m['q'] FROM delta_scan('data/inlined/column_mapping/id_mode_containers') WHERE a = 2;
+----
+20	200
+
+# The IcebergCompat layout: `nested.ids` in the log and matching field ids on the file's children.
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_containers_nested_ids') ORDER BY a;
+----
+1	[10, 11]	{k=100}
+2	[20]	{q=200}
+
+# -----------------------------------------------------------------------------
+# id mode, a file that predates a column
+#
+
+# Two files: the first carries ids 1 and 2 only, the second all three. An id the file lacks reads as NULL
+# for that file, the rest of the file resolves as usual.
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_missing_column') ORDER BY a;
+----
+1	alice	NULL
+2	bob	NULL
+3	carol	30
+
+query II
+SELECT a, c FROM delta_scan('data/inlined/column_mapping/id_mode_missing_column') WHERE c IS NOT NULL;
+----
+3	30
+
+# -----------------------------------------------------------------------------
+# name mode, parquet columns carry the physical names
+#
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/name_mode_physical_names') ORDER BY a;
+----
+1	alice
+2	bob
