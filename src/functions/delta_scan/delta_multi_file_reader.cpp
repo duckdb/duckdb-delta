@@ -153,6 +153,14 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 	options.hive_partitioning = false;
 	options.union_by_name = false;
 
+	// Before core appends the generated filename column (filename=true; not the virtual one): core fills that
+	// column per file as a constant and never looks it up, and the field-id mapper wants an identifier on every
+	// column it is handed.
+	bind_data.schema = DeltaMultiFileColumnDefinition::ColumnsFromNamesAndTypes(names, return_types);
+	for (auto &col : bind_data.schema) {
+		col.default_expression = ConstantExpression::FromValue(Value(col.type));
+	}
+
 	MultiFileReader::BindOptions(options, files, return_types, names, bind_data);
 
 	// We abuse the hive_partitioning_indexes to forward partitioning information to DuckDB
@@ -180,14 +188,6 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 			options.hive_types_schema[part] = return_types[hive_partitioning_index];
 		}
 	}
-
-	// FIXME: this is slightly hacky here
-	bind_data.schema = DeltaMultiFileColumnDefinition::ColumnsFromNamesAndTypes(names, return_types);
-
-	// Set defaults
-	for (auto &col : bind_data.schema) {
-		col.default_expression = ConstantExpression::FromValue(Value(col.type));
-	}
 }
 
 static bool IsNaiveTimestamp(const LogicalType &type) {
@@ -211,22 +211,6 @@ static void CastNaiveTimestampsAsUtc(unique_ptr<Expression> &expr) {
 	                                      [](unique_ptr<Expression> &child) { CastNaiveTimestampsAsUtc(child); });
 }
 
-//! BY_FIELD_ID mapping requires an INTEGER field_id identifier on every column the mapper
-//! visits, nested children included. DeltaMultiFileList has already vetted the scan schema;
-//! this re-checks the assembled vector, which may carry extra columns appended from the
-//! bind-time schema.
-static bool AllColumnsHaveFieldIds(const vector<MultiFileColumnDefinition> &columns) {
-	for (const auto &column : columns) {
-		if (column.identifier.IsNull() || column.identifier.type().id() != LogicalTypeId::INTEGER) {
-			return false;
-		}
-		if (!AllColumnsHaveFieldIds(column.children)) {
-			return false;
-		}
-	}
-	return true;
-}
-
 ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData &reader_data,
                                                             const MultiFileBindData &bind_data,
                                                             const vector<MultiFileColumnDefinition> &global_columns,
@@ -241,16 +225,8 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	auto &scan_columns = snapshot.GetLazyLoadedGlobalColumns();
 
 	// We need to override the global columns, because only now we have the correct column mapping information
-	vector<MultiFileColumnDefinition> overridden_global_columns =
-	    DeltaMultiFileColumnDefinition::ConvertToBase(scan_columns);
-	if (scan_columns.size() != global_columns.size()) {
-		overridden_global_columns = DeltaMultiFileColumnDefinition::ConvertToBase(scan_columns);
-		for (idx_t i = scan_columns.size(); i < global_columns.size(); i++) {
-			overridden_global_columns.push_back(global_columns[i]);
-		}
-	} else {
-		overridden_global_columns = DeltaMultiFileColumnDefinition::ConvertToBase(scan_columns);
-	}
+	D_ASSERT(scan_columns.size() == global_columns.size());
+	auto overridden_global_columns = DeltaMultiFileColumnDefinition::ConvertToBase(scan_columns);
 
 	FinalizeBind(reader_data, bind_data.file_options, bind_data.reader_bind, overridden_global_columns,
 	             global_column_ids, context, global_state);
@@ -260,7 +236,7 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	// needs the field_id mapper -- in `name` mode the identifier holds the physical name and
 	// in `none` mode it is unset, both of which the name mapper handles.
 	auto mapping_mode = bind_data.reader_bind.mapping;
-	if (snapshot.ResolvesByFieldId() && AllColumnsHaveFieldIds(overridden_global_columns)) {
+	if (snapshot.ResolvesByFieldId()) {
 		mapping_mode = MultiFileColumnMappingMode::BY_FIELD_ID;
 	}
 
@@ -294,7 +270,8 @@ void DeltaMultiFileReader::FinalizeBind(MultiFileReaderData &reader_data, const 
 			auto global_idx = MultiFileGlobalIndex(i);
 			column_t col_id = global_column_ids[i].GetPrimaryIndex();
 
-			if (IsVirtualColumn(col_id)) {
+			// Neither a virtual column nor the generated filename column has a global column behind it.
+			if (IsVirtualColumn(col_id) || options.filename_idx == col_id) {
 				continue;
 			}
 
@@ -336,19 +313,6 @@ DeltaMultiFileReader::InitializeGlobalState(ClientContext &context, const MultiF
                                             const vector<ColumnIndex> &global_column_ids) {
 	vector<LogicalType> extra_columns;
 	vector<pair<string, idx_t>> mapped_columns;
-
-	// Create a map of the columns that are in the projection
-	case_insensitive_map_t<idx_t> selected_columns;
-	for (idx_t i = 0; i < global_column_ids.size(); i++) {
-		auto global_id = global_column_ids[i].GetPrimaryIndex();
-
-		if (IsVirtualColumn(global_id)) {
-			continue;
-		}
-
-		auto global_name = global_columns[global_id].name;
-		selected_columns.insert({global_name.GetIdentifierName(), i});
-	}
 
 	auto res = make_uniq<DeltaMultiFileReaderGlobalState>(extra_columns, &file_list);
 

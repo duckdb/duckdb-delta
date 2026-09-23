@@ -1,0 +1,31 @@
+# name: test/sql/inlined/column_mapping/filename_option.test
+# description: the generated filename column (filename=true) on an id-mode table leaves data columns resolved by field id
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# filename=true makes DuckDB append a generated constant column at bind time, filled per file; it is
+# not the virtual `filename` column, which needs no option and is not affected. The generated column
+# carries no field id and sits outside the scan schema, so it must not demote an id-mode read to name
+# matching.
+
+# -----------------------------------------------------------------------------
+# Logical parquet names, resolved by field id
+#
+
+query III
+SELECT a, b, parse_filename(filename)
+FROM delta_scan('data/inlined/column_mapping_id_mode_logical_names/delta_lake', filename=true)
+ORDER BY a;
+----
+1	alice	part-00000.snappy.parquet
+2	bob	part-00000.snappy.parquet
+
+query II
+SELECT a, b
+FROM delta_scan('data/inlined/column_mapping_id_mode_logical_names/delta_lake', filename=true)
+WHERE filename LIKE '%snappy.parquet' AND a = 2;
+----
+2	bob
