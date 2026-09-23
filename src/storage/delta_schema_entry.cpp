@@ -91,8 +91,8 @@ static string GetCreateTablePath(ClientContext &context, TableFunctionBinder &bi
 }
 
 //! Every option that does not name the location is a Delta table property, handed to kernel untouched:
-//! kernel decides which keys it recognizes and derives the protocol from them. Sorted, so the written
-//! configuration does not depend on the option map's iteration order.
+//! kernel decides which keys it recognizes and derives the protocol from them. Sorted so that two bad
+//! properties always fail in the same order; the written configuration is a map kernel orders itself.
 static vector<pair<string, string>> GetCreateTableProperties(ClientContext &context, TableFunctionBinder &binder,
                                                              const CreateTableInfo &base) {
 	vector<pair<string, string>> properties;
