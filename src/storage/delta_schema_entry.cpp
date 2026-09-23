@@ -324,6 +324,12 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	DUCKDB_LOG_INTERNAL(context, "delta.CreateTable", LogLevel::LOG_DEBUG, "Created %s at version %s", path,
 	                    to_string(version));
 
+	if (delta_catalog.parent_commit) {
+		// A CMT cannot be read from storage until the catalog knows its commits, and the catalog learns about this once
+		// it's registered; thus, there is nothing to serve here; that caller's own catalog answers the next lookup.
+		return nullptr;
+	}
+
 	// Serve the table we just committed through the regular lookup path, so the schema cache and the
 	// transaction's entry end up in the same state as for a table that already existed. Reading it back
 	// also means the catalog serves the new snapshot without a re-attach.
