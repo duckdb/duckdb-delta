@@ -148,8 +148,7 @@ public:
 	bool HasNullConstraintsInArrays() const;
 	vector<DeltaStringWidthBound> GetStringWidthBounds() const;
 
-	//! Whether parquet columns should be resolved by field_id rather than by name. True only
-	//! for `id` mode tables whose schema is fully covered by field ids. Initializes the scan.
+	//! True for `id` mode tables. Initializes the scan.
 	bool ResolvesByFieldId() const;
 
 protected:
@@ -250,8 +249,6 @@ protected:
 	// Read once with the snapshot; a table property, so it cannot change underneath a scan
 	mutable DeltaColumnMappingMode column_mapping_mode = DeltaColumnMappingMode::NONE;
 
-	// Whether lazy_loaded_schema carries field_id identifiers for every column, so the reader
-	// can match parquet columns by field_id instead of by name
 	mutable bool resolve_by_field_id = false;
 };
 

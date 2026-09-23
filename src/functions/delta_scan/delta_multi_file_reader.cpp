@@ -280,10 +280,8 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	FinalizeBind(reader_data, bind_data.file_options, bind_data.reader_bind, overridden_global_columns,
 	             global_column_ids, context, global_state);
 
-	// Per the Delta protocol's "Reader Requirements for Column Mapping", `id` mode resolves
-	// parquet columns by field_id; `name` and `none` mode resolve by name. Only `id` mode
-	// needs the field_id mapper -- in `name` mode the identifier holds the physical name and
-	// in `none` mode it is unset, both of which the name mapper handles.
+	// Only `id` mode needs the field-id mapper; the name mapper takes a physical-name identifier and an unset
+	// one alike.
 	auto mapping_mode = bind_data.reader_bind.mapping;
 	if (snapshot.ResolvesByFieldId()) {
 		auto &file_columns = reader_data.reader->columns;

@@ -375,10 +375,7 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 		}
 	}
 
-	//! True when this column and every one of its children carry an INTEGER field_id
-	//! identifier. Delta only assigns column mapping ids to struct fields, so the synthetic
-	//! list/map children the visitor creates never have one -- such a schema cannot be
-	//! resolved by field_id and must fall back to name matching.
+	//! True when this column and every one of its children carry an INTEGER field id identifier
 	bool HasFieldIdsRecursive() const {
 		if (identifier.IsNull() || identifier.type().id() != LogicalTypeId::INTEGER) {
 			return false;
@@ -406,8 +403,8 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 	//! type system cannot express, which Spark enforces client-side and the kernel does not interpret at all.
 	string char_varchar_type;
 
-	//! Column-mapping identity, write path only: a write needs both, a read resolves through `identifier`.
-	//! Also retained so id-mode schemas can fall back to name matching when not fully covered by field ids.
+	//! Column-mapping identity. A write needs both; a read resolves through `identifier`, and only a file
+	//! without field ids is matched by physical name.
 	string physical_name;
 	optional_idx field_id;
 
@@ -446,14 +443,8 @@ private:
 	typedef void(SimpleTypeVisitorFunction)(void *, uintptr_t, ffi::KernelStringSlice, bool is_nullable,
 	                                        const ffi::CMetadataMap *metadata);
 
-	// Set `col_def.identifier` so DuckDB's MultiFileReader resolves the column
-	// the way the Delta protocol's "Reader Requirements for Column Mapping"
-	// require for the active mode.
-	//
-	// The identifier is interpreted according to the MultiFileColumnMappingMode the
-	// reader runs in (see DeltaMultiFileReader::InitializeReader): under BY_FIELD_ID
-	// it must be an INTEGER parquet field_id, under BY_NAME a VARCHAR name. Leaving
-	// it unset makes BY_NAME fall back to the display (logical) name.
+	//! Sets `identifier` for the active mode, see DeltaColumnMappingMode: the INTEGER field id, the physical
+	//! name, or nothing, which the name mapper reads as the display name.
 	//! Called from kernel's schema callbacks, so a bad annotation is recorded, never thrown: an exception
 	//! unwinding through the Rust frames aborts the process.
 	static void ApplyDeltaColumnMapping(KernelSchemaVisitor *state, const ffi::CMetadataMap *metadata,

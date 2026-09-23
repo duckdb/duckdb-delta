@@ -704,9 +704,7 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 vector<DeltaMultiFileColumnDefinition>
 KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
                                          ffi::SharedWriteContext *write_context) {
-	// TODO(column-mapping-writes): plumb the table's column mapping mode here so writes
-	// emit identifiers consistent with the read path. The read path is the only consumer
-	// today, so leaving this NONE keeps writes' behavior unchanged from before this fix.
+	// Writes address columns through `physical_name` and `field_id`, never `identifier`, so the mode is moot here
 	KernelSchemaVisitor visitor_state(engine, DeltaColumnMappingMode::NONE);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
