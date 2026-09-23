@@ -43,7 +43,9 @@ IO Error: DeltaKernel ObjectStoreError (8): Error interacting with object store:
 statement ok
 ATTACH 's3://bucket/doesnt/exist/either' AS s1 (TYPE delta);
 
+# Listing the catalog asks whether a table is there, and that listing fails before kernel is involved,
+# so this is DuckDB's error about the endpoint rather than kernel's about the object store.
 statement error
 SHOW ALL TABLES;
 ----
-IO Error: DeltaKernel ObjectStoreError (8): Error interacting with object store: Generic S3 error: Error performing GET
+<REGEX>:.*Could not connect to server.*bucket.localhost:1337.*
