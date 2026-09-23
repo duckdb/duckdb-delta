@@ -125,7 +125,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          "How to read a data file of a column-mapped table that does not conform to the Delta "
 	                          "protocol, such as an id-mode file without parquet field ids. 'strict' refuses the "
 	                          "file; 'lenient' matches its columns by name and logs a warning.",
-	                          LogicalType::VARCHAR, Value("strict"));
+	                          LogicalType::VARCHAR, Value("lenient"));
 
 	config.AddExtensionOption(
 	    "delta_kernel_logging",
