@@ -291,9 +291,43 @@ statement ok
 ATTACH '{TEMP_DIR}/delta_create_cm_case' AS cm_case (TYPE delta);
 
 statement error
-CREATE TABLE cm_case.cm_case (i INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'Name');
+CREATE TABLE cm_case.cm_case (i INTEGER, s VARCHAR) WITH ('delta.columnMapping.mode' = 'Name');
 ----
 Invalid column mapping mode
+
+# `delta.enableIcebergCompatV3` requires column mapping, and kernel maps with `name` when no mode is
+# named, so the refusals above have to cover it too
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_cm_iceberg' AS cm_iceberg (TYPE delta);
+
+statement error
+CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.enableIcebergCompatV3' = 'true');
+----
+column mapping on a nested column is not supported
+
+statement error
+CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.enableIcebergCompatV3' = 'true');
+----
+partitioned Delta table that uses column mapping is not supported
+
+# A table of top-level columns is writable, so it is created, with the mode kernel chose
+statement ok
+CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, s VARCHAR) WITH ('delta.enableIcebergCompatV3' = 'true');
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"')
+FROM read_json('{TEMP_DIR}/delta_create_cm_iceberg/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+name
+
+statement ok
+INSERT INTO cm_iceberg.cm_iceberg VALUES (1, 'a');
+
+query II
+SELECT i, s FROM cm_iceberg.cm_iceberg;
+----
+1	a
 
 # -----------------------------------------------------------------------------
 # Unsupported for now

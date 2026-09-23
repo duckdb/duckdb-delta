@@ -111,18 +111,33 @@ static vector<pair<string, string>> GetCreateTableProperties(ClientContext &cont
 	return properties;
 }
 
-//! The writer maps top-level columns only and refuses nested or partitioned mapped tables at INSERT, so
-//! refuse those shapes here rather than create a table nothing can insert into. The mode is matched
-//! exactly, as kernel matches it: a looser match would refuse tables kernel never maps.
-static void ThrowIfColumnMappingUnwritable(const CreateTableInfo &base, const vector<string> &partition_columns,
-                                           const vector<pair<string, string>> &properties) {
-	bool column_mapped = false;
+//! The mode kernel will map with: the property when it names one, and `name` when
+//! `delta.enableIcebergCompatV3` requires mapping without naming a mode
+//! (`maybe_enable_iceberg_compat_v3_dependencies` in kernel's create-table builder). Kernel refuses every
+//! other combination itself, and says why, so nothing else is mirrored here. Values are matched exactly,
+//! as kernel matches them.
+static string EffectiveColumnMappingMode(const vector<pair<string, string>> &properties) {
+	string mode;
+	bool iceberg_compat_v3 = false;
 	for (auto &property : properties) {
 		if (property.first == "delta.columnMapping.mode") {
-			column_mapped = property.second == "name" || property.second == "id";
+			mode = property.second;
+		} else if (property.first == "delta.enableIcebergCompatV3") {
+			iceberg_compat_v3 = property.second == "true";
 		}
 	}
-	if (!column_mapped) {
+	if (mode.empty() && iceberg_compat_v3) {
+		return "name";
+	}
+	return mode;
+}
+
+//! The writer maps top-level columns only and refuses nested or partitioned mapped tables at INSERT, so
+//! refuse those shapes here rather than create a table nothing can insert into.
+static void ThrowIfColumnMappingUnwritable(const CreateTableInfo &base, const vector<string> &partition_columns,
+                                           const vector<pair<string, string>> &properties) {
+	auto mode = EffectiveColumnMappingMode(properties);
+	if (mode != "name" && mode != "id") {
 		return;
 	}
 	for (auto &col : base.columns.Logical()) {
