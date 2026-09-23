@@ -68,6 +68,24 @@ SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_containers_nested_
 2	[20]	{q=200}
 
 # -----------------------------------------------------------------------------
+# id mode, a file that predates a column
+#
+
+# Two files: the first carries ids 1 and 2 only, the second all three. An id the file lacks reads as NULL
+# for that file, the rest of the file resolves as usual.
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_missing_column') ORDER BY a;
+----
+1	alice	NULL
+2	bob	NULL
+3	carol	30
+
+query II
+SELECT a, c FROM delta_scan('data/inlined/column_mapping/id_mode_missing_column') WHERE c IS NOT NULL;
+----
+3	30
+
+# -----------------------------------------------------------------------------
 # name mode, parquet columns carry the physical names
 #
 

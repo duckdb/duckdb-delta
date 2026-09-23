@@ -25,6 +25,7 @@ resolves it. The table says which is which.
 | `id_mode_no_field_ids_physical` | `id` | `a`, `b` | Read fixture, non-conforming: the file has no parquet field ids and names its columns by physical name. Refused under the strict policy, read under the lenient one. |
 | `id_mode_no_field_ids_logical` | `id` | `a`, `b` | Read fixture, non-conforming: no field ids, logical column names. What DuckDB itself wrote into id-mode tables before it emitted field ids. |
 | `id_mode_no_field_ids_unmatched` | `id` | `a`, `b` | Read fixture, non-conforming: no field ids, and columns named `x`, `y` that match nothing. Refused under both policies. |
+| `id_mode_missing_column` | `id` | `a`, `b`, `c` | Read fixture, two files: the first predates `c` and carries ids 1 and 2 only. An id a file lacks reads as NULL for that file. |
 | `name_mode_physical_names` | `name` | `a`, `b` | Read fixture. The file names its columns by physical name, as name mode requires. |
 | `invalid_id_null` | `name` | as `name_mode`, `id`'s id is `null` | A JSON `null` id must be an error, not a value. Kernel refuses it when loading the schema. |
 | `invalid_id_string` | `name` | as `name_mode`, `id`'s id is `"1"` | A numeric-looking string is still not a number. Kernel refuses it too. |
