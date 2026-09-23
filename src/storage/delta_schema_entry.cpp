@@ -64,16 +64,24 @@ static Value ParseCreateTableOption(ClientContext &context, TableFunctionBinder 
 	return value.DefaultCastAs(type);
 }
 
-//! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (path =
-//! '...')` names it explicitly.
+//! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (location =
+//! '...')` names it explicitly. `path` is the older spelling of the same option; the Iceberg catalog
+//! calls it `location`, and a table option should not depend on which catalog is attached.
 static string GetCreateTablePath(ClientContext &context, TableFunctionBinder &binder, const CreateTableInfo &base,
                                  DeltaCatalog &delta_catalog) {
-	auto option = base.options.find("path");
+	auto option = base.options.find("location");
+	auto path_option = base.options.find("path");
+	if (option != base.options.end() && path_option != base.options.end()) {
+		throw BinderException("Delta CREATE TABLE takes 'location' or 'path', not both");
+	}
+	if (option == base.options.end()) {
+		option = path_option;
+	}
 	if (option == base.options.end()) {
 		return delta_catalog.GetDBPath();
 	}
-	auto path =
-	    ParseCreateTableOption(context, binder, *option->second, "path", LogicalType::VARCHAR).GetValue<string>();
+	auto path = ParseCreateTableOption(context, binder, *option->second, option->first, LogicalType::VARCHAR)
+	                .GetValue<string>();
 
 	// A Delta catalog is a single table at a single path, so a divergent path would produce a
 	// catalog entry that does not describe what was attached. Compare normalized, so a trailing
@@ -86,14 +94,14 @@ static string GetCreateTablePath(ClientContext &context, TableFunctionBinder &bi
 	return path;
 }
 
-//! Every option other than `path` is a Delta table property, handed to kernel untouched: kernel
-//! decides which keys it recognizes and derives the protocol from them. Sorted, so the written
+//! Every option that does not name the location is a Delta table property, handed to kernel untouched:
+//! kernel decides which keys it recognizes and derives the protocol from them. Sorted, so the written
 //! configuration does not depend on the option map's iteration order.
 static vector<pair<string, string>> GetCreateTableProperties(ClientContext &context, TableFunctionBinder &binder,
                                                              const CreateTableInfo &base) {
 	vector<pair<string, string>> properties;
 	for (auto &option : base.options) {
-		if (StringUtil::CIEquals(option.first, "path")) {
+		if (StringUtil::CIEquals(option.first, "location") || StringUtil::CIEquals(option.first, "path")) {
 			continue;
 		}
 		auto value = ParseCreateTableOption(context, binder, *option.second, option.first, LogicalType::VARCHAR);
