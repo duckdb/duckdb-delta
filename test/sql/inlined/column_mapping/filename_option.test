@@ -17,7 +17,7 @@ require delta
 
 query III
 SELECT a, b, parse_filename(filename)
-FROM delta_scan('data/inlined/column_mapping_id_mode_logical_names/delta_lake', filename=true)
+FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names', filename=true)
 ORDER BY a;
 ----
 1	alice	part-00000.snappy.parquet
@@ -25,7 +25,7 @@ ORDER BY a;
 
 query II
 SELECT a, b
-FROM delta_scan('data/inlined/column_mapping_id_mode_logical_names/delta_lake', filename=true)
+FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names', filename=true)
 WHERE filename LIKE '%snappy.parquet' AND a = 2;
 ----
 2	bob

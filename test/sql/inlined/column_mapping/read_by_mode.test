@@ -1,0 +1,54 @@
+# name: test/sql/inlined/column_mapping/read_by_mode.test
+# description: each column mapping mode resolves parquet columns the way the protocol's reader requirements say
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# The logical schema is (a, b) with physical names col-a-uuid / col-b-uuid and field ids 1 / 2 in every
+# table below; the tables differ in the mode and in what the parquet file calls its columns.
+
+# -----------------------------------------------------------------------------
+# id mode, parquet columns carry the logical names
+#
+
+# Only the field ids connect file to schema here: matching by physical name finds nothing.
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# id mode, parquet columns carry the physical names
+#
+
+# The layout Spark writes: physical names and field ids both present.
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_physical_names') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# id mode, struct children
+#
+
+# Schema nested_col STRUCT(x, y); the struct and both children carry field ids and physical names, the file
+# keeps the logical names.
+query I
+SELECT nested_col FROM delta_scan('data/inlined/column_mapping/id_mode_nested_struct') ORDER BY nested_col.x;
+----
+{'x': 1, 'y': alice}
+{'x': 2, 'y': bob}
+
+# -----------------------------------------------------------------------------
+# name mode, parquet columns carry the physical names
+#
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/name_mode_physical_names') ORDER BY a;
+----
+1	alice
+2	bob
