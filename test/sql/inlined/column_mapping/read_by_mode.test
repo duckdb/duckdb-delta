@@ -44,6 +44,30 @@ SELECT nested_col FROM delta_scan('data/inlined/column_mapping/id_mode_nested_st
 {'x': 2, 'y': bob}
 
 # -----------------------------------------------------------------------------
+# id mode, list and map columns
+#
+
+# Spark's layout: the file carries field ids on the columns and none on the list element or the map
+# entries, and the log has no `nested.ids`; the children resolve under their parent's id.
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_containers') ORDER BY a;
+----
+1	[10, 11]	{k=100}
+2	[20]	{q=200}
+
+query II
+SELECT unnest(l), m['q'] FROM delta_scan('data/inlined/column_mapping/id_mode_containers') WHERE a = 2;
+----
+20	200
+
+# The IcebergCompat layout: `nested.ids` in the log and matching field ids on the file's children.
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_containers_nested_ids') ORDER BY a;
+----
+1	[10, 11]	{k=100}
+2	[20]	{q=200}
+
+# -----------------------------------------------------------------------------
 # name mode, parquet columns carry the physical names
 #
 

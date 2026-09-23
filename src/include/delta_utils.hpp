@@ -277,20 +277,56 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 		return res;
 	}
 
-	//! Field_id matching is all-or-nothing: DuckDB's FieldIdMapper requires an identifier on
-	//! every column it visits, nested ones included. If any column in an id-mode schema lacks
-	//! one, fall the whole schema back to physical-name matching -- the pre-existing behavior,
-	//! which is correct for writers that name parquet columns with the physical names.
-	static bool ResolveByFieldId(vector<DeltaMultiFileColumnDefinition> &schema, DeltaColumnMappingMode mapping_mode) {
+	//! The kernel pairs a list element and a map's key and value by position, not by id. When neither the log
+	//! nor the file names an id for them, both sides derive the same one from the parent's: the parent's id
+	//! for the first position, its complement for the second. Real ids are non-negative, so nothing collides.
+	static int32_t ContainerChildFieldId(int32_t parent_id, idx_t position) {
+		return position == 0 ? parent_id : ~parent_id;
+	}
+
+	//! Works on the scan schema and on the parquet reader's columns alike. The parquet reader puts a
+	//! `key_value` struct between a map and its entries; the schema does not.
+	template <class COLUMN>
+	static void FillContainerChildIds(COLUMN &column) {
+		if (column.identifier.IsNull()) {
+			return;
+		}
+		vector<COLUMN *> entries;
+		switch (column.type.id()) {
+		case LogicalTypeId::LIST:
+			entries.push_back(&column.children[0]);
+			break;
+		case LogicalTypeId::MAP: {
+			auto &kv = column.children.size() == 1 ? column.children[0].children : column.children;
+			for (auto &entry : kv) {
+				entries.push_back(&entry);
+			}
+			break;
+		}
+		default:
+			return;
+		}
+		auto parent_id = column.identifier.template GetValue<int32_t>();
+		for (idx_t i = 0; i < entries.size(); i++) {
+			if (entries[i]->identifier.IsNull()) {
+				entries[i]->identifier = Value::INTEGER(ContainerChildFieldId(parent_id, i));
+			}
+			FillContainerChildIds(*entries[i]);
+		}
+	}
+
+	//! DuckDB's FieldIdMapper needs an identifier on every column it visits, nested ones included. In id mode
+	//! the protocol puts one on every field and the visitor derives the synthetic container children's, so a
+	//! column without one is a malformed schema, not a case to fall back from.
+	static bool ResolveByFieldId(const vector<DeltaMultiFileColumnDefinition> &schema,
+	                             DeltaColumnMappingMode mapping_mode) {
 		if (mapping_mode != DeltaColumnMappingMode::ID) {
 			return false;
 		}
 		for (const auto &col : schema) {
 			if (!col.HasFieldIdsRecursive()) {
-				for (auto &fallback : schema) {
-					fallback.UseNameIdentifiers();
-				}
-				return false;
+				throw InvalidInputException("Column '%s' has no column mapping id, which id mode requires",
+				                            col.name.GetIdentifierName());
 			}
 		}
 		return true;
@@ -458,12 +494,9 @@ private:
 		col_def.default_expression = ConstantExpression::FromValue(Value(col_def.type));
 	}
 
-	// Lift a synthetic child's (map key/value, list element) field id from the parent's
-	// `delta.columnMapping.nested.ids` (a JSON object like {"col_4.key":11,"col_4.value":12}) and set
-	// it as the child's INTEGER identifier. The kernel does not attach a column-mapping id to these
-	// synthetic fields, so without this HasFieldIdsRecursive() returns false for any schema containing
-	// a map or list and ResolveByFieldId falls the whole schema back to name matching -- which misses
-	// columns whose physical parquet name was sanitized away from the logical name.
+	// A synthetic child (list element, map key/value) carries no column mapping id of its own. IcebergCompat
+	// writers record one in the parent's `delta.columnMapping.nested.ids` ({"<physical>.element": 3, ...});
+	// other writers record nothing, and FillContainerChildIds derives one.
 	// Only in `id` mode: `name`-mode tables carry `nested.ids` too (UniForm requires them), and the
 	// name mapper reads every identifier as a VARCHAR.
 	static void ApplyNestedFieldIds(KernelSchemaVisitor *state, const ffi::CMetadataMap *metadata,

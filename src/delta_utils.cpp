@@ -773,6 +773,9 @@ void KernelSchemaVisitor::VisitArray(KernelSchemaVisitor *state, uintptr_t sibli
 
 	ApplyDeltaColumnMapping(state, metadata, list_def);
 	ApplyNestedFieldIds(state, metadata, list_def, list_def.children[0], ".element");
+	if (state->mapping_mode == DeltaColumnMappingMode::ID) {
+		DeltaMultiFileColumnDefinition::FillContainerChildIds(list_def);
+	}
 
 	state->AppendToList(sibling_list_id, name, std::move(list_def));
 }
@@ -798,6 +801,9 @@ void KernelSchemaVisitor::VisitMap(KernelSchemaVisitor *state, uintptr_t sibling
 	ApplyDeltaColumnMapping(state, metadata, map_def);
 	ApplyNestedFieldIds(state, metadata, map_def, map_def.children[0], ".key");
 	ApplyNestedFieldIds(state, metadata, map_def, map_def.children[1], ".value");
+	if (state->mapping_mode == DeltaColumnMappingMode::ID) {
+		DeltaMultiFileColumnDefinition::FillContainerChildIds(map_def);
+	}
 
 	state->AppendToList(sibling_list_id, name, std::move(map_def));
 }

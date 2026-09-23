@@ -20,6 +20,8 @@ resolves it. The table says which is which.
 | `id_mode_logical_names` | `id` | `a`, `b` | Read fixture. The file names its columns `a`/`b` and carries field ids 1/2; only the ids connect file to schema. Read by `read_by_mode.test` and `filename_option.test`. |
 | `id_mode_physical_names` | `id` | `a`, `b` | Read fixture. Spark's layout: physical column names and field ids both present. |
 | `id_mode_nested_struct` | `id` | `nested_col STRUCT(x, y)` | Read fixture. Struct and children each carry an id and a physical name; the file keeps the logical names. |
+| `id_mode_containers` | `id` | `a`, `l BIGINT[]`, `m MAP` | Read fixture. Spark's layout for containers: ids on the columns, none on the list element or map entries, no `nested.ids`. |
+| `id_mode_containers_nested_ids` | `id` | `a`, `l BIGINT[]`, `m MAP` | Read fixture. The IcebergCompat layout: `nested.ids` in the log, matching ids on the file's children, logical column names. |
 | `name_mode_physical_names` | `name` | `a`, `b` | Read fixture. The file names its columns by physical name, as name mode requires. |
 | `invalid_id_null` | `name` | as `name_mode`, `id`'s id is `null` | A JSON `null` id must be an error, not a value. Kernel refuses it when loading the schema. |
 | `invalid_id_string` | `name` | as `name_mode`, `id`'s id is `"1"` | A numeric-looking string is still not a number. Kernel refuses it too. |

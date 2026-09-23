@@ -238,6 +238,10 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	auto mapping_mode = bind_data.reader_bind.mapping;
 	if (snapshot.ResolvesByFieldId()) {
 		mapping_mode = MultiFileColumnMappingMode::BY_FIELD_ID;
+		// The parquet reader leaves a list element and map entries without ids when the file has none
+		for (auto &column : reader_data.reader->columns) {
+			DeltaMultiFileColumnDefinition::FillContainerChildIds(column);
+		}
 	}
 
 	auto result = CreateMapping(context, reader_data, overridden_global_columns, global_column_ids, table_filters,
