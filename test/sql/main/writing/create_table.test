@@ -167,10 +167,21 @@ ATTACH '{TEMP_DIR}/delta_create_partitioned' AS partitioned (TYPE delta);
 statement ok
 CREATE TABLE partitioned.partitioned (id INTEGER, part_col VARCHAR) PARTITIONED BY (part_col);
 
-query I
-SELECT count(*) FROM partitioned.partitioned;
+# Written to and read back: a partition column the writer disagreed with would still create cleanly
+statement ok
+INSERT INTO partitioned.partitioned VALUES (1, 'a'), (2, 'b');
+
+query II
+SELECT id, part_col FROM partitioned.partitioned ORDER BY id;
 ----
-0
+1	a
+2	b
+
+# One directory per partition value, as Delta lays them out
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_partitioned/part_col=*/*.parquet');
+----
+2
 
 # Kernel requires at least one non-partition column
 statement ok
