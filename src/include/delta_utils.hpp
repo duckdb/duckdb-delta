@@ -476,8 +476,12 @@ private:
 		if (!nested_ids || nested_ids->type().id() != LogicalTypeId::VARCHAR) {
 			return;
 		}
+		if (parent.physical_name.empty()) {
+			return;
+		}
 		const auto &nested = StringValue::Get(*nested_ids);
-		auto needle = suffix + "\":";
+		// The full key: a bare `.key":` would also match `<name>.value.key":` of a nested map
+		auto needle = "\"" + parent.physical_name + suffix + "\":";
 		auto pos = nested.find(needle);
 		if (pos == string::npos) {
 			return;

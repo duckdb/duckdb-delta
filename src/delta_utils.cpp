@@ -1113,13 +1113,11 @@ DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *s
 		}
 	};
 	ffi::visit_metadata_configuration(snapshot, &ctx, visitor);
-	// The Delta protocol specifies lowercase values, but normalize defensively so a
-	// non-conformant writer's "ID"/"Name" doesn't silently degrade to NONE.
-	auto mode = StringUtil::Lower(ctx.mode);
-	if (mode == "id") {
+	// Case-sensitive, and an unknown value means unmapped: the same as the kernel's own parse of this property
+	if (ctx.mode == "id") {
 		return DeltaColumnMappingMode::ID;
 	}
-	if (mode == "name") {
+	if (ctx.mode == "name") {
 		return DeltaColumnMappingMode::NAME;
 	}
 	return DeltaColumnMappingMode::NONE;

@@ -247,7 +247,7 @@ protected:
 	// scan
 	mutable vector<DeltaMultiFileColumnDefinition> lazy_loaded_schema;
 
-	// The table's column mapping mode, read from the snapshot metadata alongside lazy_loaded_schema
+	// Read once with the snapshot; a table property, so it cannot change underneath a scan
 	mutable DeltaColumnMappingMode column_mapping_mode = DeltaColumnMappingMode::NONE;
 
 	// Whether lazy_loaded_schema carries field_id identifiers for every column, so the reader
