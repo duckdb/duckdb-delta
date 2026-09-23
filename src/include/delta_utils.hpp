@@ -467,7 +467,8 @@ private:
 	// Only in `id` mode: `name`-mode tables carry `nested.ids` too (UniForm requires them), and the
 	// name mapper reads every identifier as a VARCHAR.
 	static void ApplyNestedFieldIds(KernelSchemaVisitor *state, const ffi::CMetadataMap *metadata,
-	                                DeltaMultiFileColumnDefinition &child, const string &suffix) {
+	                                const DeltaMultiFileColumnDefinition &parent, DeltaMultiFileColumnDefinition &child,
+	                                const string &suffix) {
 		if (state->mapping_mode != DeltaColumnMappingMode::ID) {
 			return;
 		}
@@ -487,7 +488,18 @@ private:
 			end++;
 		}
 		if (end > pos) {
-			child.identifier = Value(nested.substr(pos, end - pos)).DefaultCastAs(LogicalType::INTEGER);
+			auto digits = nested.substr(pos, end - pos);
+			auto id = Value(digits).DefaultTryCastAs(LogicalType::INTEGER);
+			if (!id) {
+				state->RecordError(ExceptionType::INVALID_INPUT,
+				                   StringUtil::Format("Column '%s' has the nested column mapping id %s for '%s', which "
+				                                      "is not an integer between 0 and %d",
+				                                      parent.name.GetIdentifierName(), digits,
+				                                      parent.physical_name + suffix,
+				                                      NumericLimits<int32_t>::Maximum()));
+				return;
+			}
+			child.identifier = *id;
 		}
 	}
 

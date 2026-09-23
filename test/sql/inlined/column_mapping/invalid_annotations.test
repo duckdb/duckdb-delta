@@ -31,3 +31,14 @@ statement error
 SELECT * FROM delta_scan('data/inlined/column_mapping/invalid_physical_name_empty');
 ----
 Column 'id' has the physical name '', which is not a non-empty string
+
+# -----------------------------------------------------------------------------
+# Nested id out of range
+#
+
+# The value sits in delta.columnMapping.nested.ids, which kernel passes through unchecked. The
+# schema callback cannot throw, so DuckDB records the error and raises it once the visit returns.
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/invalid_nested_id_range');
+----
+has the nested column mapping id 99999999999 for

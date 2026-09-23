@@ -19,6 +19,7 @@ emits.
 | `name_mode_nested_ids` | `name` | `a`, `l BIGINT[]`, `m MAP` | Has one data file. The list and map carry `delta.columnMapping.nested.ids` as UniForm writes them; a name-mode reader must keep resolving their children by name, not by those ids. Read by `name_mode_nested_ids.test`. |
 | `invalid_id_null` | `name` | as `name_mode`, `id`'s id is `null` | A JSON `null` id must be an error, not a value. Kernel refuses it when loading the schema. |
 | `invalid_id_string` | `name` | as `name_mode`, `id`'s id is `"1"` | A numeric-looking string is still not a number. Kernel refuses it too. |
+| `invalid_nested_id_range` | `id` | `a`, `l BIGINT[]`, `m MAP`, one nested id above `INT32` max | Has one data file. A nested id that cannot be a parquet field id must be a readable error at bind, not an abort inside the kernel's schema callback. Read by `invalid_annotations.test`. |
 | `invalid_physical_name_empty` | `name` | as `name_mode`, `id`'s physical name is `""` | Kernel accepts an empty physical name on read (delta-spark accepts them); it names no column, so DuckDB refuses it. |
 
 Hand-written rather than generated because the field metadata above is the entire input to the write
