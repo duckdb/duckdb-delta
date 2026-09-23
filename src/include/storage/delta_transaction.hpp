@@ -59,6 +59,11 @@ public:
 	static ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> CommitCallback(ffi::NullableCvoid context,
 	                                                                                ffi::CommitRequest request);
 
+	//! A committer that routes commits through the catalog this table was attached from, for the table id
+	//! given at ATTACH (`table_path` stands in when there is none). The caller passes it to a kernel API
+	//! that consumes it.
+	ffi::Handle<ffi::MutableCommitter> CreateCatalogCommitter(const string &table_path);
+
 	void SetParentTableEntry(TableCatalogEntry &entry) {
 		lock_guard<mutex> guard(lock);
 		parent_table_entry = &entry;

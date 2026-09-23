@@ -520,6 +520,28 @@ void DeltaTransaction::Rollback() {
 	}
 }
 
+ffi::Handle<ffi::MutableCommitter> DeltaTransaction::CreateCatalogCommitter(const string &table_path) {
+	// `this` is the context every commit comes back to
+	auto commit_client = ffi::get_uc_commit_client(this, CommitCallback);
+	auto table_id = KernelUtils::ToDeltaString(unity_table_id.empty() ? table_path : unity_table_id);
+	// Placeholders, deliberately: kernel's FFI commit client ignores the table name
+	// (`update_table(_target, ..)` in ffi/src/delta_kernel_unity_catalog.rs) and commits reach CommitCallback
+	// by table id alone. If one of these ever shows up somewhere, a real name now has to be threaded through.
+	static const string IGNORED_UC_CATALOG = "duckdb-delta-ignored-uc-catalog";
+	static const string IGNORED_UC_SCHEMA = "duckdb-delta-ignored-uc-schema";
+	static const string IGNORED_UC_TABLE = "duckdb-delta-ignored-uc-table";
+	ffi::Handle<ffi::MutableCommitter> committer;
+	auto res = KernelUtils::TryUnpackResult(
+	    ffi::get_uc_committer(commit_client, table_id, KernelUtils::ToDeltaString(IGNORED_UC_CATALOG),
+	                          KernelUtils::ToDeltaString(IGNORED_UC_SCHEMA),
+	                          KernelUtils::ToDeltaString(IGNORED_UC_TABLE), DuckDBEngineError::AllocateError),
+	    committer);
+	if (res.HasError()) {
+		res.Throw();
+	}
+	return committer;
+}
+
 void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 	current_context = context.shared_from_this();
 
@@ -540,21 +562,9 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 		auto snapshot_ref = table_entry->snapshot->snapshot->GetLockingRef();
 
 		if (parent_commit) {
-			// Create UC commit client with callbacks, passing `this` as the context
-			auto commit_client = ffi::get_uc_commit_client(this, CommitCallback);
-			auto table_id = KernelUtils::ToDeltaString(unity_table_id.empty() ? path : unity_table_id);
-			// Placeholders, deliberately: kernel's FFI commit client ignores the table name
-			// (`update_table(_target, ..)` in ffi/src/delta_kernel_unity_catalog.rs) and commits reach CommitCallback
-			// by table id alone. If one of these ever shows up somewhere, a real name now has to be threaded through.
-			static const string IGNORED_UC_CATALOG = "duckdb-delta-ignored-uc-catalog";
-			static const string IGNORED_UC_SCHEMA = "duckdb-delta-ignored-uc-schema";
-			static const string IGNORED_UC_TABLE = "duckdb-delta-ignored-uc-table";
-			auto uc_committer = table_entry->snapshot->TryUnpackKernelResult(
-			    ffi::get_uc_committer(commit_client, table_id, KernelUtils::ToDeltaString(IGNORED_UC_CATALOG),
-			                          KernelUtils::ToDeltaString(IGNORED_UC_SCHEMA),
-			                          KernelUtils::ToDeltaString(IGNORED_UC_TABLE), DuckDBEngineError::AllocateError));
-			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction_with_committer(
-			    snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(), uc_committer));
+			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
+			    ffi::transaction_with_committer(snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(),
+			                                    CreateCatalogCommitter(path)));
 		} else {
 			// This builds its own snapshot from the path, so a max_catalog_version given at ATTACH does not
 			// reach it -- and the kernel's own advice, to supply one when loading, is what the caller did.

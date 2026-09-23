@@ -297,9 +297,18 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		}
 	}
 
+	// A catalog-managed table's version 0 goes through the catalog's committer, as every commit after it
+	// does: kernel refuses to create one through the filesystem committer. Kernel writes version 0 itself
+	// and leaves the table unregistered, so whoever staged it finishes the registration.
 	ffi::ExclusiveCreateTransaction *create_transaction;
 	auto build_res =
-	    KernelUtils::TryUnpackResult(ffi::create_table_builder_build(create_builder, engine.get()), create_transaction);
+	    delta_catalog.parent_commit
+	        ? KernelUtils::TryUnpackResult(
+	              ffi::create_table_builder_build_with_committer(
+	                  create_builder, GetDeltaTransaction(transaction).CreateCatalogCommitter(path), engine.get()),
+	              create_transaction)
+	        : KernelUtils::TryUnpackResult(ffi::create_table_builder_build(create_builder, engine.get()),
+	                                      create_transaction);
 	if (build_res.HasError()) {
 		build_res.Throw();
 	}
