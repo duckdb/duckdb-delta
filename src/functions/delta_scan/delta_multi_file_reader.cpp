@@ -7,6 +7,7 @@
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/query_profiler.hpp"
@@ -211,6 +212,54 @@ static void CastNaiveTimestampsAsUtc(unique_ptr<Expression> &expr) {
 	                                      [](unique_ptr<Expression> &child) { CastNaiveTimestampsAsUtc(child); });
 }
 
+enum class DeltaColumnMappingPolicy { STRICT, LENIENT };
+
+static DeltaColumnMappingPolicy ReadColumnMappingPolicy(ClientContext &context) {
+	Value value;
+	context.TryGetCurrentSetting("delta_column_mapping_policy", value);
+	auto policy = StringUtil::Lower(value.ToString());
+	if (policy == "strict") {
+		return DeltaColumnMappingPolicy::STRICT;
+	}
+	if (policy == "lenient") {
+		return DeltaColumnMappingPolicy::LENIENT;
+	}
+	throw InvalidInputException("delta_column_mapping_policy must be 'strict' or 'lenient', not '%s'",
+	                            value.ToString());
+}
+
+// An id-mode file without parquet field ids does not conform to the protocol's reader requirements for column
+// mapping. The policy decides between refusing it and matching its columns by name: physical names first, then
+// the logical names DuckDB wrote into id-mode tables before it emitted field ids. A rung has to cover every
+// column in the file, so a file never reads half by name and half as NULL.
+static vector<MultiFileColumnDefinition>
+ResolveFileWithoutFieldIds(ClientContext &context, const vector<DeltaMultiFileColumnDefinition> &scan_columns,
+                           const vector<MultiFileColumnDefinition> &file_columns, const string &filename) {
+	if (ReadColumnMappingPolicy(context) == DeltaColumnMappingPolicy::STRICT) {
+		throw InvalidInputException("File '%s' has no parquet field ids, which the table's column mapping mode 'id' "
+		                            "requires. Set delta_column_mapping_policy = 'lenient' to match its columns by "
+		                            "name instead",
+		                            filename);
+	}
+	for (bool physical : {true, false}) {
+		if (!DeltaMultiFileColumnDefinition::CoveredByNames(file_columns, scan_columns, physical)) {
+			continue;
+		}
+		auto columns = scan_columns;
+		for (auto &column : columns) {
+			column.UseNameIdentifiers(physical);
+		}
+		DUCKDB_LOG_INTERNAL(context, "delta.ColumnMapping", LogLevel::LOG_WARNING,
+		                    StringUtil::Format("File '%s' has no parquet field ids; its columns were matched by %s "
+		                                       "name under delta_column_mapping_policy = 'lenient'",
+		                                       filename, physical ? "physical" : "logical"));
+		return DeltaMultiFileColumnDefinition::ConvertToBase(columns);
+	}
+	throw InvalidInputException("File '%s' has no parquet field ids, and its column names match neither the physical "
+	                            "nor the logical names of the table's schema",
+	                            filename);
+}
+
 ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData &reader_data,
                                                             const MultiFileBindData &bind_data,
                                                             const vector<MultiFileColumnDefinition> &global_columns,
@@ -237,10 +286,16 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	// in `none` mode it is unset, both of which the name mapper handles.
 	auto mapping_mode = bind_data.reader_bind.mapping;
 	if (snapshot.ResolvesByFieldId()) {
-		mapping_mode = MultiFileColumnMappingMode::BY_FIELD_ID;
-		// The parquet reader leaves a list element and map entries without ids when the file has none
-		for (auto &column : reader_data.reader->columns) {
-			DeltaMultiFileColumnDefinition::FillContainerChildIds(column);
+		auto &file_columns = reader_data.reader->columns;
+		if (DeltaMultiFileColumnDefinition::AllHaveFieldIds(file_columns)) {
+			mapping_mode = MultiFileColumnMappingMode::BY_FIELD_ID;
+			// The parquet reader leaves a list element and map entries without ids when the file has none
+			for (auto &column : file_columns) {
+				DeltaMultiFileColumnDefinition::FillContainerChildIds(column);
+			}
+		} else {
+			overridden_global_columns =
+			    ResolveFileWithoutFieldIds(context, scan_columns, file_columns, reader_data.reader->GetFileName());
 		}
 	}
 

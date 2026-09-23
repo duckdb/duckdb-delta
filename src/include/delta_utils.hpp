@@ -277,6 +277,32 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 		return res;
 	}
 
+	//! A file conforms to id mode when every one of its columns carries a parquet field id
+	static bool AllHaveFieldIds(const vector<MultiFileColumnDefinition> &columns) {
+		for (auto &column : columns) {
+			if (column.identifier.IsNull() || column.identifier.type().id() != LogicalTypeId::INTEGER) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	//! Whether every column of the file has a schema column of that physical (or logical) name, so name matching
+	//! resolves the whole file rather than part of it
+	static bool CoveredByNames(const vector<MultiFileColumnDefinition> &file_columns,
+	                           const vector<DeltaMultiFileColumnDefinition> &schema, bool physical) {
+		case_insensitive_set_t names;
+		for (auto &column : schema) {
+			names.insert(physical ? column.physical_name : column.name.GetIdentifierName());
+		}
+		for (auto &column : file_columns) {
+			if (names.find(column.name.GetIdentifierName()) == names.end()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	//! The kernel pairs a list element and a map's key and value by position, not by id. When neither the log
 	//! nor the file names an id for them, both sides derive the same one from the parent's: the parent's id
 	//! for the first position, its complement for the second. Real ids are non-negative, so nothing collides.
@@ -365,12 +391,12 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 		return true;
 	}
 
-	//! Swap field_id identifiers back to the physical name, for the name-matching reader.
-	//! Columns without a physical name fall back to matching on the display name.
-	void UseNameIdentifiers() {
-		identifier = physical_name.empty() ? Value() : Value(physical_name);
+	//! Swap field_id identifiers for the physical name, or clear them so the name-matching reader falls
+	//! back to the display name.
+	void UseNameIdentifiers(bool physical) {
+		identifier = physical && !physical_name.empty() ? Value(physical_name) : Value();
 		for (auto &child : children) {
-			child.UseNameIdentifiers();
+			child.UseNameIdentifiers(physical);
 		}
 	}
 

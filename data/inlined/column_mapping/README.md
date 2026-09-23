@@ -22,6 +22,9 @@ resolves it. The table says which is which.
 | `id_mode_nested_struct` | `id` | `nested_col STRUCT(x, y)` | Read fixture. Struct and children each carry an id and a physical name; the file keeps the logical names. |
 | `id_mode_containers` | `id` | `a`, `l BIGINT[]`, `m MAP` | Read fixture. Spark's layout for containers: ids on the columns, none on the list element or map entries, no `nested.ids`. |
 | `id_mode_containers_nested_ids` | `id` | `a`, `l BIGINT[]`, `m MAP` | Read fixture. The IcebergCompat layout: `nested.ids` in the log, matching ids on the file's children, logical column names. |
+| `id_mode_no_field_ids_physical` | `id` | `a`, `b` | Read fixture, non-conforming: the file has no parquet field ids and names its columns by physical name. Refused under the strict policy, read under the lenient one. |
+| `id_mode_no_field_ids_logical` | `id` | `a`, `b` | Read fixture, non-conforming: no field ids, logical column names. What DuckDB itself wrote into id-mode tables before it emitted field ids. |
+| `id_mode_no_field_ids_unmatched` | `id` | `a`, `b` | Read fixture, non-conforming: no field ids, and columns named `x`, `y` that match nothing. Refused under both policies. |
 | `name_mode_physical_names` | `name` | `a`, `b` | Read fixture. The file names its columns by physical name, as name mode requires. |
 | `invalid_id_null` | `name` | as `name_mode`, `id`'s id is `null` | A JSON `null` id must be an error, not a value. Kernel refuses it when loading the schema. |
 | `invalid_id_string` | `name` | as `name_mode`, `id`'s id is `"1"` | A numeric-looking string is still not a number. Kernel refuses it too. |
