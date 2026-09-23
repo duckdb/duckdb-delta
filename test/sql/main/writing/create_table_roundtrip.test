@@ -185,11 +185,11 @@ id	true	true
 
 # Stats must use physical names too. A reader looks stats up by physical name, so
 # stats under `code` would be silently ignored.
-query I
-SELECT bool_or(add.stats LIKE '%"code"%')
+query II
+SELECT add.stats LIKE '%col-%', add.stats LIKE '%"code"%'
 FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_name/_delta_log/00000000000000000001.json') WHERE add IS NOT NULL;
 ----
-false
+true	false
 
 # A fresh attach has nothing cached, so this read depends only on what is on disk
 statement ok
@@ -220,8 +220,6 @@ CREATE TABLE rt_cm_id.rt_cm_id (id INTEGER, code VARCHAR) WITH ('delta.columnMap
 statement ok
 INSERT INTO rt_cm_id.rt_cm_id VALUES (1, 'ABC'), (2, 'DEF');
 
-# Compare values, not just the row count. If the reader cannot find a column, it
-# returns NULL for it, and the row count would still look right.
 query II
 SELECT id, code FROM rt_cm_id.rt_cm_id ORDER BY id;
 ----
@@ -270,11 +268,11 @@ id	true	true
 
 # Stats must use physical names too. A reader looks stats up by physical name, so
 # stats under `code` would be silently ignored.
-query I
-SELECT bool_or(add.stats LIKE '%"code"%')
+query II
+SELECT add.stats LIKE '%col-%', add.stats LIKE '%"code"%'
 FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_id/_delta_log/00000000000000000001.json') WHERE add IS NOT NULL;
 ----
-false
+true	false
 
 # A fresh attach has nothing cached, so this read depends only on what is on disk
 statement ok

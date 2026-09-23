@@ -47,6 +47,19 @@ already exists
 #
 
 statement ok
+ATTACH '{TEMP_DIR}/delta_create_with_location' AS with_location (TYPE delta);
+
+statement ok
+CREATE TABLE with_location.with_location (i INTEGER)
+WITH (location = '{TEMP_DIR}/delta_create_with_location');
+
+query I
+SELECT count(*) FROM with_location.with_location;
+----
+0
+
+# `path` is the older spelling of the same option
+statement ok
 ATTACH '{TEMP_DIR}/delta_create_with_path' AS with_path (TYPE delta);
 
 statement ok
@@ -56,6 +69,26 @@ query I
 SELECT count(*) FROM with_path.with_path;
 ----
 0
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_both_names' AS both_names (TYPE delta);
+
+statement error
+CREATE TABLE both_names.both_names (i INTEGER)
+WITH (location = '{TEMP_DIR}/delta_create_both_names', path = '{TEMP_DIR}/delta_create_both_names');
+----
+takes 'location' or 'path', not both
+
+# Neither spelling is written as a property
+statement ok
+CREATE TABLE both_names.both_names (i INTEGER) WITH (location = '{TEMP_DIR}/delta_create_both_names');
+
+query I
+SELECT metaData.configuration
+FROM read_json('{TEMP_DIR}/delta_create_both_names/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+{}
 
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_other_path' AS other_path (TYPE delta);
@@ -169,7 +202,7 @@ ATTACH '{TEMP_DIR}/delta_create_all_partitioned' AS all_partitioned (TYPE delta)
 statement error
 CREATE TABLE all_partitioned.all_partitioned (part_col VARCHAR) PARTITIONED BY (part_col);
 ----
-<REGEX>:.*artition.*
+Table must have at least one non-partition column
 
 # -----------------------------------------------------------------------------
 # Table properties
@@ -236,13 +269,44 @@ WHERE metaData IS NOT NULL;
 ----
 true	1	2
 
-# `path` is ours, so it must not be written as a property
+# `path` is ours, so it must not be written as a property, and nothing else leaks in either
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_path_and_prop' AS path_and_prop (TYPE delta);
+
+statement ok
+CREATE TABLE path_and_prop.path_and_prop (i INTEGER)
+WITH (path = '{TEMP_DIR}/delta_create_path_and_prop', 'myApp.a' = '1');
+
 query I
-SELECT json_extract_string(metaData.configuration, '$.path')
-FROM read_json('{TEMP_DIR}/delta_create_with_path/_delta_log/00000000000000000000.json')
+SELECT json_keys(metaData.configuration)
+FROM read_json('{TEMP_DIR}/delta_create_path_and_prop/_delta_log/00000000000000000000.json')
 WHERE metaData IS NOT NULL;
 ----
-NULL
+[myApp.a]
+
+# A property kernel knows turns its feature on, which is how a table gets its protocol
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_dv' AS dv (TYPE delta);
+
+statement ok
+CREATE TABLE dv.dv (i INTEGER) WITH ('delta.enableDeletionVectors' = 'true');
+
+query IIII
+SELECT protocol.minReaderVersion, protocol.minWriterVersion,
+       list_contains(protocol.readerFeatures, 'deletionVectors'),
+       list_contains(protocol.writerFeatures, 'deletionVectors')
+FROM read_json('{TEMP_DIR}/delta_create_dv/_delta_log/00000000000000000000.json')
+WHERE protocol IS NOT NULL;
+----
+3	7	true	true
+
+statement ok
+INSERT INTO dv.dv VALUES (1);
+
+query I
+SELECT i FROM dv.dv;
+----
+1
 
 # -----------------------------------------------------------------------------
 # Column mapping
