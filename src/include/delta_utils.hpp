@@ -464,8 +464,13 @@ private:
 	// synthetic fields, so without this HasFieldIdsRecursive() returns false for any schema containing
 	// a map or list and ResolveByFieldId falls the whole schema back to name matching -- which misses
 	// columns whose physical parquet name was sanitized away from the logical name.
+	// Only in `id` mode: `name`-mode tables carry `nested.ids` too (UniForm requires them), and the
+	// name mapper reads every identifier as a VARCHAR.
 	static void ApplyNestedFieldIds(KernelSchemaVisitor *state, const ffi::CMetadataMap *metadata,
 	                                DeltaMultiFileColumnDefinition &child, const string &suffix) {
+		if (state->mapping_mode != DeltaColumnMappingMode::ID) {
+			return;
+		}
 		auto nested_ids = KernelUtils::FetchFromMetadataMap(state->engine, metadata, "delta.columnMapping.nested.ids");
 		if (!nested_ids || nested_ids->type().id() != LogicalTypeId::VARCHAR) {
 			return;
