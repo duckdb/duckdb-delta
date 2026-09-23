@@ -14,6 +14,7 @@
 
 namespace duckdb {
 class BoundAtClause;
+class ClientContext;
 
 //! A time travel target as written by the user: nothing (the latest version), a version, or a
 //! timestamp that still has to be resolved into one. Once resolved, a timestamp is a version like any
@@ -23,7 +24,7 @@ class DeltaTimeTravelSpec {
 public:
 	DeltaTimeTravelSpec() = default;
 
-	static DeltaTimeTravelSpec FromAtClause(const BoundAtClause &at_clause);
+	static DeltaTimeTravelSpec FromAtClause(ClientContext &context, const BoundAtClause &at_clause);
 	static DeltaTimeTravelSpec FromVersion(idx_t version);
 	static DeltaTimeTravelSpec FromTimestamp(timestamp_tz_t timestamp);
 
@@ -50,5 +51,12 @@ private:
 
 //! Milliseconds since the unix epoch, which is how the delta protocol spells timestamps
 int64_t DeltaTimestampToEpochMs(timestamp_tz_t timestamp);
+
+//! Epoch milliseconds as an instant a reader can compare to a commit. An unrepresentable value falls
+//! back to the raw number: the kernel supplies some of these, and a log line must not throw.
+string DeltaFormatEpochMs(int64_t timestamp_ms);
+
+//! Refuses a timestamp the table cannot have reached, measured against the transaction's clock
+void DeltaRejectFutureTimestamp(ClientContext &context, int64_t timestamp_ms);
 
 } // namespace duckdb

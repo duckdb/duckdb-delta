@@ -3,6 +3,7 @@
 #include "functions/delta_scan/delta_scan.hpp"
 
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -15,6 +16,8 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 
 namespace duckdb {
@@ -183,8 +186,29 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 
 	// Set defaults
 	for (auto &col : bind_data.schema) {
-		col.default_expression = make_uniq<ConstantExpression>(Value(col.type));
+		col.default_expression = ConstantExpression::FromValue(Value(col.type));
 	}
+}
+
+static bool IsNaiveTimestamp(const LogicalType &type) {
+	return type.id() == LogicalTypeId::TIMESTAMP || type.id() == LogicalTypeId::TIMESTAMP_NS;
+}
+
+// A Delta `timestamp` is a UTC instant whatever its parquet type (Delta's PROTOCOL.md, Primitive Types), so a value
+// without the UTC flag, such as Spark's INT96, is reinterpreted, never converted through the session time zone. Inside
+// a struct, list or map the whole nested value takes the built-in casts.
+static void CastNaiveTimestampsAsUtc(unique_ptr<Expression> &expr) {
+	if (BoundCastExpression::IsCast(*expr)) {
+		auto &cast = expr->Cast<BoundFunctionExpression>();
+		auto target = BoundCastExpression::TargetType(cast);
+		if (TypeVisitor::Contains(BoundCastExpression::SourceType(cast), IsNaiveTimestamp) &&
+		    TypeVisitor::Contains(target, LogicalTypeId::TIMESTAMP_TZ)) {
+			expr = BoundCastExpression::AddDefaultCastToType(std::move(BoundCastExpression::ChildMutable(cast)), target,
+			                                                 BoundCastExpression::IsTryCast(cast));
+		}
+	}
+	ExpressionIterator::EnumerateChildren(*expr,
+	                                      [](unique_ptr<Expression> &child) { CastNaiveTimestampsAsUtc(child); });
 }
 
 //! BY_FIELD_ID mapping requires an INTEGER field_id identifier on every column the mapper
@@ -240,8 +264,15 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 		mapping_mode = MultiFileColumnMappingMode::BY_FIELD_ID;
 	}
 
-	return CreateMapping(context, reader_data, overridden_global_columns, global_column_ids, table_filters,
-	                     gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns, mapping_mode);
+	auto result = CreateMapping(context, reader_data, overridden_global_columns, global_column_ids, table_filters,
+	                            gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns, mapping_mode);
+	for (auto &expr : reader_data.expressions) {
+		CastNaiveTimestampsAsUtc(expr);
+	}
+	for (auto &entry : reader_data.reader->expression_map) {
+		CastNaiveTimestampsAsUtc(entry.second.expression);
+	}
+	return result;
 }
 
 void DeltaMultiFileReader::FinalizeBind(MultiFileReaderData &reader_data, const MultiFileOptions &file_options,
@@ -362,8 +393,8 @@ bool DeltaMultiFileReader::ParseOption(const Identifier &key, const Value &val, 
 		if (!requested.IsLatest()) {
 			throw InvalidInputException("delta_scan: 'version' and 'timestamp' are mutually exclusive");
 		}
-		requested =
-		    DeltaTimeTravelSpec::FromTimestamp(val.DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
+		requested = DeltaTimeTravelSpec::FromTimestamp(
+		    val.CastAs(context, LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
 		return true;
 	}
 

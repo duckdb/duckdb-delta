@@ -1,7 +1,7 @@
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 # Configuration of extension
-EXT_NAME=deltatable
+EXT_NAME=delta
 EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
 PIP=python3 -m pip
@@ -22,7 +22,7 @@ test_debug: export DELTA_KERNEL_TESTS_PATH=./build/debug/rust/src/delta_kernel/k
 test_debug: export DAT_PATH=./build/debug/rust/src/delta_kernel/acceptance/tests/dat
 
 # Core extensions that we need for crucial testing
-DEFAULT_TEST_EXTENSION_DEPS=tpcds;tpch;json;
+DEFAULT_TEST_EXTENSION_DEPS=tpcds;tpch;json;icu;
 # For cloud testing we also need these extensions
 FULL_TEST_EXTENSION_DEPS=azure;httpfs;aws
 

@@ -1,4 +1,5 @@
 #include "storage/delta_transaction.hpp"
+#include "delta_time_travel.hpp"
 
 #include "duckdb/common/helper.hpp"
 #include "path_utils.hpp"
@@ -542,8 +543,16 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 			// Create UC commit client with callbacks, passing `this` as the context
 			auto commit_client = ffi::get_uc_commit_client(this, CommitCallback);
 			auto table_id = KernelUtils::ToDeltaString(unity_table_id.empty() ? path : unity_table_id);
+			// Placeholders, deliberately: kernel's FFI commit client ignores the table name
+			// (`update_table(_target, ..)` in ffi/src/delta_kernel_unity_catalog.rs) and commits reach CommitCallback
+			// by table id alone. If one of these ever shows up somewhere, a real name now has to be threaded through.
+			static const string IGNORED_UC_CATALOG = "duckdb-delta-ignored-uc-catalog";
+			static const string IGNORED_UC_SCHEMA = "duckdb-delta-ignored-uc-schema";
+			static const string IGNORED_UC_TABLE = "duckdb-delta-ignored-uc-table";
 			auto uc_committer = table_entry->snapshot->TryUnpackKernelResult(
-			    ffi::get_uc_committer(commit_client, table_id, DuckDBEngineError::AllocateError));
+			    ffi::get_uc_committer(commit_client, table_id, KernelUtils::ToDeltaString(IGNORED_UC_CATALOG),
+			                          KernelUtils::ToDeltaString(IGNORED_UC_SCHEMA),
+			                          KernelUtils::ToDeltaString(IGNORED_UC_TABLE), DuckDBEngineError::AllocateError));
 			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction_with_committer(
 			    snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(), uc_committer));
 		} else {
@@ -552,7 +561,7 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 			auto res = KernelUtils::TryUnpackResult(
 			    ffi::transaction(path_slice, table_entry->snapshot->extern_engine.get()), new_kernel_transaction);
 			if (res.HasError()) {
-				if (StringUtil::Contains(res.RawMessage(), "Catalog-managed table requires max_catalog_version")) {
+				if (KernelUtils::IsMissingMaxCatalogVersion(res)) {
 					throw InvalidInputException(
 					    "Table at '%s' is a catalog-managed Delta table: writing to it directly from storage would "
 					    "bypass the catalog that orders its commits. Attach the catalog that owns it instead (e.g. "
@@ -647,7 +656,26 @@ optional_ptr<DeltaTableEntry> DeltaTransaction::GetTableEntry(idx_t version) {
 		return lookup->second;
 	}
 
+	// A timestamp later than the latest commit names the version this transaction already read as latest
+	if (table_entry && table_entry->snapshot->GetVersion() == version) {
+		return table_entry;
+	}
+
 	return nullptr;
+}
+
+optional_idx DeltaTransaction::GetTimestampVersion(timestamp_tz_t timestamp) const {
+	unique_lock<mutex> lck(lock);
+	auto lookup = timestamp_versions.find(DeltaTimestampToEpochMs(timestamp));
+	if (lookup == timestamp_versions.end()) {
+		return optional_idx();
+	}
+	return lookup->second;
+}
+
+idx_t DeltaTransaction::SetTimestampVersion(timestamp_tz_t timestamp, idx_t version) {
+	unique_lock<mutex> lck(lock);
+	return timestamp_versions.emplace(DeltaTimestampToEpochMs(timestamp), version).first->second;
 }
 
 DeltaTableEntry &DeltaTransaction::InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry,

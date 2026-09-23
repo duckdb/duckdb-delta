@@ -18,12 +18,14 @@
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/planner/table_filter.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 #include <regex>
 #include <algorithm>
+#include <cstdlib>
 
 #include "duckdb/planner/constraints/bound_not_null_constraint.hpp"
 
@@ -289,7 +291,26 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 			if (chain.find("cli") != std::string::npos) {
 				set_option(builder, "use_azure_cli", "true");
 			}
-			// Authentication option 1b: non-cli credential chains will just "hope for the best" technically since we
+			// Authentication option 1b: using a workload_identity w/ AZURE_FEDERATED_TOKEN_FILE
+			// as required trigger. Fail if common vars client_id or tenant_id missing.
+			// Explicitly forward workload identity vars so object_store selects
+			// WorkloadIdentityOAuthProvider instead of falling back to IMDS
+			if (chain.find("workload_identity") != std::string::npos) {
+				auto env_fed_token = FileSystem::GetEnvVariable("AZURE_FEDERATED_TOKEN_FILE");
+				auto env_client_id = FileSystem::GetEnvVariable("AZURE_CLIENT_ID");
+				auto env_tenant_id = FileSystem::GetEnvVariable("AZURE_TENANT_ID");
+				if (!env_fed_token.empty()) {
+					if (env_client_id.empty() || env_tenant_id.empty()) {
+						throw InvalidInputException("Azure workload_identity requires AZURE_CLIENT_ID and "
+						                            "AZURE_TENANT_ID in environment.");
+					} else {
+						set_option(builder, "federated_token_file", env_fed_token);
+						set_option(builder, "azure_client_id", env_client_id);
+						set_option(builder, "azure_tenant_id", env_tenant_id);
+					}
+				}
+			}
+			// Authentication option 1c: non-cli credential chains will just "hope for the best" technically since we
 			// are using the default credential chain provider duckDB and delta-kernel-rs should find the same auth
 		} else if (!connection_string.empty() && connection_string != "NULL") {
 			// Authentication option 2: a connection string based on account key
@@ -393,11 +414,12 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 				                .Left()
 				                .Cast<ColumnRefExpression>()
 				                .GetName();
-				auto value = transform_op_child.GetExpression()
-				                 .Cast<ComparisonExpression>()
-				                 .Right()
-				                 .Cast<ConstantExpression>()
-				                 .GetValue();
+				auto &comparison = transform_op_child.GetExpression().Cast<ComparisonExpression>();
+				Value value;
+				if (!KernelUtils::TryGetLiteralValue(comparison.Right(), value)) {
+					throw InternalException("Unexpected value for delta_transform_op returned by delta kernel: %s",
+					                        transform_op_child.GetExpression().ToString());
+				}
 
 				if (name == "kind") {
 					kind = value.ToString();
@@ -414,12 +436,14 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 					throw InternalException("Unexpected name for delta_transform_op returned by delta kernel: %s",
 					                        name);
 				}
-			} else if (transform_op_child.GetExpression().GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-				values.push_back(transform_op_child.GetExpression().Cast<ConstantExpression>().GetValue());
 			} else {
-				throw NotImplementedException(
-				    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
-				    transform_op_child.GetExpression().ToString());
+				Value value;
+				if (!KernelUtils::TryGetLiteralValue(transform_op_child.GetExpression(), value)) {
+					throw NotImplementedException(
+					    "Unexpected expression for delta_transform_op returned by delta kernel: %s",
+					    transform_op_child.GetExpression().ToString());
+				}
+				values.push_back(std::move(value));
 			}
 		}
 
@@ -551,9 +575,11 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
 }
 
 void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context,
-                                 ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
+                                 ffi::Handle<ffi::SharedScanMetadata> scan_metadata_raw) {
+	// scan_metadata_next transfers ownership; visit_scan_metadata only borrows it.
+	KernelScanMetadata scan_metadata(scan_metadata_raw);
 	auto scandata_cb = static_cast<ScanDataCallBack *>(engine_context);
-	auto res = ffi::visit_scan_metadata(scan_metadata, scandata_cb->snapshot.extern_engine.get(), engine_context,
+	auto res = ffi::visit_scan_metadata(scan_metadata.get(), scandata_cb->snapshot.extern_engine.get(), engine_context,
 	                                    VisitCallback);
 	bool ok;
 	auto err = KernelUtils::TryUnpackResult(res, ok);
@@ -792,14 +818,12 @@ OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) const {
 
 // Kernel refuses a catalog-managed table without max_catalog_version -- its newest commit may be
 // catalog-tracked and not yet backfilled. Catch that kernel/API error, and rephrase it for users.
-// NOTE:  Text match, but it cannot rot unnoticed: the builder API this calls is gone post-v0.26, so
-// that bump breaks the build here before the match can go stale.
 ffi::Handle<ffi::SharedSnapshot>
 DeltaMultiFileList::BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const {
 	ffi::Handle<ffi::SharedSnapshot> built;
 	auto res = KernelUtils::TryUnpackResult(ffi::snapshot_builder_build(builder), built);
 	if (res.HasError()) {
-		if (StringUtil::Contains(res.RawMessage(), "Catalog-managed table requires max_catalog_version")) {
+		if (KernelUtils::IsMissingMaxCatalogVersion(res)) {
 			throw InvalidInputException(
 			    "Table at '%s' is a catalog-managed Delta table: reading it directly from storage would skip "
 			    "commits that are only tracked by the catalog. Attach the catalog that owns it instead (e.g. "
@@ -847,30 +871,14 @@ ffi::Handle<ffi::MutableFfiSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBu
 	return builder;
 }
 
-//! Delta timestamps are epoch milliseconds; logs are for humans. The kernel supplies some of these,
-//! so an unrepresentable value falls back to the raw number rather than throwing out of a log call.
-static string FormatEpochMs(int64_t timestamp_ms) {
-	int64_t micros;
-	if (!TryMultiplyOperator::Operation(timestamp_ms, Interval::MICROS_PER_MSEC, micros)) {
-		return to_string(timestamp_ms) + "ms";
-	}
-	return Value::TIMESTAMPTZ(timestamp_tz_t(micros)).ToString();
-}
-
-// req: this.lock must already be owned
-idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice,
-                                           int64_t timestamp_ms) const {
-	// The kernel searches the version range the snapshot spans, so a HEAD snapshot has to exist before
-	// the timestamp can name anything. Seeded from old_snapshot when there is one, so this reads only
-	// the commits after it rather than replaying the whole log.
-	bool using_incremental = false;
-	auto head_builder = CreateSnapshotBuilder(path_slice, DConstants::INVALID_INDEX, using_incremental);
-	auto head = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(head_builder));
+idx_t DeltaMultiFileList::VersionAsOf(ClientContext &context, SharedKernelSnapshot &head,
+                                      ffi::KernelStringSlice path_slice, int64_t timestamp_ms) const {
+	DeltaRejectFutureTimestamp(context, timestamp_ms);
 
 	idx_t head_version;
 	ffi::FfiCommitAt commit;
 	{
-		auto head_ref = head->GetLockingRef();
+		auto head_ref = head.GetLockingRef();
 		head_version = ffi::version(head_ref.GetPtr());
 		commit = TryUnpackKernelResult(ffi::latest_version_as_of(head_ref.GetPtr(), extern_engine.get(), timestamp_ms,
 		                                                         ffi::FfiHistoryCommitType::Recreatable));
@@ -881,31 +889,41 @@ idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelSt
 	// was asked for and what was read, and it says whether the table has in-commit timestamps (exact)
 	// or is falling back to file modification times (approximate).
 	DUCKDB_LOG_INTERNAL(context, "delta.TimeTravel", LogLevel::LOG_DEBUG,
-	                    "Timestamp %s resolved to version %s committed at %s; head is version %s "
-	                    "(incremental=%s) for '%s'",
-	                    FormatEpochMs(timestamp_ms), to_string(resolved), FormatEpochMs(commit.timestamp),
-	                    to_string(head_version), using_incremental ? "true" : "false",
-	                    string(path_slice.ptr, path_slice.len));
+	                    "Timestamp %s resolved to version %s committed at %s; head is version %s for '%s'",
+	                    DeltaFormatEpochMs(timestamp_ms), to_string(resolved), DeltaFormatEpochMs(commit.timestamp),
+	                    to_string(head_version), string(path_slice.ptr, path_slice.len));
+	return resolved;
+}
 
-	if (resolved == head_version) {
+// req: this.lock must already be owned
+idx_t DeltaMultiFileList::ResolveTimestamp(ClientContext &context, ffi::KernelStringSlice path_slice,
+                                           int64_t timestamp_ms) const {
+	// Refused here as well as in VersionAsOf, so a timestamp the table cannot have reached costs no listing.
+	DeltaRejectFutureTimestamp(context, timestamp_ms);
+
+	// The kernel searches the version range the snapshot spans, so a HEAD snapshot has to exist before
+	// the timestamp can name anything. Seeded from old_snapshot when there is one, so this reads only
+	// the commits after it rather than replaying the whole log.
+	bool using_incremental = false;
+	auto head_builder = CreateSnapshotBuilder(path_slice, DConstants::INVALID_INDEX, using_incremental);
+	DUCKDB_LOG_INTERNAL(context, "delta.DeltaMultiFileList", LogLevel::LOG_DEBUG,
+	                    "Loading snapshot for '%s': version=HEAD, log_tail=%s, incremental=%s",
+	                    string(path_slice.ptr, path_slice.len), delta_log_path ? "true" : "false",
+	                    using_incremental ? "true" : "false");
+	auto head = make_shared_ptr<SharedKernelSnapshot>(BuildSnapshot(head_builder));
+
+	auto resolved = VersionAsOf(context, *head, path_slice, timestamp_ms);
+	if (resolved == ffi::version(head->GetLockingRef().GetPtr())) {
 		snapshot = std::move(head);
 	}
 	return resolved;
 }
 
-idx_t DeltaMultiFileList::ResolveTimestampToVersion(timestamp_tz_t timestamp) const {
+idx_t DeltaMultiFileList::ResolveTimestampWithin(ClientContext &context, timestamp_tz_t timestamp) const {
 	unique_lock<mutex> lck(lock);
-	if (initialized_snapshot) {
-		throw InternalException("DeltaMultiFileList::ResolveTimestampToVersion called after the snapshot was "
-		                        "initialized");
-	}
-	D_ASSERT(!client_ctx.expired());
-	auto client_ctx_shared = client_ctx.lock();
+	EnsureSnapshotInitialized();
 	auto path_slice = KernelUtils::ToDeltaString(paths[0].path);
-
-	extern_engine = CreateDeltaEngine(*client_ctx_shared, paths[0].path);
-	version = ResolveTimestamp(*client_ctx_shared, path_slice, DeltaTimestampToEpochMs(timestamp));
-	return version;
+	return VersionAsOf(context, *snapshot, path_slice, DeltaTimestampToEpochMs(timestamp));
 }
 
 void DeltaMultiFileList::InitializeSnapshot() const {
@@ -969,10 +987,10 @@ void DeltaMultiFileList::InitializeScan() const {
 	// Load partitions
 	auto partition_count = ffi::get_partition_column_count(snapshot_ref.GetPtr());
 	if (partition_count > 0) {
-		auto string_slice_iterator = ffi::get_partition_columns(snapshot_ref.GetPtr());
+		KernelStringSliceIterator string_slice_iterator(ffi::get_partition_columns(snapshot_ref.GetPtr()));
 
 		KernelPartitionVisitorData data;
-		while (string_slice_next(string_slice_iterator, &data, KernelPartitionStringVisitor)) {
+		while (string_slice_next(string_slice_iterator.get(), &data, KernelPartitionStringVisitor)) {
 		}
 		partitions = data.partitions;
 

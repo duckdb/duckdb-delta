@@ -1,0 +1,33 @@
+# name: test/sql/inlined/column_mapping/invalid_annotations.test
+# description: a malformed column-mapping annotation is a readable error when the table is read
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# Kernel checks the type of both annotations when it loads a schema, so a non-numeric id is its error.
+# An empty physical name passes kernel and is refused by DuckDB: it cannot name any column in a file.
+
+# -----------------------------------------------------------------------------
+# Non-numeric id
+#
+
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/invalid_id_null');
+----
+The delta.columnMapping.id annotation on field 'id' must be a number
+
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/invalid_id_string');
+----
+The delta.columnMapping.id annotation on field 'id' must be a number
+
+# -----------------------------------------------------------------------------
+# Empty physical name
+#
+
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/invalid_physical_name_empty');
+----
+Column 'id' has the physical name '', which is not a non-empty string

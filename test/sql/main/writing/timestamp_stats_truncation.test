@@ -1,0 +1,110 @@
+# name: test/sql/main/writing/timestamp_stats_truncation.test
+# description: timestamp statistics are floored to milliseconds, and filtering still finds the rows
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# The Delta protocol keeps timestamp statistics in milliseconds, truncated. A value with more
+# precision than that lies *above* its file's max statistic, so a reader that compared against the
+# statistic as written would skip the very file that holds the value.
+#
+# Each table gets two files, so the plan can show skipping at work: the file with the value must
+# be kept, the other one pruned.
+
+# -----------------------------------------------------------------------------
+# TIMESTAMP
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/timestamp_stats_ts' AS ts (TYPE delta);
+
+statement ok
+CREATE TABLE ts.ts (value1 TIMESTAMP);
+
+statement ok
+INSERT INTO ts.ts VALUES ('2024-01-06 00:00:00.123999'::TIMESTAMP);
+
+statement ok
+INSERT INTO ts.ts VALUES ('2024-01-07 00:00:00'::TIMESTAMP);
+
+# Floored, not rounded: .123999 is stored as .123
+query II
+SELECT json_extract_string(add.stats, '$.minValues.value1'), json_extract_string(add.stats, '$.maxValues.value1')
+FROM read_json('{TEMP_DIR}/timestamp_stats_ts/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+2024-01-06T00:00:00.123	2024-01-06T00:00:00.123
+
+# The value lies above its file's max statistic, and is still found
+query I
+SELECT count(*) FROM ts.ts WHERE value1 = '2024-01-06 00:00:00.123999'::TIMESTAMP;
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT value1 FROM ts.ts WHERE value1 = '2024-01-06 00:00:00.123999'::TIMESTAMP;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
+
+# The sharpest case: the lower bound is above the file's max statistic, and the file is kept
+query I
+SELECT count(*) FROM ts.ts WHERE value1 > '2024-01-06 00:00:00.1235'::TIMESTAMP AND value1 < '2024-01-06 00:00:01'::TIMESTAMP;
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT value1 FROM ts.ts WHERE value1 > '2024-01-06 00:00:00.1235'::TIMESTAMP AND value1 < '2024-01-06 00:00:01'::TIMESTAMP;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
+
+# -----------------------------------------------------------------------------
+# TIMESTAMP WITH TIME ZONE
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/timestamp_stats_tstz' AS tstz (TYPE delta);
+
+statement ok
+CREATE TABLE tstz.tstz (value1 TIMESTAMPTZ);
+
+statement ok
+INSERT INTO tstz.tstz VALUES ('2024-01-06 00:00:00.123999+00'::TIMESTAMPTZ);
+
+statement ok
+INSERT INTO tstz.tstz VALUES ('2024-01-07 00:00:00+00'::TIMESTAMPTZ);
+
+# Floored, not rounded: .123999 is stored as .123
+query II
+SELECT json_extract_string(add.stats, '$.minValues.value1'), json_extract_string(add.stats, '$.maxValues.value1')
+FROM read_json('{TEMP_DIR}/timestamp_stats_tstz/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+2024-01-06T00:00:00.123Z	2024-01-06T00:00:00.123Z
+
+# The value lies above its file's max statistic, and is still found
+query I
+SELECT count(*) FROM tstz.tstz WHERE value1 = '2024-01-06 00:00:00.123999+00'::TIMESTAMPTZ;
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT value1 FROM tstz.tstz WHERE value1 = '2024-01-06 00:00:00.123999+00'::TIMESTAMPTZ;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
+
+# The sharpest case: the lower bound is above the file's max statistic, and the file is kept
+query I
+SELECT count(*) FROM tstz.tstz WHERE value1 > '2024-01-06 00:00:00.1235+00'::TIMESTAMPTZ AND value1 < '2024-01-06 00:00:01+00'::TIMESTAMPTZ;
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT value1 FROM tstz.tstz WHERE value1 > '2024-01-06 00:00:00.1235+00'::TIMESTAMPTZ AND value1 < '2024-01-06 00:00:01+00'::TIMESTAMPTZ;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*

@@ -1,0 +1,72 @@
+# name: test/sql/main/writing/timestamp_stats_truncation_timezone.test
+# description: TIMESTAMPTZ statistics are UTC instants, whatever the session time zone
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require icu
+
+require notwindows
+
+# The UTC half of this lives in timestamp_stats_truncation.test; this file only adds a session time
+# zone, which needs ICU. Los Angeles is UTC-8 in January, with no daylight saving to vary the answer:
+# the local 16:00:00.123999 on the 5th is 00:00:00.123999 UTC on the 6th.
+
+statement ok
+SET TimeZone = 'America/Los_Angeles';
+
+# -----------------------------------------------------------------------------
+# Statistics
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/timestamp_stats_tz_session' AS tz (TYPE delta);
+
+statement ok
+CREATE TABLE tz.tz (value1 TIMESTAMPTZ);
+
+statement ok
+INSERT INTO tz.tz VALUES ('2024-01-05 16:00:00.123999'::TIMESTAMPTZ);
+
+statement ok
+INSERT INTO tz.tz VALUES ('2024-01-06 16:00:00'::TIMESTAMPTZ);
+
+# The UTC instant, floored to milliseconds; a leaked session zone would read 2024-01-05T16:...
+query II
+SELECT json_extract_string(add.stats, '$.minValues.value1'), json_extract_string(add.stats, '$.maxValues.value1')
+FROM read_json('{TEMP_DIR}/timestamp_stats_tz_session/_delta_log/00000000000000000001.json')
+WHERE add IS NOT NULL;
+----
+2024-01-06T00:00:00.123Z	2024-01-06T00:00:00.123Z
+
+# -----------------------------------------------------------------------------
+# Filtering with local literals
+#
+# The value lies above its file's max statistic; both filters must keep that file and prune the other.
+#
+
+query I
+SELECT count(*) FROM tz.tz WHERE value1 = '2024-01-05 16:00:00.123999'::TIMESTAMPTZ;
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT value1 FROM tz.tz WHERE value1 = '2024-01-05 16:00:00.123999'::TIMESTAMPTZ;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*
+
+query I
+SELECT count(*) FROM tz.tz
+WHERE value1 > '2024-01-05 16:00:00.1235'::TIMESTAMPTZ AND value1 < '2024-01-05 16:00:01'::TIMESTAMPTZ;
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT value1 FROM tz.tz
+WHERE value1 > '2024-01-05 16:00:00.1235'::TIMESTAMPTZ AND value1 < '2024-01-05 16:00:01'::TIMESTAMPTZ;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/2.*

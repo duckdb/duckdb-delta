@@ -8,6 +8,9 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/operator/multiply.hpp"
+#include "duckdb/common/types/interval.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
 
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 
@@ -18,6 +21,27 @@ int64_t DeltaTimestampToEpochMs(timestamp_tz_t timestamp) {
 		throw InvalidInputException("Delta time travel requires a finite timestamp");
 	}
 	return Timestamp::GetEpochMs(timestamp_t(timestamp));
+}
+
+string DeltaFormatEpochMs(int64_t timestamp_ms) {
+	int64_t micros;
+	if (!TryMultiplyOperator::Operation(timestamp_ms, Interval::MICROS_PER_MSEC, micros)) {
+		return to_string(timestamp_ms) + "ms";
+	}
+	return Value::TIMESTAMPTZ(timestamp_tz_t(micros)).ToString();
+}
+
+// Rejects future timestamps, i.e. named > now(), where now() is defined as start of this transaction.
+void DeltaRejectFutureTimestamp(ClientContext &context, int64_t timestamp_ms) {
+	auto now = context.transaction.HasActiveTransaction()
+	               ? MetaTransaction::Get(context).GetCurrentTransactionStartTimestamp()
+	               : Timestamp::GetCurrentTimestamp();
+	auto now_ms = Timestamp::GetEpochMs(now);
+	if (timestamp_ms > now_ms) {
+		throw InvalidInputException(
+		    "Delta time travel does not accept future timestamp %s: that is later than now (%s)",
+		    DeltaFormatEpochMs(timestamp_ms), DeltaFormatEpochMs(now_ms));
+	}
 }
 
 DeltaTimeTravelSpec DeltaTimeTravelSpec::FromVersion(idx_t version) {
@@ -48,7 +72,7 @@ timestamp_tz_t DeltaTimeTravelSpec::GetTimestamp() const {
 	return timestamp;
 }
 
-DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_clause) {
+DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(ClientContext &context, const BoundAtClause &at_clause) {
 	auto &unit = at_clause.Unit();
 
 	// Casting throws its own conversion error, which names the offending value and target type, so
@@ -60,7 +84,8 @@ DeltaTimeTravelSpec DeltaTimeTravelSpec::FromAtClause(const BoundAtClause &at_cl
 	if (unit == "timestamp") {
 		// Anything without a zone -- a naive TIMESTAMP or a string with no offset -- resolves through
 		// the session timezone.
-		return FromTimestamp(at_clause.GetValue().DefaultCastAs(LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
+		return FromTimestamp(
+		    at_clause.GetValue().CastAs(context, LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>());
 	}
 
 	throw InvalidConfigurationException("Delta tables only support at_clause with unit 'version' or 'timestamp'");
@@ -108,10 +133,16 @@ optional_ptr<SchemaCatalogEntry> DeltaCatalog::LookupSchema(CatalogTransaction t
 	if (schema_name == DEFAULT_SCHEMA || schema_name == INVALID_SCHEMA) {
 		return main_schema.get();
 	}
-	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+	switch (if_not_found) {
+	case OnEntryNotFound::RETURN_NULL:
 		return nullptr;
+	case OnEntryNotFound::THROW_EXCEPTION:
+		throw CatalogException(schema_lookup.GetErrorContext(),
+		                       "Schema \"%s\" does not exist! A delta catalog holds one table, under \"%s\"",
+		                       schema_name, DEFAULT_SCHEMA);
+	default:
+		throw InternalException("Unknown OnEntryNotFound value %d", static_cast<int>(if_not_found));
 	}
-	return nullptr;
 }
 
 bool DeltaCatalog::InMemory() {

@@ -56,6 +56,9 @@ ATTACH 'file:///some/path' AS tbl_old (TYPE delta, TIMESTAMP TIMESTAMPTZ '2026-0
 `version` and `timestamp` are mutually exclusive. An attached version or timestamp is the default for
 the attachment rather than a pin, so a per-query `AT` clause overrides it.
 
+A timestamp later than now is refused: it would name whichever commit happens to be last at the moment
+of the read. `now()` itself is allowed, and reads the newest commit.
+
 ## Cloud Storage authentication
 
 Note that using DuckDB [Secrets](https://duckdb.org/docs/configuration/secrets_manager.html) for Cloud authentication is supported.

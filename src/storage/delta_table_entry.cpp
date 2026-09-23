@@ -15,11 +15,15 @@
 namespace duckdb {
 
 DeltaTableEntry::DeltaTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info)
-    : TableCatalogEntry(catalog, schema, info) {
+    : TableCatalogEntry(catalog, schema, info), columns(std::move(info.columns)) {
 	this->internal = false;
 }
 
 DeltaTableEntry::~DeltaTableEntry() = default;
+
+const ColumnList &DeltaTableEntry::GetColumns() const {
+	return columns;
+}
 
 unique_ptr<BaseStatistics> DeltaTableEntry::GetStatistics(ClientContext &context, column_t column_id) {
 	return nullptr;
@@ -43,6 +47,7 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 	}
 	auto &delta_function_set = catalog_entry->Cast<TableFunctionCatalogEntry>();
 
+	// copied out of the set: the bind mutates function_info and needs a mutable function
 	auto delta_scan_function = *delta_function_set.functions.GetFunctionByArguments(context, {LogicalType::VARCHAR});
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 
@@ -56,7 +61,7 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 
 	idx_t version = DConstants::INVALID_INDEX;
 	if (lookup_info && lookup_info->GetAtClause()) {
-		auto spec = DeltaTimeTravelSpec::FromAtClause(*lookup_info->GetAtClause());
+		auto spec = DeltaTimeTravelSpec::FromAtClause(context, *lookup_info->GetAtClause());
 		// A timestamp was already bound to a version during the catalog lookup that produced this
 		// entry; resolving it again would re-read the log and could land on a newer commit.
 		version = spec.IsTimestamp() ? snapshot->GetVersion() : spec.GetVersion();

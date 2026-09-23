@@ -43,7 +43,7 @@ SELECT count(*) FROM cmt AT (TIMESTAMP => TIMESTAMPTZ '2023-11-14 22:13:20+00');
 
 # Past the only commit still names it
 query I
-SELECT count(*) FROM cmt AT (TIMESTAMP => TIMESTAMPTZ '2030-01-01 00:00:00+00');
+SELECT count(*) FROM cmt AT (TIMESTAMP => now());
 ----
 10
 

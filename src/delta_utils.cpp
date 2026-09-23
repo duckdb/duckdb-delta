@@ -1,4 +1,5 @@
 #include "delta_utils.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/planner/filter/struct_filter.hpp"
 
 #include <list>
@@ -66,6 +67,8 @@ ffi::EngineExpressionVisitor KernelExpressionVisitor::CreateVisitor(KernelExpres
 	// Custom Implementations
 	visitor.visit_literal_timestamp = &VisitTimestampLiteral;
 	visitor.visit_literal_timestamp_ntz = &VisitTimestampNtzLiteral;
+	visitor.visit_literal_interval_year_month = &VisitIntervalYearMonthLiteral;
+	visitor.visit_literal_interval_day_time = &VisitIntervalDayTimeLiteral;
 	visitor.visit_literal_date = &VisitDateLiteral;
 
 	visitor.visit_literal_string = &VisitStringLiteral;
@@ -210,63 +213,63 @@ void KernelExpressionVisitor::VisitMultiplyExpression(void *state, uintptr_t sib
 }
 
 void KernelExpressionVisitor::VisitPrimitiveLiteralBool(void *state, uintptr_t sibling_list_id, bool value) {
-	auto expression = make_uniq<ConstantExpression>(Value::BOOLEAN(value));
+	auto expression = ConstantExpression::FromValue(Value::BOOLEAN(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralByte(void *state, uintptr_t sibling_list_id, int8_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::TINYINT(value));
+	auto expression = ConstantExpression::FromValue(Value::TINYINT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralShort(void *state, uintptr_t sibling_list_id, int16_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::SMALLINT(value));
+	auto expression = ConstantExpression::FromValue(Value::SMALLINT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralInt(void *state, uintptr_t sibling_list_id, int32_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::INTEGER(value));
+	auto expression = ConstantExpression::FromValue(Value::INTEGER(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralLong(void *state, uintptr_t sibling_list_id, int64_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::BIGINT(value));
+	auto expression = ConstantExpression::FromValue(Value::BIGINT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralFloat(void *state, uintptr_t sibling_list_id, float value) {
-	auto expression = make_uniq<ConstantExpression>(Value::FLOAT(value));
+	auto expression = ConstantExpression::FromValue(Value::FLOAT(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitPrimitiveLiteralDouble(void *state, uintptr_t sibling_list_id, double value) {
-	auto expression = make_uniq<ConstantExpression>(Value::DOUBLE(value));
+	auto expression = ConstantExpression::FromValue(Value::DOUBLE(value));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitTimestampLiteral(void *state, uintptr_t sibling_list_id, int64_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::TIMESTAMPTZ(timestamp_tz_t(value)));
+	auto expression = ConstantExpression::FromValue(Value::TIMESTAMPTZ(timestamp_tz_t(value)));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitTimestampNtzLiteral(void *state, uintptr_t sibling_list_id, int64_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::TIMESTAMP(static_cast<timestamp_t>(value)));
+	auto expression = ConstantExpression::FromValue(Value::TIMESTAMP(static_cast<timestamp_t>(value)));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitDateLiteral(void *state, uintptr_t sibling_list_id, int32_t value) {
-	auto expression = make_uniq<ConstantExpression>(Value::DATE(static_cast<date_t>(value)));
+	auto expression = ConstantExpression::FromValue(Value::DATE(static_cast<date_t>(value)));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitStringLiteral(void *state, uintptr_t sibling_list_id, ffi::KernelStringSlice value) {
-	auto expression = make_uniq<ConstantExpression>(Value(string(value.ptr, value.len)));
+	auto expression = ConstantExpression::String(string(value.ptr, value.len));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitBinaryLiteral(void *state, uintptr_t sibling_list_id, const uint8_t *buffer,
                                                  uintptr_t len) {
-	auto expression = make_uniq<ConstantExpression>(Value::BLOB(buffer, len));
+	auto expression = ConstantExpression::FromValue(Value::BLOB(buffer, len));
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitNullLiteral(void *state, uintptr_t sibling_list_id, uint8_t type_tag,
                                                uint8_t precision, uint8_t scale) {
 	// type_tag/precision/scale identify the kernel-side data type of the null; we don't need it
 	// since DuckDB's untyped NULL constant is cast to the correct type by the surrounding context.
-	auto expression = make_uniq<ConstantExpression>(Value());
+	auto expression = ConstantExpression::Null();
 	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 void KernelExpressionVisitor::VisitArrayLiteral(void *state, uintptr_t sibling_list_id, uintptr_t child_id) {
@@ -321,7 +324,7 @@ void KernelExpressionVisitor::VisitIsNullExpression(void *state, uintptr_t sibli
 		return;
 	}
 
-	children->push_back(make_uniq<ConstantExpression>(Value()));
+	children->push_back(ConstantExpression::Null());
 	unique_ptr<ParsedExpression> expression =
 	    make_uniq<FunctionExpression>("IS", std::move(*children), nullptr, nullptr, false, true);
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
@@ -343,29 +346,31 @@ void KernelExpressionVisitor::VisitLiteralMap(void *state, uintptr_t sibling_lis
 	vector<Value> key_values;
 	LogicalType key_type;
 	for (const auto &key_field : *key_children) {
-		if (key_field->GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+		Value key_value;
+		if (!KernelUtils::TryGetLiteralValue(*key_field, key_value)) {
 			state_cast->error =
 			    ErrorData("DuckDB only supports parsing Map literals from delta kernel that consist for constants!");
 			return;
 		}
-		key_values.push_back(key_field->Cast<ConstantExpression>().GetValue());
-		key_type = key_field->Cast<ConstantExpression>().GetValue().type();
+		key_type = key_value.type();
+		key_values.push_back(std::move(key_value));
 	}
 
 	vector<Value> value_values;
 	LogicalType value_type;
 	for (const auto &value_field : *value_children) {
-		if (value_field->GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+		Value value_value;
+		if (!KernelUtils::TryGetLiteralValue(*value_field, value_value)) {
 			state_cast->error =
 			    ErrorData("DuckDB only supports parsing Map literals from delta kernel that consist for constants!");
 			return;
 		}
-		value_values.push_back(value_field->Cast<ConstantExpression>().GetValue());
-		value_type = value_field->Cast<ConstantExpression>().GetValue().type();
+		value_type = value_value.type();
+		value_values.push_back(std::move(value_value));
 	}
 
 	unique_ptr<ParsedExpression> expression =
-	    make_uniq<ConstantExpression>(Value::MAP(key_type, value_type, key_values, value_values));
+	    ConstantExpression::FromValue(Value::MAP(key_type, value_type, key_values, value_values));
 	state_cast->AppendToList(sibling_list_id, std::move(expression));
 }
 
@@ -427,7 +432,7 @@ void KernelExpressionVisitor::VisitDecimalLiteral(void *state, uintptr_t sibling
 		} else {
 			decimal_value = Value::DECIMAL({value_ms, value_ls}, precision, scale);
 		}
-		auto expression = make_uniq<ConstantExpression>(decimal_value);
+		auto expression = ConstantExpression::FromValue(decimal_value);
 		static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 	} catch (Exception &e) {
 		static_cast<KernelExpressionVisitor *>(state)->error = ErrorData(e);
@@ -435,16 +440,29 @@ void KernelExpressionVisitor::VisitDecimalLiteral(void *state, uintptr_t sibling
 }
 
 void KernelExpressionVisitor::VisitColumnExpression(void *state, uintptr_t sibling_list_id,
-                                                    ffi::KernelStringSlice name) {
-	auto col_ref_string = string(name.ptr, name.len);
-
-	// Delta ColRefs are sometimes backtick-ed
-	if (col_ref_string[0] == '`' && col_ref_string[col_ref_string.size() - 1] == '`') {
-		col_ref_string = col_ref_string.substr(1, col_ref_string.size() - 2);
+                                                    const ffi::KernelStringSlice *parts, uintptr_t parts_len) {
+	auto visitor = static_cast<KernelExpressionVisitor *>(state);
+	// A path of more than one part is a struct field, which a plain column reference would misread as a column
+	// with a dotted name.
+	if (parts_len != 1) {
+		visitor->error =
+		    ErrorData(ExceptionType::NOT_IMPLEMENTED,
+		              StringUtil::Format("Delta column references with a path of %s parts are not supported",
+		                                 to_string(parts_len)));
+		return;
 	}
+	auto expression = make_uniq<ColumnRefExpression>(Identifier(KernelUtils::FromDeltaString(parts[0])));
+	visitor->AppendToList(sibling_list_id, std::move(expression));
+}
 
-	auto expression = make_uniq<ColumnRefExpression>(Identifier(col_ref_string));
-	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
+void KernelExpressionVisitor::VisitIntervalYearMonthLiteral(void *state, uintptr_t sibling_list_id, int32_t months) {
+	static_cast<KernelExpressionVisitor *>(state)->error =
+	    ErrorData(ExceptionType::NOT_IMPLEMENTED, "Delta interval literals are not supported");
+}
+
+void KernelExpressionVisitor::VisitIntervalDayTimeLiteral(void *state, uintptr_t sibling_list_id, int64_t micros) {
+	static_cast<KernelExpressionVisitor *>(state)->error =
+	    ErrorData(ExceptionType::NOT_IMPLEMENTED, "Delta interval literals are not supported");
 }
 
 void KernelExpressionVisitor::VisitStructExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
@@ -469,25 +487,24 @@ unique_ptr<ParsedExpression> KernelExpressionVisitor::MakeStructPatchOp(const st
 	// encoding.
 	FieldList children_values = std::move(insertions);
 
-	children_values.push_back(
-	    make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("keep_input"),
-	                                    make_uniq<ConstantExpression>(Value::BOOLEAN(keep_input))));
+	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
+	                                                          make_uniq<ColumnRefExpression>("keep_input"),
+	                                                          ConstantExpression::Boolean(keep_input)));
 	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
 	                                                          make_uniq<ColumnRefExpression>("optional"),
-	                                                          make_uniq<ConstantExpression>(Value::BOOLEAN(optional))));
+	                                                          ConstantExpression::Boolean(optional)));
 
 	unique_ptr<ParsedExpression> field_name_val;
 	if (field_name) {
-		field_name_val = make_uniq<ConstantExpression>(Value(*field_name));
+		field_name_val = ConstantExpression::String(*field_name);
 	} else {
-		field_name_val = make_uniq<ConstantExpression>(Value());
+		field_name_val = ConstantExpression::Null();
 	}
 	children_values.push_back(make_uniq<ComparisonExpression>(
 	    ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("field_name"), std::move(field_name_val)));
 
-	children_values.push_back(make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
-	                                                          make_uniq<ColumnRefExpression>("kind"),
-	                                                          make_uniq<ConstantExpression>(Value(kind))));
+	children_values.push_back(make_uniq<ComparisonExpression>(
+	    ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>("kind"), ConstantExpression::String(kind)));
 
 	return make_uniq<FunctionExpression>("delta_transform_op", std::move(children_values));
 }
@@ -603,17 +620,17 @@ ffi::EngineSchemaVisitor KernelSchemaVisitor::CreateSchemaVisitor(KernelSchemaVi
 	visitor.data = &state;
 	visitor.make_field_list = (uintptr_t(*)(void *, uintptr_t)) & MakeFieldList;
 	visitor.visit_struct =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *metadata, uintptr_t)) &
 	    VisitStruct;
 	visitor.visit_array =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *metadata, uintptr_t)) &
 	    VisitArray;
 	visitor.visit_map =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uintptr_t)) &
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *metadata, uintptr_t)) &
 	    VisitMap;
-	visitor.visit_decimal =
-	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CStringMap *metadata, uint8_t, uint8_t)) &
-	    VisitDecimal;
+	visitor.visit_decimal = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool,
+	                                  const ffi::CMetadataMap *metadata, uint8_t, uint8_t)) &
+	                        VisitDecimal;
 	visitor.visit_string = VisitSimpleType<LogicalType::VARCHAR>();
 	visitor.visit_long = VisitSimpleType<LogicalType::BIGINT>();
 	visitor.visit_integer = VisitSimpleType<LogicalType::INTEGER>();
@@ -628,8 +645,18 @@ ffi::EngineSchemaVisitor KernelSchemaVisitor::CreateSchemaVisitor(KernelSchemaVi
 	visitor.visit_timestamp_ntz = VisitSimpleType<LogicalType::TIMESTAMP>();
 	visitor.visit_void = VisitSimpleType<LogicalType::SQLNULL>();
 	visitor.visit_variant = (void (*)(void *data, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
-	                                  bool is_nullable, const ffi::CStringMap *metadata)) &
+	                                  bool is_nullable, const ffi::CMetadataMap *metadata)) &
 	                        VisitVariant;
+	visitor.visit_interval_year_month =
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *)) & VisitIntervalYearMonth;
+	visitor.visit_interval_day_time =
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *)) & VisitIntervalDayTime;
+	visitor.visit_geometry =
+	    (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *, ffi::KernelStringSlice)) &
+	    VisitGeometry;
+	visitor.visit_geography = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *,
+	                                    ffi::KernelStringSlice, ffi::KernelStringSlice)) &
+	                          VisitGeography;
 
 	return visitor;
 }
@@ -694,13 +721,13 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 }
 
 void KernelSchemaVisitor::VisitDecimal(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
-                                       ffi::KernelStringSlice name, bool is_nullable, const ffi::CStringMap *metadata,
+                                       ffi::KernelStringSlice name, bool is_nullable, const ffi::CMetadataMap *metadata,
                                        uint8_t precision, uint8_t scale) {
 	auto decimal_type = LogicalType::DECIMAL(precision, scale);
 	DeltaMultiFileColumnDefinition decimal_def(KernelUtils::FromDeltaString(name), decimal_type, is_nullable);
-	decimal_def.default_expression = make_uniq<ConstantExpression>(Value().DefaultCastAs(decimal_type));
+	decimal_def.default_expression = ConstantExpression::FromValue(Value(decimal_type));
 
-	ApplyDeltaColumnMapping(*state, metadata, decimal_def);
+	ApplyDeltaColumnMapping(state, metadata, decimal_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(decimal_def));
 }
@@ -710,7 +737,7 @@ uintptr_t KernelSchemaVisitor::MakeFieldList(KernelSchemaVisitor *state, uintptr
 }
 
 void KernelSchemaVisitor::VisitStruct(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
-                                      ffi::KernelStringSlice name, bool is_nullable, const ffi::CStringMap *metadata,
+                                      ffi::KernelStringSlice name, bool is_nullable, const ffi::CMetadataMap *metadata,
                                       uintptr_t child_list_id) {
 	auto children = state->TakeFieldList(child_list_id);
 
@@ -722,15 +749,15 @@ void KernelSchemaVisitor::VisitStruct(KernelSchemaVisitor *state, uintptr_t sibl
 	auto struct_type = LogicalType::STRUCT(children_types);
 	DeltaMultiFileColumnDefinition struct_def(KernelUtils::FromDeltaString(name), struct_type, is_nullable);
 	struct_def.children = std::move(children);
-	struct_def.default_expression = make_uniq<ConstantExpression>(Value(struct_type));
+	struct_def.default_expression = ConstantExpression::FromValue(Value(struct_type));
 
-	ApplyDeltaColumnMapping(*state, metadata, struct_def);
+	ApplyDeltaColumnMapping(state, metadata, struct_def);
 
 	state->AppendToList(sibling_list_id, name, std::move(struct_def));
 }
 
 void KernelSchemaVisitor::VisitArray(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
-                                     bool is_nullable, const ffi::CStringMap *metadata, uintptr_t child_list_id) {
+                                     bool is_nullable, const ffi::CMetadataMap *metadata, uintptr_t child_list_id) {
 	auto children = state->TakeFieldList(child_list_id);
 
 	D_ASSERT(children.size() == 1);
@@ -739,19 +766,19 @@ void KernelSchemaVisitor::VisitArray(KernelSchemaVisitor *state, uintptr_t sibli
 
 	DeltaMultiFileColumnDefinition list_def(KernelUtils::FromDeltaString(name), list_type, is_nullable);
 	list_def.children.push_back(std::move(children.front()));
-	list_def.default_expression = make_uniq<ConstantExpression>(Value(list_type));
+	list_def.default_expression = ConstantExpression::FromValue(Value(list_type));
 
 	// TODO: kinda wonky, but column mapper uses this
 	list_def.children.front().name = "list";
 
-	ApplyDeltaColumnMapping(*state, metadata, list_def);
-	ApplyNestedFieldIds(*state, metadata, list_def.children[0], ".element");
+	ApplyDeltaColumnMapping(state, metadata, list_def);
+	ApplyNestedFieldIds(state, metadata, list_def.children[0], ".element");
 
 	state->AppendToList(sibling_list_id, name, std::move(list_def));
 }
 
 void KernelSchemaVisitor::VisitMap(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
-                                   bool is_nullable, const ffi::CStringMap *metadata, uintptr_t child_list_id) {
+                                   bool is_nullable, const ffi::CMetadataMap *metadata, uintptr_t child_list_id) {
 	auto children = state->TakeFieldList(child_list_id);
 
 	D_ASSERT(children.size() == 2);
@@ -766,24 +793,62 @@ void KernelSchemaVisitor::VisitMap(KernelSchemaVisitor *state, uintptr_t sibling
 	map_def.children.push_back(std::move(key));
 	map_def.children.push_back(std::move(value));
 
-	map_def.default_expression = make_uniq<ConstantExpression>(Value(map_type));
+	map_def.default_expression = ConstantExpression::FromValue(Value(map_type));
 
-	ApplyDeltaColumnMapping(*state, metadata, map_def);
-	ApplyNestedFieldIds(*state, metadata, map_def.children[0], ".key");
-	ApplyNestedFieldIds(*state, metadata, map_def.children[1], ".value");
+	ApplyDeltaColumnMapping(state, metadata, map_def);
+	ApplyNestedFieldIds(state, metadata, map_def.children[0], ".key");
+	ApplyNestedFieldIds(state, metadata, map_def.children[1], ".value");
 
 	state->AppendToList(sibling_list_id, name, std::move(map_def));
 }
 
 void KernelSchemaVisitor::VisitVariant(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
-                                       ffi::KernelStringSlice name, bool is_nullable, const ffi::CStringMap *metadata) {
+                                       ffi::KernelStringSlice name, bool is_nullable,
+                                       const ffi::CMetadataMap *metadata) {
 	// NOTE: logical type always VARIANT here, backwards compatible parsing from STRUCT(value, metadata) handled in
 	// parquet_read() via IsVariantType function, which is always enabled via the __delta_only_variant_encoding_enabled
 	// global setting.
 	LogicalType type = LogicalType::VARIANT();
 	DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
-	ApplyDeltaColumnMapping(*state, metadata, col_def);
+	ApplyDeltaColumnMapping(state, metadata, col_def);
 	state->AppendToList(sibling_list_id, name, std::move(col_def));
+}
+
+void KernelSchemaVisitor::RecordError(ExceptionType type, const string &message) {
+	if (!error.HasError()) {
+		error = ErrorData(type, message);
+	}
+}
+
+void KernelSchemaVisitor::RefuseType(ffi::KernelStringSlice name, const string &type_name) {
+	RecordError(ExceptionType::NOT_IMPLEMENTED,
+	            StringUtil::Format("Column '%s' has the Delta type %s, which DuckDB cannot read yet",
+	                               KernelUtils::FromDeltaString(name), type_name));
+}
+
+void KernelSchemaVisitor::VisitIntervalYearMonth(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
+                                                 ffi::KernelStringSlice name, bool is_nullable,
+                                                 const ffi::CMetadataMap *metadata) {
+	state->RefuseType(name, "interval year to month");
+}
+
+void KernelSchemaVisitor::VisitIntervalDayTime(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
+                                               ffi::KernelStringSlice name, bool is_nullable,
+                                               const ffi::CMetadataMap *metadata) {
+	state->RefuseType(name, "interval day to second");
+}
+
+void KernelSchemaVisitor::VisitGeometry(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
+                                        ffi::KernelStringSlice name, bool is_nullable,
+                                        const ffi::CMetadataMap *metadata, ffi::KernelStringSlice crs) {
+	state->RefuseType(name, "geometry");
+}
+
+void KernelSchemaVisitor::VisitGeography(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
+                                         ffi::KernelStringSlice name, bool is_nullable,
+                                         const ffi::CMetadataMap *metadata, ffi::KernelStringSlice crs,
+                                         ffi::KernelStringSlice algorithm) {
+	state->RefuseType(name, "geography");
 }
 
 uintptr_t KernelSchemaVisitor::MakeFieldListImpl(uintptr_t capacity_hint) {
@@ -880,11 +945,14 @@ string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
 	                                           "LiteralExpressionTransformError",
 	                                           "CheckpointWriteError",
 	                                           "SchemaError",
-	                                           "LogHistoryError"};
+	                                           "LogHistoryError",
+	                                           "RowTrackingChangeFeedUnsupported",
+	                                           "CancelledError",
+	                                           "InvalidTransactionStateError"};
 
 	static constexpr int KERNEL_ERROR_ENUM_COUNT = (int)(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *));
 
-	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::KernelError::LogHistoryError,
+	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::KernelError::InvalidTransactionStateError,
 	              "KernelErrorEnumStrings mismatched with kernel");
 
 	if ((int)err < KERNEL_ERROR_ENUM_COUNT) {
@@ -966,6 +1034,30 @@ ffi::KernelStringSlice KernelUtils::ToDeltaString(const string &str) {
 	return {str.data(), str.size()};
 }
 
+bool KernelUtils::TryGetLiteralValue(const ParsedExpression &expr, Value &result) {
+	if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+		result = expr.Cast<ConstantExpression>().GetLiteral().ToValue();
+		return true;
+	}
+	if (expr.GetExpressionType() != ExpressionType::OPERATOR_CAST) {
+		return false;
+	}
+	auto &cast = expr.Cast<CastExpression>();
+	if (cast.IsTryCast() || cast.Child().GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+		return false;
+	}
+	auto target_type = UnboundType::TryDefaultBind(cast.TargetType());
+	if (target_type.id() == LogicalTypeId::INVALID || target_type.id() == LogicalTypeId::UNBOUND) {
+		return false;
+	}
+	auto value = cast.Child().Cast<ConstantExpression>().GetLiteral().ToValue().DefaultTryCastAs(target_type);
+	if (!value) {
+		return false;
+	}
+	result = std::move(*value);
+	return true;
+}
+
 string KernelUtils::FromDeltaString(const struct ffi::KernelStringSlice slice) {
 	return {slice.ptr, slice.len};
 }
@@ -976,18 +1068,37 @@ vector<bool> KernelUtils::FromDeltaBoolSlice(const struct ffi::KernelBoolSlice s
 	return result;
 }
 
-string KernelUtils::FetchFromStringMap(ffi::Handle<ffi::SharedExternEngine> engine, const ffi::CStringMap *str_map,
-                                       const string &key) {
-	void *out;
-	auto res = KernelUtils::TryUnpackResult(
-	    ffi::get_from_string_map(str_map, ToDeltaString(key), StringAllocationNew, engine), out);
+bool KernelUtils::IsMissingMaxCatalogVersion(const ErrorData &error) {
+	return StringUtil::Contains(error.RawMessage(),
+	                            "Max catalog version is required when loading a catalog-managed table");
+}
 
-	string val;
-	if (!res.HasError() && out) {
-		val = *(string *)out;
-		delete static_cast<string *>(out);
+optional<Value> KernelUtils::FetchFromMetadataMap(ffi::Handle<ffi::SharedExternEngine> engine,
+                                                  const ffi::CMetadataMap *map, const string &key) {
+	void *out;
+	ffi::CMetadataValueKind kind;
+	auto res = KernelUtils::TryUnpackResult(
+	    ffi::get_from_metadata_map(map, ToDeltaString(key), &kind, StringAllocationNew, engine), out);
+	if (res.HasError() || !out) {
+		return std::nullopt;
 	}
-	return val;
+	Value text(*static_cast<string *>(out));
+	delete static_cast<string *>(out);
+
+	switch (kind) {
+	case ffi::CMetadataValueKind::MetadataNumber:
+		if (auto number = text.DefaultTryCastAs(LogicalType::BIGINT)) {
+			return *number;
+		}
+		break;
+	case ffi::CMetadataValueKind::MetadataString:
+		return text;
+	case ffi::CMetadataValueKind::MetadataBoolean:
+		return Value::BOOLEAN(StringValue::Get(text) == "true");
+	case ffi::CMetadataValueKind::MetadataJson:
+		break;
+	}
+	return text.WithType(LogicalType::JSON());
 }
 
 DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *snapshot) {
@@ -1084,10 +1195,18 @@ uintptr_t PredicateVisitor::VisitPredicate(PredicateVisitor *predicate, ffi::Ker
 	return ffi::visit_predicate_and(state, &eit);
 }
 
-uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, ExpressionType comparison_type,
+static ffi::ExternResult<uintptr_t> VisitColumnPath(const vector<string> &col_path,
+                                                    ffi::KernelExpressionVisitorState *state) {
+	vector<ffi::KernelStringSlice> parts;
+	for (auto &part : col_path) {
+		parts.push_back(KernelUtils::ToDeltaString(part));
+	}
+	return ffi::visit_expression_column(state, parts.data(), parts.size(), DuckDBEngineError::AllocateError);
+}
+
+uintptr_t PredicateVisitor::VisitConstantFilter(const vector<string> &col_path, ExpressionType comparison_type,
                                                 const Value &value, ffi::KernelExpressionVisitorState *state) {
-	auto maybe_left =
-	    ffi::visit_expression_column(state, KernelUtils::ToDeltaString(col_name), DuckDBEngineError::AllocateError);
+	auto maybe_left = VisitColumnPath(col_path, state);
 
 	uintptr_t left;
 	auto left_res = KernelUtils::TryUnpackResult(maybe_left, left);
@@ -1210,11 +1329,11 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const string &col_name, Expressi
 // expects. `base` is the top-level column name this filter is keyed on: a bare column subject yields
 // `base`, while struct field access (struct_extract / struct_extract_at) appends the nested field
 // names, e.g. base "i" with subject i.a.b -> "i.a.b". Returns false for unsupported subjects.
-static bool ResolveFilterColumnPath(const Expression &expr, const string &base, string &result) {
+static bool ResolveFilterColumnPath(const Expression &expr, const string &base, vector<string> &result) {
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::BOUND_REF:
 	case ExpressionClass::BOUND_COLUMN_REF:
-		result = base;
+		result = {base};
 		return true;
 	case ExpressionClass::BOUND_FUNCTION: {
 		auto &func = expr.Cast<BoundFunctionExpression>();
@@ -1230,11 +1349,12 @@ static bool ResolveFilterColumnPath(const Expression &expr, const string &base, 
 		if (struct_type.id() != LogicalTypeId::STRUCT || !TryGetStructExtractChildIndex(func, child_idx)) {
 			return false;
 		}
-		string parent;
+		vector<string> parent;
 		if (!ResolveFilterColumnPath(*func.GetChildren()[0], base, parent)) {
 			return false;
 		}
-		result = parent + "." + StructType::GetChildName(struct_type, child_idx).GetIdentifierName();
+		result = std::move(parent);
+		result.push_back(StructType::GetChildName(struct_type, child_idx).GetIdentifierName());
 		return true;
 	}
 	default:
@@ -1242,9 +1362,8 @@ static bool ResolveFilterColumnPath(const Expression &expr, const string &base, 
 	}
 }
 
-uintptr_t PredicateVisitor::VisitIsNull(const string &col_name, ffi::KernelExpressionVisitorState *state) {
-	auto maybe_inner =
-	    ffi::visit_expression_column(state, KernelUtils::ToDeltaString(col_name), DuckDBEngineError::AllocateError);
+uintptr_t PredicateVisitor::VisitIsNull(const vector<string> &col_path, ffi::KernelExpressionVisitorState *state) {
+	auto maybe_inner = VisitColumnPath(col_path, state);
 	uintptr_t inner;
 
 	auto err = KernelUtils::TryUnpackResult(maybe_inner, inner);
@@ -1255,8 +1374,8 @@ uintptr_t PredicateVisitor::VisitIsNull(const string &col_name, ffi::KernelExpre
 	return ffi::visit_predicate_is_null(state, inner);
 }
 
-uintptr_t PredicateVisitor::VisitIsNotNull(const string &col_name, ffi::KernelExpressionVisitorState *state) {
-	return ffi::visit_predicate_not(state, VisitIsNull(col_name, state));
+uintptr_t PredicateVisitor::VisitIsNotNull(const vector<string> &col_path, ffi::KernelExpressionVisitorState *state) {
+	return ffi::visit_predicate_not(state, VisitIsNull(col_path, state));
 }
 
 uintptr_t PredicateVisitor::VisitFilterExpression(const string &col_name, const Expression &expr,
@@ -1272,14 +1391,14 @@ uintptr_t PredicateVisitor::VisitFilterExpression(const string &col_name, const 
 		auto comparison_type = comparison.GetExpressionType();
 		auto &left = BoundComparisonExpression::Left(comparison);
 		auto &right = BoundComparisonExpression::Right(comparison);
-		string path;
+		vector<string> path;
 		if (left.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
-		    ResolveFilterColumnPath(right, col_name, path) && !(path == col_name && base_is_nested)) {
+		    ResolveFilterColumnPath(right, col_name, path) && !(path.size() == 1 && base_is_nested)) {
 			return VisitConstantFilter(path, FlipComparisonExpression(comparison_type),
 			                           left.Cast<BoundConstantExpression>().GetValue(), state);
 		}
 		if (right.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
-		    ResolveFilterColumnPath(left, col_name, path) && !(path == col_name && base_is_nested)) {
+		    ResolveFilterColumnPath(left, col_name, path) && !(path.size() == 1 && base_is_nested)) {
 			return VisitConstantFilter(path, comparison_type, right.Cast<BoundConstantExpression>().GetValue(), state);
 		}
 		return ~0;
@@ -1304,9 +1423,9 @@ uintptr_t PredicateVisitor::VisitFilterExpression(const string &col_name, const 
 	}
 	case ExpressionClass::BOUND_OPERATOR: {
 		auto &op = expr.Cast<BoundOperatorExpression>();
-		string path;
+		vector<string> path;
 		if (op.GetChildren().size() != 1 || !ResolveFilterColumnPath(*op.GetChildren()[0], col_name, path) ||
-		    (path == col_name && base_is_nested)) {
+		    (path.size() == 1 && base_is_nested)) {
 			return ~0;
 		}
 		if (op.GetExpressionType() == ExpressionType::OPERATOR_IS_NULL) {
