@@ -124,6 +124,17 @@ CREATE OR REPLACE TABLE conflict.conflict (i INTEGER);
 ----
 do not support CREATE OR REPLACE TABLE
 
+# A bad option fails even where the table already makes the statement a no-op
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER) WITH (path = NULL);
+----
+NULL is not a valid value for Delta CREATE TABLE option 'path'
+
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.columnMapping.mode' = 'name');
+----
+column mapping on a nested column is not supported
+
 # IF NOT EXISTS on a fresh path still creates
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_if_not_exists' AS ine (TYPE delta);

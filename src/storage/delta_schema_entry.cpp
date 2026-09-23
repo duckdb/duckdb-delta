@@ -57,19 +57,11 @@ static Value ParseCreateTableOption(ClientContext &context, TableFunctionBinder 
                                     const ParsedExpression &expression, const string &name, const LogicalType &type) {
 	auto copy = expression.Copy();
 	auto bound = binder.Bind(copy);
-	if (bound->HasParameter()) {
-		throw ParameterNotResolvedException();
-	}
 	auto value = ExpressionExecutor::EvaluateScalar(context, *bound, true);
 	if (value.IsNull()) {
 		throw BinderException("NULL is not a valid value for Delta CREATE TABLE option '%s'", name);
 	}
-	auto casted = value.DefaultTryCastAs(type, nullptr, true);
-	if (!casted) {
-		throw InvalidInputException("Delta CREATE TABLE option '%s' (%s) can not be read as %s", name, value.ToString(),
-		                            type.ToString());
-	}
-	return std::move(*casted);
+	return value.DefaultCastAs(type);
 }
 
 //! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (path =
@@ -161,9 +153,10 @@ static bool DeltaTableExistsAt(ClientContext &context, const string &path) {
 	if (Path::FromString(path).IsLocal()) {
 		return fs.DirectoryExists(log_path.ToString());
 	}
-	// An object store has no directories, and S3's DirectoryExists answers true for every prefix. The
-	// log exists when something is in it.
-	return !fs.Glob(log_path.Join("*").ToString()).empty();
+	// An object store has no directories, and S3's DirectoryExists answers true for every prefix, so
+	// judge by content instead, as kernel does: any file under the log, a staged commit in `_commits`
+	// included, means the table is there.
+	return !fs.Glob(log_path.Join("**").ToString()).empty();
 }
 
 //! Applies DuckDB's CREATE conflict semantics ahead of the kernel call. Kernel remains the
@@ -242,12 +235,15 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	auto binder = Binder::CreateBinder(context);
 	TableFunctionBinder option_binder(*binder, context, "CREATE TABLE", "Table option");
 	auto path = GetCreateTablePath(context, option_binder, base, delta_catalog);
-	if (!HandleCreateConflict(context, base, path)) {
-		return nullptr;
-	}
 	auto partition_columns = GetCreateTablePartitionColumns(base);
 	auto table_properties = GetCreateTableProperties(context, option_binder, base);
 	ThrowIfColumnMappingUnwritable(base, partition_columns, table_properties);
+
+	// After the options are read, so that a bad option fails even where IF NOT EXISTS makes the
+	// statement a no-op: embedded SQL should not carry a typo until the day the table is gone.
+	if (!HandleCreateConflict(context, base, path)) {
+		return nullptr;
+	}
 
 	EnsureTableDirectory(context, path);
 	auto engine = CreateDeltaEngine(context, path);
