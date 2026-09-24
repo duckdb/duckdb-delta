@@ -195,13 +195,12 @@ static bool IsNaiveTimestamp(const LogicalType &type) {
 // without the UTC flag, such as Spark's INT96, is reinterpreted, never converted through the session time zone. Inside
 // a struct, list or map the whole nested value takes the built-in casts.
 static void CastNaiveTimestampsAsUtc(unique_ptr<Expression> &expr) {
-	if (BoundCastExpression::IsCast(*expr)) {
-		auto &cast = expr->Cast<BoundFunctionExpression>();
-		auto target = BoundCastExpression::TargetType(cast);
-		if (TypeVisitor::Contains(BoundCastExpression::SourceType(cast), IsNaiveTimestamp) &&
+	if (expr->GetExpressionClass() == ExpressionClass::BOUND_CAST) {
+		auto &cast = expr->Cast<BoundCastExpression>();
+		auto target = cast.return_type;
+		if (TypeVisitor::Contains(cast.child->return_type, IsNaiveTimestamp) &&
 		    TypeVisitor::Contains(target, LogicalTypeId::TIMESTAMP_TZ)) {
-			expr = BoundCastExpression::AddDefaultCastToType(std::move(BoundCastExpression::ChildMutable(cast)), target,
-			                                                 BoundCastExpression::IsTryCast(cast));
+			expr = BoundCastExpression::AddDefaultCastToType(std::move(cast.child), target, cast.try_cast);
 		}
 	}
 	ExpressionIterator::EnumerateChildren(*expr,
@@ -241,7 +240,7 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 		CastNaiveTimestampsAsUtc(expr);
 	}
 	for (auto &entry : reader_data.reader->expression_map) {
-		CastNaiveTimestampsAsUtc(entry.second.expression);
+		CastNaiveTimestampsAsUtc(entry.second);
 	}
 	return result;
 }
