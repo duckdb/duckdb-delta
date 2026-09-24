@@ -1,0 +1,31 @@
+# name: test/sql/inlined/spark_int96_timestamp.test
+# description: a Delta timestamp that Spark wrote as parquet INT96 reads as the same instant in every session time zone
+# group: [inlined]
+
+require parquet
+
+require delta
+
+require icu
+
+# One row per writer, the same instant at the top level (c), in a struct (s.c), a list (l) and a map value (m):
+# 2026-01-02 03:04:05.123456 UTC. DuckDB writes INT64 flagged as UTC; Spark writes INT96, which has no UTC flag, but a
+# Delta `timestamp` is UTC all the same.
+
+statement ok
+SET TimeZone = 'America/Los_Angeles';
+
+query IIIII
+SELECT writer, epoch_us(c), epoch_us(s.c), epoch_us(l[1]), epoch_us(m['k'])
+FROM delta_scan('data/inlined/spark_int96_timestamp') ORDER BY writer;
+----
+duckdb-delta	1767323045123456	1767323045123456	1767323045123456	1767323045123456
+spark-4.2	1767323045123456	1767323045123456	1767323045123456	1767323045123456
+
+query T
+SELECT writer FROM delta_scan('data/inlined/spark_int96_timestamp')
+WHERE c = TIMESTAMPTZ '2026-01-02 03:04:05.123456+00' AND s.c = TIMESTAMPTZ '2026-01-02 03:04:05.123456+00'
+ORDER BY writer;
+----
+duckdb-delta
+spark-4.2
