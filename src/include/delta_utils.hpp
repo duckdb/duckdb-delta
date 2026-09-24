@@ -423,6 +423,8 @@ struct TemplatedUniqueKernelPointer : public UniqueKernelPointer<KernelType> {
 typedef TemplatedUniqueKernelPointer<ffi::SharedSnapshot, ffi::free_snapshot> KernelSnapshot;
 typedef TemplatedUniqueKernelPointer<ffi::SharedExternEngine, ffi::free_engine> KernelExternEngine;
 typedef TemplatedUniqueKernelPointer<ffi::SharedScan, ffi::free_scan> KernelScan;
+typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadata, ffi::free_scan_metadata> KernelScanMetadata;
+typedef TemplatedUniqueKernelPointer<ffi::StringSliceIterator, ffi::free_string_slice_data> KernelStringSliceIterator;
 typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadataIterator, ffi::free_scan_metadata_iter>
     KernelScanDataIterator;
 typedef TemplatedUniqueKernelPointer<ffi::ExclusiveTransaction, ffi::free_transaction> KernelExclusiveTransaction;
