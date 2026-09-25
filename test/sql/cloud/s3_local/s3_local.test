@@ -1,6 +1,6 @@
-# name: test/sql/cloud/minio_local/minio_local.test
-# description: test delta extension with a local minio installation
-# group: [minio_local]
+# name: test/sql/cloud/s3_local/s3_local.test
+# description: test delta extension against the local S3 test server
+# group: [s3_local]
 
 require httpfs
 
@@ -10,7 +10,7 @@ require delta
 
 require aws
 
-require-env DUCKDB_MINIO_TEST_SERVER_AVAILABLE
+require-env DUCKDB_S3_TEST_SERVER_AVAILABLE
 
 require-env AWS_ACCESS_KEY_ID
 
