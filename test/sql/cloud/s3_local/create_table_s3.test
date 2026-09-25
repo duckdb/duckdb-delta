@@ -1,6 +1,6 @@
-# name: test/sql/cloud/minio_local/create_table_s3.test
+# name: test/sql/cloud/s3_local/create_table_s3.test
 # description: CREATE TABLE on an object store, including the existence probe IF NOT EXISTS relies on
-# group: [minio_local]
+# group: [s3_local]
 
 require httpfs
 
@@ -10,7 +10,7 @@ require delta
 
 require aws
 
-require-env DUCKDB_MINIO_TEST_SERVER_AVAILABLE
+require-env DUCKDB_S3_TEST_SERVER_AVAILABLE
 
 require-env AWS_ACCESS_KEY_ID
 
