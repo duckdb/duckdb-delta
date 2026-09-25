@@ -1,0 +1,95 @@
+# name: test/sql/cloud/minio_local/create_table_s3.test
+# description: CREATE TABLE on an object store, including the existence probe IF NOT EXISTS relies on
+# group: [minio_local]
+
+require httpfs
+
+require parquet
+
+require delta
+
+require aws
+
+require-env DUCKDB_MINIO_TEST_SERVER_AVAILABLE
+
+require-env AWS_ACCESS_KEY_ID
+
+require-env AWS_SECRET_ACCESS_KEY
+
+require-env AWS_DEFAULT_REGION
+
+require-env AWS_ENDPOINT
+
+# TEMPORARY: this file only exists because an object store answers `DirectoryExists` for every prefix,
+# so DuckDB's delta catalog judges "is a table here" by listing the log instead. Once S3 paths report
+# directories the way a filesystem does, the probe and this file can go.
+
+statement ok
+set secret_directory='{TEMP_DIR}/create_table_s3_secret'
+
+statement ok
+CREATE SECRET s1 (
+    TYPE S3,
+    ENDPOINT '{AWS_ENDPOINT}',
+    KEY_ID '{AWS_ACCESS_KEY_ID}',
+    SECRET '{AWS_SECRET_ACCESS_KEY}',
+    REGION '{AWS_DEFAULT_REGION}',
+    USE_SSL false
+);
+
+# -----------------------------------------------------------------------------
+# A table is created on a fresh prefix, and is writable
+#
+
+statement ok
+ATTACH 's3://test-bucket/create_table_s3/plain' AS s3_plain (TYPE delta, READ_WRITE);
+
+statement ok
+CREATE TABLE s3_plain.s3_plain (i INTEGER, s VARCHAR);
+
+statement ok
+INSERT INTO s3_plain.s3_plain VALUES (1, 'a'), (2, 'b');
+
+query II
+SELECT i, s FROM s3_plain.s3_plain ORDER BY i;
+----
+1	a
+2	b
+
+# -----------------------------------------------------------------------------
+# IF NOT EXISTS sees the table that is there
+#
+# A prefix that answers "directory exists" for anything would make the create below a no-op, and the
+# rows would be missing.
+#
+
+statement ok
+CREATE TABLE IF NOT EXISTS s3_plain.s3_plain (i INTEGER, s VARCHAR);
+
+query I
+SELECT count(*) FROM s3_plain.s3_plain;
+----
+2
+
+statement error
+CREATE TABLE s3_plain.s3_plain (i INTEGER, s VARCHAR);
+----
+already exists
+
+# -----------------------------------------------------------------------------
+# IF NOT EXISTS on a fresh prefix still creates
+#
+
+statement ok
+ATTACH 's3://test-bucket/create_table_s3/fresh' AS s3_fresh (TYPE delta, READ_WRITE);
+
+statement ok
+CREATE TABLE IF NOT EXISTS s3_fresh.s3_fresh (i INTEGER);
+
+statement ok
+INSERT INTO s3_fresh.s3_fresh VALUES (1);
+
+query I
+SELECT count(*) FROM s3_fresh.s3_fresh;
+----
+1

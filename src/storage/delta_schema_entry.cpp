@@ -11,17 +11,21 @@
 #include "storage/delta_transaction.hpp"
 
 #include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/path.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/common/unordered_set.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
-#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression_binder/table_function_binder.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 
@@ -47,19 +51,33 @@ static string CanonicalTablePath(const string &path) {
 	return parsed.GetBase() + parsed.GetPath();
 }
 
-//! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (path =
-//! '...')` names it explicitly. Only constants are accepted -- the binder does not evaluate table
-//! options, they arrive as raw parsed expressions.
-static string GetCreateTablePath(const CreateTableInfo &base, DeltaCatalog &delta_catalog) {
-	auto option = base.options.find("path");
+//! Table options reach the catalog as unevaluated parsed expressions, so bind and evaluate each one
+//! here. An option then accepts anything that evaluates to a constant, not only a literal.
+static Value ParseCreateTableOption(ClientContext &context, TableFunctionBinder &binder,
+                                    const ParsedExpression &expression, const string &name, const LogicalType &type) {
+	auto copy = expression.Copy();
+	auto bound = binder.Bind(copy);
+	auto value = ExpressionExecutor::EvaluateScalar(context, *bound, true);
+	if (value.IsNull()) {
+		throw BinderException("NULL is not a valid value for Delta CREATE TABLE option '%s'", name);
+	}
+	return value.DefaultCastAs(type);
+}
+
+//! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (location =
+//! '...')` names it explicitly, spelled as the Iceberg catalog spells it. `path` named the same thing
+//! before this, and it never shipped, so it is refused rather than taken for a table property.
+static string GetCreateTablePath(ClientContext &context, TableFunctionBinder &binder, const CreateTableInfo &base,
+                                 DeltaCatalog &delta_catalog) {
+	if (base.options.find("path") != base.options.end()) {
+		throw BinderException("Delta CREATE TABLE names the destination with 'location', not 'path'");
+	}
+	auto option = base.options.find("location");
 	if (option == base.options.end()) {
 		return delta_catalog.GetDBPath();
 	}
-	if (option->second->GetExpressionClass() != ExpressionClass::CONSTANT) {
-		throw BinderException("Delta CREATE TABLE option 'path' must be a constant, found '%s'",
-		                      option->second->ToString());
-	}
-	auto path = option->second->Cast<ConstantExpression>().GetLiteral().ToValue().ToString();
+	auto path = ParseCreateTableOption(context, binder, *option->second, option->first, LogicalType::VARCHAR)
+	                .GetValue<string>();
 
 	// A Delta catalog is a single table at a single path, so a divergent path would produce a
 	// catalog entry that does not describe what was attached. Compare normalized, so a trailing
@@ -72,12 +90,77 @@ static string GetCreateTablePath(const CreateTableInfo &base, DeltaCatalog &delt
 	return path;
 }
 
+//! Every option that does not name the location is a Delta table property, handed to kernel untouched:
+//! kernel decides which keys it recognizes and derives the protocol from them. Sorted, so the written
+//! configuration does not depend on the option map's iteration order.
+static vector<pair<string, string>> GetCreateTableProperties(ClientContext &context, TableFunctionBinder &binder,
+                                                             const CreateTableInfo &base) {
+	vector<pair<string, string>> properties;
+	for (auto &option : base.options) {
+		if (StringUtil::CIEquals(option.first, "location")) {
+			continue;
+		}
+		auto value = ParseCreateTableOption(context, binder, *option.second, option.first, LogicalType::VARCHAR);
+		properties.emplace_back(option.first, value.GetValue<string>());
+	}
+	std::sort(properties.begin(), properties.end());
+	return properties;
+}
+
+//! The mode kernel will map with: the property when it names one, and `name` when
+//! `delta.enableIcebergCompatV3` requires mapping without naming a mode
+//! (`maybe_enable_iceberg_compat_v3_dependencies` in kernel's create-table builder). Kernel refuses every
+//! other combination itself, and says why, so nothing else is mirrored here. Values are matched exactly,
+//! as kernel matches them.
+static string EffectiveColumnMappingMode(const vector<pair<string, string>> &properties) {
+	string mode;
+	bool iceberg_compat_v3 = false;
+	for (auto &property : properties) {
+		if (property.first == "delta.columnMapping.mode") {
+			mode = property.second;
+		} else if (property.first == "delta.enableIcebergCompatV3") {
+			iceberg_compat_v3 = property.second == "true";
+		}
+	}
+	if (mode.empty() && iceberg_compat_v3) {
+		return "name";
+	}
+	return mode;
+}
+
+//! The writer maps top-level columns only and refuses nested or partitioned mapped tables at INSERT, so
+//! refuse those shapes here rather than create a table nothing can insert into.
+static void ThrowIfColumnMappingUnwritable(const CreateTableInfo &base, const vector<string> &partition_columns,
+                                           const vector<pair<string, string>> &properties) {
+	auto mode = EffectiveColumnMappingMode(properties);
+	if (mode != "name" && mode != "id") {
+		return;
+	}
+	for (auto &col : base.columns.Logical()) {
+		auto type_id = col.Type().id();
+		if (type_id == LogicalTypeId::STRUCT || type_id == LogicalTypeId::LIST || type_id == LogicalTypeId::MAP) {
+			throw NotImplementedException(
+			    "Creating a Delta table that uses column mapping on a nested column is not supported");
+		}
+	}
+	if (!partition_columns.empty()) {
+		throw NotImplementedException("Creating a partitioned Delta table that uses column mapping is not supported");
+	}
+}
+
 //! Whether a Delta table has been created at `path` yet, judged the same way kernel judges it: by
 //! the presence of `_delta_log`. Deliberately a cheap existence probe rather than a snapshot build,
 //! because callers need "is there a table here" to be answerable before there is one.
 static bool DeltaTableExistsAt(ClientContext &context, const string &path) {
 	auto &fs = FileSystem::GetFileSystem(context);
-	return fs.DirectoryExists(Path::FromString(path).Join("_delta_log").ToString());
+	auto log_path = Path::FromString(path).Join("_delta_log");
+	if (Path::FromString(path).IsLocal()) {
+		return fs.DirectoryExists(log_path.ToString());
+	}
+	// An object store has no directories, and S3's DirectoryExists answers true for every prefix, so
+	// judge by content instead, as kernel does: any file under the log, a staged commit in `_commits`
+	// included, means the table is there.
+	return !fs.Glob(log_path.Join("**").ToString()).empty();
 }
 
 //! Applies DuckDB's CREATE conflict semantics ahead of the kernel call. Kernel remains the
@@ -153,11 +236,18 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		throw NotImplementedException("Delta CREATE TABLE does not support constraints");
 	}
 
-	auto path = GetCreateTablePath(base, delta_catalog);
+	auto binder = Binder::CreateBinder(context);
+	TableFunctionBinder option_binder(*binder, context, "CREATE TABLE", "Table option");
+	auto path = GetCreateTablePath(context, option_binder, base, delta_catalog);
+	auto partition_columns = GetCreateTablePartitionColumns(base);
+	auto table_properties = GetCreateTableProperties(context, option_binder, base);
+	ThrowIfColumnMappingUnwritable(base, partition_columns, table_properties);
+
+	// After the options are read, so that a bad option fails even where IF NOT EXISTS makes the
+	// statement a no-op: embedded SQL should not carry a typo until the day the table is gone.
 	if (!HandleCreateConflict(context, base, path)) {
 		return nullptr;
 	}
-	auto partition_columns = GetCreateTablePartitionColumns(base);
 
 	EnsureTableDirectory(context, path);
 	auto engine = CreateDeltaEngine(context, path);
@@ -193,6 +283,17 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		                                 create_builder);
 		if (partition_res.HasError()) {
 			partition_res.Throw();
+		}
+	}
+
+	for (auto &property : table_properties) {
+		// Consumes the builder handle unconditionally, including on error.
+		auto property_res = KernelUtils::TryUnpackResult(
+		    ffi::create_table_builder_with_table_property(create_builder, KernelUtils::ToDeltaString(property.first),
+		                                                  KernelUtils::ToDeltaString(property.second), engine.get()),
+		    create_builder);
+		if (property_res.HasError()) {
+			property_res.Throw();
 		}
 	}
 

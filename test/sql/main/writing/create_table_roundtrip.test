@@ -6,6 +6,8 @@ require parquet
 
 require delta
 
+require json
+
 require notwindows
 
 # -----------------------------------------------------------------------------
@@ -109,3 +111,178 @@ id	BIGINT
 part_a	VARCHAR
 part_b	DATE
 payload	DOUBLE
+
+# -----------------------------------------------------------------------------
+# Column mapping: name mode
+#
+# With column mapping, kernel gives every column two extra identifiers when the table is
+# created: a physical name (like `col-5f42...`) and a numeric field id. The table schema
+# in the log records both, and the parquet files must use exactly those, not the names
+# the user wrote.
+#
+# Each mode reads with only one of the two. Name mode finds a column by its physical
+# name; id mode finds it by its field id. So a run in name mode cannot notice a wrong
+# field id, and a run in id mode cannot notice a wrong physical name. Running both is
+# what proves the writer gets both right.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_roundtrip_cm_name' AS rt_cm_name (TYPE delta);
+
+statement ok
+CREATE TABLE rt_cm_name.rt_cm_name (id INTEGER, code VARCHAR) WITH ('delta.columnMapping.mode' = 'name');
+
+statement ok
+INSERT INTO rt_cm_name.rt_cm_name VALUES (1, 'ABC'), (2, 'DEF');
+
+# Compare values, not just the row count. If the reader cannot find a column, it
+# returns NULL for it, and the row count would still look right.
+query II
+SELECT id, code FROM rt_cm_name.rt_cm_name ORDER BY id;
+----
+1	ABC
+2	DEF
+
+# Setting the mode is what turns the column mapping feature on
+query II
+SELECT list_contains(protocol.readerFeatures, 'columnMapping'), list_contains(protocol.writerFeatures, 'columnMapping')
+FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_name/_delta_log/00000000000000000000.json') WHERE protocol IS NOT NULL;
+----
+true	true
+
+# What the log says: for each column the user named, the physical name and field id
+# kernel chose
+statement ok
+CREATE TEMP VIEW cm_name_log AS
+SELECT json_extract_string(field, '$.name') AS column_name,
+       json_extract_string(field, '$.metadata."delta.columnMapping.physicalName"') AS name,
+       json_extract(field, '$.metadata."delta.columnMapping.id"')::INTEGER AS field_id
+FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_name/_delta_log/00000000000000000000.json'),
+     unnest(json_extract(metaData.schemaString, '$.fields[*]')) AS f(field)
+WHERE metaData IS NOT NULL;
+
+# What the file holds: the column names and field ids the writer actually used
+statement ok
+CREATE TEMP VIEW cm_name_file AS
+SELECT DISTINCT name, field_id FROM parquet_schema('{TEMP_DIR}/delta_roundtrip_cm_name/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema';
+
+# Match the two on physical name and field id together, and report each column by the
+# name the user wrote, because the physical names are random. Every column must be in
+# both. A column the writer got wrong, or an extra one in the file (such as a
+# user-written name, or a column without a field id), shows up as its own row with a
+# false. An empty log shows up as missing rows.
+query III
+SELECT coalesce(log.column_name, file.name) AS column_name,
+       log.name IS NOT NULL AS in_log,
+       file.name IS NOT NULL AS in_file
+FROM cm_name_log AS log
+FULL OUTER JOIN cm_name_file AS file ON log.name = file.name AND log.field_id = file.field_id
+ORDER BY ALL;
+----
+code	true	true
+id	true	true
+
+# Stats must use physical names too. A reader looks stats up by physical name, so
+# stats under `code` would be silently ignored.
+query II
+SELECT add.stats LIKE '%col-%', add.stats LIKE '%"code"%'
+FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_name/_delta_log/00000000000000000001.json') WHERE add IS NOT NULL;
+----
+true	false
+
+# A fresh attach has nothing cached, so this read depends only on what is on disk
+statement ok
+DETACH rt_cm_name;
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_roundtrip_cm_name' AS rt_cm_name_again (TYPE delta);
+
+query II
+SELECT id, code FROM rt_cm_name_again.rt_cm_name_again ORDER BY id;
+----
+1	ABC
+2	DEF
+
+# -----------------------------------------------------------------------------
+# Column mapping: id mode
+#
+# The same checks as name mode. Here the field ids are the ones that matter, because an
+# id-mode reader finds every column by its field id.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_roundtrip_cm_id' AS rt_cm_id (TYPE delta);
+
+statement ok
+CREATE TABLE rt_cm_id.rt_cm_id (id INTEGER, code VARCHAR) WITH ('delta.columnMapping.mode' = 'id');
+
+statement ok
+INSERT INTO rt_cm_id.rt_cm_id VALUES (1, 'ABC'), (2, 'DEF');
+
+query II
+SELECT id, code FROM rt_cm_id.rt_cm_id ORDER BY id;
+----
+1	ABC
+2	DEF
+
+# Setting the mode is what turns the column mapping feature on
+query II
+SELECT list_contains(protocol.readerFeatures, 'columnMapping'), list_contains(protocol.writerFeatures, 'columnMapping')
+FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_id/_delta_log/00000000000000000000.json') WHERE protocol IS NOT NULL;
+----
+true	true
+
+# What the log says: for each column the user named, the physical name and field id
+# kernel chose
+statement ok
+CREATE TEMP VIEW cm_id_log AS
+SELECT json_extract_string(field, '$.name') AS column_name,
+       json_extract_string(field, '$.metadata."delta.columnMapping.physicalName"') AS name,
+       json_extract(field, '$.metadata."delta.columnMapping.id"')::INTEGER AS field_id
+FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_id/_delta_log/00000000000000000000.json'),
+     unnest(json_extract(metaData.schemaString, '$.fields[*]')) AS f(field)
+WHERE metaData IS NOT NULL;
+
+# What the file holds: the column names and field ids the writer actually used
+statement ok
+CREATE TEMP VIEW cm_id_file AS
+SELECT DISTINCT name, field_id FROM parquet_schema('{TEMP_DIR}/delta_roundtrip_cm_id/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema';
+
+# Match the two on physical name and field id together, and report each column by the
+# name the user wrote, because the physical names are random. Every column must be in
+# both. A column the writer got wrong, or an extra one in the file (such as a
+# user-written name, or a column without a field id), shows up as its own row with a
+# false. An empty log shows up as missing rows.
+query III
+SELECT coalesce(log.column_name, file.name) AS column_name,
+       log.name IS NOT NULL AS in_log,
+       file.name IS NOT NULL AS in_file
+FROM cm_id_log AS log
+FULL OUTER JOIN cm_id_file AS file ON log.name = file.name AND log.field_id = file.field_id
+ORDER BY ALL;
+----
+code	true	true
+id	true	true
+
+# Stats must use physical names too. A reader looks stats up by physical name, so
+# stats under `code` would be silently ignored.
+query II
+SELECT add.stats LIKE '%col-%', add.stats LIKE '%"code"%'
+FROM read_json('{TEMP_DIR}/delta_roundtrip_cm_id/_delta_log/00000000000000000001.json') WHERE add IS NOT NULL;
+----
+true	false
+
+# A fresh attach has nothing cached, so this read depends only on what is on disk
+statement ok
+DETACH rt_cm_id;
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_roundtrip_cm_id' AS rt_cm_id_again (TYPE delta);
+
+query II
+SELECT id, code FROM rt_cm_id_again.rt_cm_id_again ORDER BY id;
+----
+1	ABC
+2	DEF

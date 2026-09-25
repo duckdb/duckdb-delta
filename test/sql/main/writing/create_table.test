@@ -6,6 +6,8 @@ require parquet
 
 require delta
 
+require json
+
 require notwindows
 
 # -----------------------------------------------------------------------------
@@ -45,21 +47,31 @@ already exists
 #
 
 statement ok
-ATTACH '{TEMP_DIR}/delta_create_with_path' AS with_path (TYPE delta);
+ATTACH '{TEMP_DIR}/delta_create_with_location' AS with_location (TYPE delta);
 
 statement ok
-CREATE TABLE with_path.with_path (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_with_path');
+CREATE TABLE with_location.with_location (i INTEGER)
+WITH (location = '{TEMP_DIR}/delta_create_with_location');
 
 query I
-SELECT count(*) FROM with_path.with_path;
+SELECT count(*) FROM with_location.with_location;
 ----
 0
+
+# `path` named the same option before `location` did, and never shipped
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_with_path' AS with_path (TYPE delta);
+
+statement error
+CREATE TABLE with_path.with_path (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_with_path');
+----
+names the destination with 'location', not 'path'
 
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_other_path' AS other_path (TYPE delta);
 
 statement error
-CREATE TABLE other_path.other_path (i INTEGER) WITH (path = '{TEMP_DIR}/somewhere_else');
+CREATE TABLE other_path.other_path (i INTEGER) WITH (location = '{TEMP_DIR}/somewhere_else');
 ----
 can only create a table at the attached path
 
@@ -68,12 +80,35 @@ statement ok
 ATTACH '{TEMP_DIR}/delta_create_norm' AS norm (TYPE delta);
 
 statement ok
-CREATE TABLE norm.norm (i INTEGER) WITH (path = '{TEMP_DIR}/delta_create_norm/');
+CREATE TABLE norm.norm (i INTEGER) WITH (location = '{TEMP_DIR}/delta_create_norm/');
 
 query I
 SELECT count(*) FROM norm.norm;
 ----
 0
+
+# The option is bound and evaluated, so an expression can name the path. It must not
+# begin with a string literal: the option grammar prefers a literal over an expression,
+# so `'a' || 'b'` stops parsing at the operator.
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_expr' AS expr (TYPE delta);
+
+statement ok
+CREATE TABLE expr.expr (i INTEGER) WITH (location = concat('{TEMP_DIR}/delta_create', '_expr'));
+
+query I
+SELECT count(*) FROM expr.expr;
+----
+0
+
+# A fresh attach, so the failure is the option and not a duplicate table
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_null_opt' AS null_opt (TYPE delta);
+
+statement error
+CREATE TABLE null_opt.null_opt (i INTEGER) WITH (location = NULL);
+----
+NULL is not a valid value for Delta CREATE TABLE option 'location'
 
 # -----------------------------------------------------------------------------
 # CREATE conflict handling
@@ -99,6 +134,17 @@ CREATE OR REPLACE TABLE conflict.conflict (i INTEGER);
 ----
 do not support CREATE OR REPLACE TABLE
 
+# A bad option fails even where the table already makes the statement a no-op
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER) WITH (location = NULL);
+----
+NULL is not a valid value for Delta CREATE TABLE option 'location'
+
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.columnMapping.mode' = 'name');
+----
+column mapping on a nested column is not supported
+
 # IF NOT EXISTS on a fresh path still creates
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_if_not_exists' AS ine (TYPE delta);
@@ -121,10 +167,21 @@ ATTACH '{TEMP_DIR}/delta_create_partitioned' AS partitioned (TYPE delta);
 statement ok
 CREATE TABLE partitioned.partitioned (id INTEGER, part_col VARCHAR) PARTITIONED BY (part_col);
 
-query I
-SELECT count(*) FROM partitioned.partitioned;
+# Written to and read back: a partition column the writer disagreed with would still create cleanly
+statement ok
+INSERT INTO partitioned.partitioned VALUES (1, 'a'), (2, 'b');
+
+query II
+SELECT id, part_col FROM partitioned.partitioned ORDER BY id;
 ----
-0
+1	a
+2	b
+
+# One directory per partition value, as Delta lays them out
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_partitioned/part_col=*/*.parquet');
+----
+2
 
 # Kernel requires at least one non-partition column
 statement ok
@@ -133,7 +190,207 @@ ATTACH '{TEMP_DIR}/delta_create_all_partitioned' AS all_partitioned (TYPE delta)
 statement error
 CREATE TABLE all_partitioned.all_partitioned (part_col VARCHAR) PARTITIONED BY (part_col);
 ----
-<REGEX>:.*artition.*
+Table must have at least one non-partition column
+
+# -----------------------------------------------------------------------------
+# Table properties
+#
+# Any option that is not `path` is a Delta table property. Kernel decides what a key
+# means, so these assertions only check that the key and value reach the commit.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_props' AS props (TYPE delta);
+
+statement ok
+CREATE TABLE props.props (i INTEGER) WITH ('delta.appendOnly' = 'true');
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."delta.appendOnly"')
+FROM read_json('{TEMP_DIR}/delta_create_props/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+true
+
+# A quoted key keeps its case, which Delta property names depend on
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_props_case' AS props_case (TYPE delta);
+
+statement ok
+CREATE TABLE props_case.props_case (i INTEGER) WITH ('myApp.Mixed.Key' = 'Kept');
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."myApp.Mixed.Key"')
+FROM read_json('{TEMP_DIR}/delta_create_props_case/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+Kept
+
+# An unquoted dotted key is also accepted, and keeps its case
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_props_bare' AS props_bare (TYPE delta);
+
+statement ok
+CREATE TABLE props_bare.props_bare (i INTEGER) WITH (delta.appendOnly = 'true');
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."delta.appendOnly"')
+FROM read_json('{TEMP_DIR}/delta_create_props_bare/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+true
+
+# Several properties in one statement, all committed
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_props_many' AS props_many (TYPE delta);
+
+statement ok
+CREATE TABLE props_many.props_many (i INTEGER)
+WITH ('delta.appendOnly' = 'true', 'myApp.a' = '1', 'myApp.b' = '2');
+
+query III
+SELECT json_extract_string(metaData.configuration, '$."delta.appendOnly"'),
+       json_extract_string(metaData.configuration, '$."myApp.a"'),
+       json_extract_string(metaData.configuration, '$."myApp.b"')
+FROM read_json('{TEMP_DIR}/delta_create_props_many/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+true	1	2
+
+# `path` is ours, so it must not be written as a property, and nothing else leaks in either
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_path_and_prop' AS path_and_prop (TYPE delta);
+
+statement ok
+CREATE TABLE path_and_prop.path_and_prop (i INTEGER)
+WITH (location = '{TEMP_DIR}/delta_create_path_and_prop', 'myApp.a' = '1');
+
+query I
+SELECT json_keys(metaData.configuration)
+FROM read_json('{TEMP_DIR}/delta_create_path_and_prop/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[myApp.a]
+
+# A property kernel knows turns its feature on, which is how a table gets its protocol
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_dv' AS dv (TYPE delta);
+
+statement ok
+CREATE TABLE dv.dv (i INTEGER) WITH ('delta.enableDeletionVectors' = 'true');
+
+query IIII
+SELECT protocol.minReaderVersion, protocol.minWriterVersion,
+       list_contains(protocol.readerFeatures, 'deletionVectors'),
+       list_contains(protocol.writerFeatures, 'deletionVectors')
+FROM read_json('{TEMP_DIR}/delta_create_dv/_delta_log/00000000000000000000.json')
+WHERE protocol IS NOT NULL;
+----
+3	7	true	true
+
+statement ok
+INSERT INTO dv.dv VALUES (1);
+
+query I
+SELECT i FROM dv.dv;
+----
+1
+
+# -----------------------------------------------------------------------------
+# Column mapping
+#
+# Kernel maps every column of a table created with column mapping, but the writer maps
+# top-level columns only and refuses nested or partitioned mapped tables at INSERT.
+# CREATE refuses the same shapes, so it cannot make a table nothing can insert into.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_cm' AS cm (TYPE delta);
+
+statement ok
+CREATE TABLE cm.cm (i INTEGER, s VARCHAR) WITH ('delta.columnMapping.mode' = 'name');
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"')
+FROM read_json('{TEMP_DIR}/delta_create_cm/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+name
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_cm_nested' AS cm_nested (TYPE delta);
+
+statement error
+CREATE TABLE cm_nested.cm_nested (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.columnMapping.mode' = 'name');
+----
+column mapping on a nested column is not supported
+
+statement error
+CREATE TABLE cm_nested.cm_nested (i INTEGER, l INTEGER[]) WITH ('delta.columnMapping.mode' = 'id');
+----
+column mapping on a nested column is not supported
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_cm_part' AS cm_part (TYPE delta);
+
+statement error
+CREATE TABLE cm_part.cm_part (i INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'name');
+----
+partitioned Delta table that uses column mapping is not supported
+
+# Neither refusal touches storage
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_cm_part/_delta_log/*.json');
+----
+0
+
+# Mode `none` maps nothing, so a partitioned table is fine
+statement ok
+CREATE TABLE cm_part.cm_part (i INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'none');
+
+# The mode is matched exactly, as kernel matches it, so an unrecognized spelling is kernel's
+# to reject rather than silently treated as a mapped table
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_cm_case' AS cm_case (TYPE delta);
+
+statement error
+CREATE TABLE cm_case.cm_case (i INTEGER, s VARCHAR) WITH ('delta.columnMapping.mode' = 'Name');
+----
+Invalid column mapping mode
+
+# `delta.enableIcebergCompatV3` requires column mapping, and kernel maps with `name` when no mode is
+# named, so the refusals above have to cover it too
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_cm_iceberg' AS cm_iceberg (TYPE delta);
+
+statement error
+CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.enableIcebergCompatV3' = 'true');
+----
+column mapping on a nested column is not supported
+
+statement error
+CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.enableIcebergCompatV3' = 'true');
+----
+partitioned Delta table that uses column mapping is not supported
+
+# A table of top-level columns is writable, so it is created, with the mode kernel chose
+statement ok
+CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, s VARCHAR) WITH ('delta.enableIcebergCompatV3' = 'true');
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"')
+FROM read_json('{TEMP_DIR}/delta_create_cm_iceberg/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+name
+
+statement ok
+INSERT INTO cm_iceberg.cm_iceberg VALUES (1, 'a');
+
+query II
+SELECT i, s FROM cm_iceberg.cm_iceberg;
+----
+1	a
 
 # -----------------------------------------------------------------------------
 # Unsupported for now

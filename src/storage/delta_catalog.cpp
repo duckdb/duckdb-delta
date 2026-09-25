@@ -189,7 +189,8 @@ DatabaseSize DeltaCatalog::GetDatabaseSize(ClientContext &context) {
 
 PhysicalOperator &DeltaCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                   LogicalCreateTable &op, PhysicalOperator &plan) {
-	throw NotImplementedException("DeltaCatalog PlanCreateTableAs");
+	throw NotImplementedException(
+	    "Delta tables do not support CREATE TABLE AS SELECT yet: create the table, then INSERT into it");
 }
 PhysicalOperator &DeltaCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner, LogicalDelete &op,
                                            PhysicalOperator &plan) {
