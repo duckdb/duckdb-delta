@@ -93,11 +93,9 @@ jobs:
           echo "## azurite"
           cat azurite_log.txt || true
 
-  minio-tests-linux:
-    name: Minio (local S3 test server) tests (Linux)
+  s3-tests-linux:
+    name: S3 (local RustFS test server) tests (Linux)
     runs-on: ubuntu-latest
-    env:
-      S3_TEST_SERVER_AVAILABLE: 1
 
     steps:
       - *checkout
@@ -109,25 +107,14 @@ jobs:
       - *openssl_rust_context
       - run: make release
 
-      - name: Start S3/HTTP test server
+      - name: Start S3 test server
         run: |
-          # deal with odd dpkg/apt conflict
-          sudo apt purge containerd containerd.io docker docker-cli
-          sudo apt install docker-cli
-          cd duckdb
-          # NOTE: fake attach.db and link docker yml to make the minio script happy
-          rm -rf test/test_data
-          mkdir -p test/test_data
-          touch test/test_data/attach.db
-          # finally set up minio
-          sudo "$GITHUB_WORKSPACE/scripts/minio/install_s3_test_server.sh"
-          source "$GITHUB_WORKSPACE/scripts/minio/run_s3_test_server.sh"
-          sleep 30
+          # buckets are addressed virtual-host style, so each one needs a host name
+          echo '127.0.0.1 rustfs test-bucket.rustfs test-bucket-public.rustfs' | sudo tee -a /etc/hosts
+          docker compose -f scripts/s3/docker-compose.yml up -d
+          scripts/env_s3 scripts/s3/populate.sh
 
-      - run: ./scripts/create_minio_credential_file.sh
-      - run: scripts/env_minio scripts/upload_test_files_to_minio.sh
-      - run: make test
-      - run: scripts/env_minio build/release/test/unittest '*/test/sql/cloud/minio_local/*'
+      - run: scripts/env_s3 build/release/test/unittest '*/test/sql/cloud/s3_local/*'
 
   generated-tests-linux:
     name: Generated Tests (Linux)

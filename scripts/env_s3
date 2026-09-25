@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+# NOTE: usage -- env_s3 <cmd> [args], just like `env`, also accepts env's args
+# Credentials and endpoint of the local S3 test server (scripts/s3).
+
+export DUCKDB_S3_TEST_SERVER_AVAILABLE=1
+export AWS_ACCESS_KEY_ID=duckdb_user
+export AWS_SECRET_ACCESS_KEY=duckdb_user_password
+export AWS_DEFAULT_REGION=eu-west-1
+# host:port, no scheme: the v1.5 httpfs takes the secret ENDPOINT verbatim as a host name
+export AWS_ENDPOINT=rustfs:9000
+
+exec env "$@"

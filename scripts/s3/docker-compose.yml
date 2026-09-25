@@ -1,0 +1,14 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    container_name: rustfs
+    ports:
+      - "9000:9000"
+    environment:
+      RUSTFS_ACCESS_KEY: duckdb_user
+      RUSTFS_SECRET_KEY: duckdb_user_password
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      # serves buckets virtual-host style ({bucket}.rustfs), which DuckDB's S3 secrets default to
+      RUSTFS_SERVER_DOMAINS: rustfs
+      RUSTFS_CONSOLE_ENABLE: "false"
