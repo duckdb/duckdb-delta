@@ -1,0 +1,10 @@
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    container_name: seaweedfs
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./s3_config.json:/etc/seaweedfs/s3_config.json:ro
+    # domainName serves buckets virtual-host style ({bucket}.seaweedfs), which DuckDB's S3 secrets default to.
+    command: ["server", "-dir=/data", "-ip=seaweedfs", "-s3", "-s3.port=9000", "-s3.domainName=seaweedfs", "-s3.config=/etc/seaweedfs/s3_config.json"]

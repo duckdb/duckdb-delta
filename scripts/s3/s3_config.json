@@ -1,0 +1,13 @@
+{
+  "identities": [
+    {
+      "name": "duckdb",
+      "credentials": [{"accessKey": "duckdb_user", "secretKey": "duckdb_user_password"}],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    },
+    {
+      "name": "anonymous",
+      "actions": ["Read:test-bucket-public", "List:test-bucket-public"]
+    }
+  ]
+}
