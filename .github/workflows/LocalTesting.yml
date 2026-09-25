@@ -117,6 +117,8 @@ jobs:
       - run: scripts/env_minio scripts/upload_test_files_to_minio.sh
       - run: make test
       - run: scripts/env_minio build/release/test/unittest "*/test/sql/cloud/minio_local/*"
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
 
   generated-tests-linux:
     name: Generated Tests (Linux)
