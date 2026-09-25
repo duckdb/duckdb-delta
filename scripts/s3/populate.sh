@@ -10,7 +10,7 @@ for _ in $(seq 60); do
   sleep 1
 done
 
-DAT=build/release/rust/src/delta_kernel/acceptance/tests/dat/out/reader_tests/generated
+DAT=${DAT:-build/release/rust/src/delta_kernel/acceptance/tests/dat/out/reader_tests/generated}
 for bucket in test-bucket test-bucket-public; do
   s3 mb "s3://$bucket"
   s3 cp --recursive --quiet "$DAT" "s3://$bucket/dat"
