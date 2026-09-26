@@ -662,8 +662,9 @@ ffi::EngineSchemaVisitor KernelSchemaVisitor::CreateSchemaVisitor(KernelSchemaVi
 }
 
 vector<DeltaMultiFileColumnDefinition>
-KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedSnapshot *snapshot) {
-	KernelSchemaVisitor state(engine);
+KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedSnapshot *snapshot,
+                                         DeltaColumnMappingMode mapping_mode) {
+	KernelSchemaVisitor state(engine, mapping_mode);
 	auto visitor = CreateSchemaVisitor(state);
 
 	auto schema = logical_schema(snapshot);
@@ -679,8 +680,8 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 
 vector<DeltaMultiFileColumnDefinition>
 KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine, ffi::SharedScan *scan,
-                                         bool logical) {
-	KernelSchemaVisitor visitor_state(engine);
+                                         bool logical, DeltaColumnMappingMode mapping_mode) {
+	KernelSchemaVisitor visitor_state(engine, mapping_mode);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 
 	ffi::Handle<ffi::SharedSchema> schema;
@@ -703,7 +704,8 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 vector<DeltaMultiFileColumnDefinition>
 KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
                                          ffi::SharedWriteContext *write_context) {
-	KernelSchemaVisitor visitor_state(engine);
+	// Writes address columns through `physical_name` and `field_id`, never `identifier`, so the mode is moot here
+	KernelSchemaVisitor visitor_state(engine, DeltaColumnMappingMode::NONE);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);
@@ -768,6 +770,10 @@ void KernelSchemaVisitor::VisitArray(KernelSchemaVisitor *state, uintptr_t sibli
 	list_def.children.front().name = "list";
 
 	ApplyDeltaColumnMapping(state, metadata, list_def);
+	ApplyNestedFieldIds(state, metadata, list_def, list_def.children[0], ".element");
+	if (state->mapping_mode == DeltaColumnMappingMode::ID) {
+		DeltaMultiFileColumnDefinition::FillContainerChildIds(list_def);
+	}
 
 	state->AppendToList(sibling_list_id, name, std::move(list_def));
 }
@@ -791,6 +797,11 @@ void KernelSchemaVisitor::VisitMap(KernelSchemaVisitor *state, uintptr_t sibling
 	map_def.default_expression = ConstantExpression::FromValue(Value(map_type));
 
 	ApplyDeltaColumnMapping(state, metadata, map_def);
+	ApplyNestedFieldIds(state, metadata, map_def, map_def.children[0], ".key");
+	ApplyNestedFieldIds(state, metadata, map_def, map_def.children[1], ".value");
+	if (state->mapping_mode == DeltaColumnMappingMode::ID) {
+		DeltaMultiFileColumnDefinition::FillContainerChildIds(map_def);
+	}
 
 	state->AppendToList(sibling_list_id, name, std::move(map_def));
 }
@@ -1092,6 +1103,28 @@ optional<Value> KernelUtils::FetchFromMetadataMap(ffi::Handle<ffi::SharedExternE
 		break;
 	}
 	return text.WithType(LogicalType::JSON());
+}
+
+DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *snapshot) {
+	struct VisitorContext {
+		string mode;
+	};
+	VisitorContext ctx;
+	auto visitor = [](ffi::NullableCvoid engine_context, ffi::KernelStringSlice key, ffi::KernelStringSlice value) {
+		auto &c = *static_cast<VisitorContext *>(engine_context);
+		if (FromDeltaString(key) == "delta.columnMapping.mode") {
+			c.mode = FromDeltaString(value);
+		}
+	};
+	ffi::visit_metadata_configuration(snapshot, &ctx, visitor);
+	// Case-sensitive, and an unknown value means unmapped: the same as the kernel's own parse of this property
+	if (ctx.mode == "id") {
+		return DeltaColumnMappingMode::ID;
+	}
+	if (ctx.mode == "name") {
+		return DeltaColumnMappingMode::NAME;
+	}
+	return DeltaColumnMappingMode::NONE;
 }
 
 vector<unique_ptr<ParsedExpression>>
