@@ -550,9 +550,11 @@ void ScanDataCallBack::VisitCallback(ffi::NullableCvoid engine_context, ffi::Ker
 }
 
 void ScanDataCallBack::VisitData(ffi::NullableCvoid engine_context,
-                                 ffi::Handle<ffi::SharedScanMetadata> scan_metadata) {
+                                 ffi::Handle<ffi::SharedScanMetadata> scan_metadata_raw) {
+	// scan_metadata_next transfers ownership; visit_scan_metadata only borrows it.
+	KernelScanMetadata scan_metadata(scan_metadata_raw);
 	auto scandata_cb = static_cast<ScanDataCallBack *>(engine_context);
-	auto res = ffi::visit_scan_metadata(scan_metadata, scandata_cb->snapshot.extern_engine.get(), engine_context,
+	auto res = ffi::visit_scan_metadata(scan_metadata.get(), scandata_cb->snapshot.extern_engine.get(), engine_context,
 	                                    VisitCallback);
 	bool ok;
 	auto err = KernelUtils::TryUnpackResult(res, ok);
@@ -895,10 +897,10 @@ void DeltaMultiFileList::InitializeScan() const {
 	// Load partitions
 	auto partition_count = ffi::get_partition_column_count(snapshot_ref.GetPtr());
 	if (partition_count > 0) {
-		auto string_slice_iterator = ffi::get_partition_columns(snapshot_ref.GetPtr());
+		KernelStringSliceIterator string_slice_iterator(ffi::get_partition_columns(snapshot_ref.GetPtr()));
 
 		KernelPartitionVisitorData data;
-		while (string_slice_next(string_slice_iterator, &data, KernelPartitionStringVisitor)) {
+		while (string_slice_next(string_slice_iterator.get(), &data, KernelPartitionStringVisitor)) {
 		}
 		partitions = data.partitions;
 

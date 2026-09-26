@@ -3,6 +3,7 @@
 #include "functions/delta_scan/delta_scan.hpp"
 
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -16,6 +17,8 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 
 namespace duckdb {
@@ -233,6 +236,26 @@ ResolveFileWithoutFieldIds(ClientContext &context, const vector<DeltaMultiFileCo
 	                            filename);
 }
 
+static bool IsNaiveTimestamp(const LogicalType &type) {
+	return type.id() == LogicalTypeId::TIMESTAMP || type.id() == LogicalTypeId::TIMESTAMP_NS;
+}
+
+// A Delta `timestamp` is a UTC instant whatever its parquet type (Delta's PROTOCOL.md, Primitive Types), so a value
+// without the UTC flag, such as Spark's INT96, is reinterpreted, never converted through the session time zone. Inside
+// a struct, list or map the whole nested value takes the built-in casts.
+static void CastNaiveTimestampsAsUtc(unique_ptr<Expression> &expr) {
+	if (expr->GetExpressionClass() == ExpressionClass::BOUND_CAST) {
+		auto &cast = expr->Cast<BoundCastExpression>();
+		auto target = cast.return_type;
+		if (TypeVisitor::Contains(cast.child->return_type, IsNaiveTimestamp) &&
+		    TypeVisitor::Contains(target, LogicalTypeId::TIMESTAMP_TZ)) {
+			expr = BoundCastExpression::AddDefaultCastToType(std::move(cast.child), target, cast.try_cast);
+		}
+	}
+	ExpressionIterator::EnumerateChildren(*expr,
+	                                      [](unique_ptr<Expression> &child) { CastNaiveTimestampsAsUtc(child); });
+}
+
 ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData &reader_data,
                                                             const MultiFileBindData &bind_data,
                                                             const vector<MultiFileColumnDefinition> &global_columns,
@@ -270,8 +293,15 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 		}
 	}
 
-	return CreateMapping(context, reader_data, overridden_global_columns, global_column_ids, table_filters,
-	                     gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns, mapping_mode);
+	auto result = CreateMapping(context, reader_data, overridden_global_columns, global_column_ids, table_filters,
+	                            gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns, mapping_mode);
+	for (auto &expr : reader_data.expressions) {
+		CastNaiveTimestampsAsUtc(expr);
+	}
+	for (auto &entry : reader_data.reader->expression_map) {
+		CastNaiveTimestampsAsUtc(entry.second);
+	}
+	return result;
 }
 
 void DeltaMultiFileReader::FinalizeBind(MultiFileReaderData &reader_data, const MultiFileOptions &file_options,

@@ -23,7 +23,7 @@ test_debug: export DELTA_KERNEL_TESTS_PATH=./build/debug/rust/src/delta_kernel/k
 test_debug: export DAT_PATH=./build/debug/rust/src/delta_kernel/acceptance/tests/dat
 
 # Core extensions that we need for crucial testing
-DEFAULT_TEST_EXTENSION_DEPS=tpcds;tpch;json;
+DEFAULT_TEST_EXTENSION_DEPS=tpcds;tpch;json;icu;
 # For cloud testing we also need these extensions
 FULL_TEST_EXTENSION_DEPS=azure;httpfs;aws
 

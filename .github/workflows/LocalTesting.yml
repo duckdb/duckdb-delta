@@ -85,6 +85,9 @@ jobs:
   s3-tests-linux:
     name: S3 (local RustFS test server) tests (Linux)
     runs-on: ubuntu-latest
+    env:
+      # The runner skips any file whose error mentions HTTP; here the server is local, so fail instead.
+      DUCKDB_TEST_SKIP_ERROR_MESSAGES: "[]"
 
     steps:
       - *checkout
