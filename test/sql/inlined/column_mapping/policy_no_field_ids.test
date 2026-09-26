@@ -1,0 +1,101 @@
+# name: test/sql/inlined/column_mapping/policy_no_field_ids.test
+# description: an id-mode file without parquet field ids is matched by name by default and refused under the strict policy
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# The protocol lets an id-mode reader refuse such a file or return NULLs for it. The strict policy refuses
+# and names the setting; the lenient policy matches the file's columns by physical name, then by logical
+# name, and logs which one it used. On v1.5 the default is lenient: earlier v1.5 releases read such files by
+# name, and a patch release keeps them readable.
+
+# -----------------------------------------------------------------------------
+# lenient, the default
+#
+
+query I
+SELECT current_setting('delta_column_mapping_policy');
+----
+lenient
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_physical') ORDER BY a;
+----
+1	alice
+2	bob
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_logical') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# strict
+#
+
+statement ok
+SET delta_column_mapping_policy = 'strict';
+
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_physical');
+----
+has no parquet field ids, which the table's column mapping mode 'id' requires. Set delta_column_mapping_policy = 'lenient'
+
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_logical');
+----
+has no parquet field ids
+
+statement ok
+SET delta_column_mapping_policy = 'best-effort';
+
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_physical');
+----
+delta_column_mapping_policy must be 'strict' or 'lenient', not 'best-effort'
+
+# -----------------------------------------------------------------------------
+# lenient
+#
+
+statement ok
+SET delta_column_mapping_policy = 'lenient';
+
+statement ok
+SET enable_logging = true;
+
+statement ok
+CALL truncate_duckdb_logs();
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_physical') ORDER BY a;
+----
+1	alice
+2	bob
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_logical') ORDER BY a;
+----
+1	alice
+2	bob
+
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'delta.ColumnMapping' AND message LIKE '%no_field_ids_physical%' AND message LIKE '%by physical name%';
+----
+1
+
+query I
+SELECT count() FROM duckdb_logs
+WHERE type = 'delta.ColumnMapping' AND message LIKE '%no_field_ids_logical%' AND message LIKE '%by logical name%';
+----
+1
+
+# Neither name matches: still an error, with no half-resolved rows
+statement error
+SELECT * FROM delta_scan('data/inlined/column_mapping/id_mode_no_field_ids_unmatched');
+----
+match neither the physical nor the logical names

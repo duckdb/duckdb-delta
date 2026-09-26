@@ -718,7 +718,8 @@ void DeltaMultiFileList::Bind(vector<LogicalType> &return_types, vector<string> 
 	vector<DeltaMultiFileColumnDefinition> visited_schema;
 	{
 		auto snapshot_ref = snapshot->GetLockingRef();
-		visited_schema = KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr());
+		visited_schema =
+		    KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr(), column_mapping_mode);
 	}
 
 	for (const auto &field : visited_schema) {
@@ -862,6 +863,10 @@ void DeltaMultiFileList::InitializeSnapshot() const {
 		}
 	}
 
+	{
+		auto snapshot_ref = snapshot->GetLockingRef();
+		column_mapping_mode = KernelUtils::ReadColumnMappingMode(snapshot_ref.GetPtr());
+	}
 	initialized_snapshot = true;
 }
 
@@ -913,7 +918,9 @@ void DeltaMultiFileList::InitializeScan() const {
 		}
 	}
 
-	lazy_loaded_schema = KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), scan.get(), true);
+	lazy_loaded_schema =
+	    KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), scan.get(), true, column_mapping_mode);
+	resolve_by_field_id = DeltaMultiFileColumnDefinition::ResolveByFieldId(lazy_loaded_schema, column_mapping_mode);
 
 	DeltaMultiFileColumnDefinition::Print(lazy_loaded_schema, "lazy_loaded_schema");
 
@@ -1233,7 +1240,8 @@ vector<DeltaStringWidthBound> DeltaMultiFileList::GetStringWidthBounds() const {
 		// Every table entry binds first, so this is unreachable today. Visit the schema anyway rather than fall
 		// through to an empty result: a width check that silently finds no bounds is the one failure we cannot see.
 		auto snapshot_ref = snapshot->GetLockingRef();
-		auto visited_schema = KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr());
+		auto visited_schema =
+		    KernelSchemaVisitor::ToColumnDefinitions(extern_engine.get(), snapshot_ref.GetPtr(), column_mapping_mode);
 		vector<DeltaStringWidthBound> bounds;
 		ExtractStringWidthBounds(bounds, visited_schema);
 		return bounds;
@@ -1252,5 +1260,11 @@ bool DeltaMultiFileList::HasNullConstraintsInArrays() const {
 	EnsureScanInitialized();
 	return has_null_constraints_in_arrays;
 };
+
+bool DeltaMultiFileList::ResolvesByFieldId() const {
+	unique_lock<mutex> lck(lock);
+	EnsureScanInitialized();
+	return resolve_by_field_id;
+}
 
 } // namespace duckdb
