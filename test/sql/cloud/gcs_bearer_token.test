@@ -1,0 +1,66 @@
+# name: test/sql/cloud/gcs_bearer_token.test
+# description: test delta_scan on GCS with an OAuth bearer token (as vended by Unity Catalog)
+# group: [cloud]
+
+require httpfs
+
+require parquet
+
+require delta
+
+# HMAC interoperability keys authenticate only against the S3-compatible endpoint, so they take a
+# different store than the bearer path does. SignatureDoesNotMatch is specific to SigV4 signing:
+# only a request actually signed with these keys can produce it.
+
+statement ok
+CREATE SECRET gcs_hmac (
+    TYPE GCS,
+    KEY_ID 'SOME_KEY',
+    SECRET 'SOME SECRET',
+    SCOPE 'gs://some-bucket'
+);
+
+statement error
+select col1, col2 from delta_scan('gs://some-bucket/some-table');
+----
+SignatureDoesNotMatch
+
+statement ok
+DROP SECRET gcs_hmac;
+
+# A bearer token reaches GCS and is refused by it. This asserts delivery rather than
+# rejection-as-a-token: GCS answers a malformed token with the same 401 it gives an
+# unauthenticated caller. What makes it meaningful is the contrast with the HMAC case above --
+# same URL, same bucket, different credential, and no SigV4 signature in sight. Before gs:// was
+# read natively there was no way to reach this state at all: the scan was refused up front for
+# want of a secret supplying an endpoint.
+
+statement ok
+CREATE SECRET gcs_bearer (
+    TYPE GCS,
+    BEARER_TOKEN 'ya29.not-a-real-token',
+    SCOPE 'gs://some-bucket'
+);
+
+statement error
+select col1, col2 from delta_scan('gs://some-bucket/some-table');
+----
+401
+
+statement ok
+DROP SECRET gcs_bearer;
+
+# gcs:// is normalized to gs:// rather than rewritten to s3://, so both spellings reach the same
+# native store and honour a secret scoped to either.
+
+statement ok
+CREATE SECRET gcs_bearer_alt (
+    TYPE GCS,
+    BEARER_TOKEN 'ya29.not-a-real-token',
+    SCOPE 'gcs://some-bucket'
+);
+
+statement error
+select col1, col2 from delta_scan('gcs://some-bucket/some-table');
+----
+401
