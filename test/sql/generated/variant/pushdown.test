@@ -1,0 +1,50 @@
+# name: test/sql/generated/variant/pushdown.test
+# description: Projection and filter pushdown of variant fields into shredded columns
+# group: [variant]
+
+require parquet
+
+require delta
+
+require-env GENERATED_DATA_AVAILABLE
+
+statement ok
+PRAGMA explain_output = PHYSICAL_ONLY;
+
+# -----------------------------------------------------------------------------
+# Reference: read_parquet on the same files
+#
+
+query II
+EXPLAIN SELECT id FROM read_parquet('./data/generated/variant/spark_shredded_object/delta_lake/*.parquet') WHERE v.b::VARCHAR = 'x';
+----
+physical_plan	<REGEX>:.*READ_PARQUET.*Filters:.*v\.b = 'x'.*
+
+query II
+EXPLAIN SELECT v.a FROM read_parquet('./data/generated/variant/spark_shredded_object/delta_lake/*.parquet');
+----
+physical_plan	<!REGEX>:.*variant_extract.*
+
+# -----------------------------------------------------------------------------
+# Delta scan
+#
+
+query I
+SELECT list(id ORDER BY id) FROM delta_scan('./data/generated/variant/spark_shredded_object/delta_lake') WHERE v.b::VARCHAR = 'x';
+----
+[9]
+
+# delta_scan turns off supports_pushdown_extract, so the field stays a variant_extract over the whole column.
+mode skip
+
+query II
+EXPLAIN SELECT id FROM delta_scan('./data/generated/variant/spark_shredded_object/delta_lake') WHERE v.b::VARCHAR = 'x';
+----
+physical_plan	<REGEX>:.*Filters:.*v\.b = 'x'.*
+
+query II
+EXPLAIN SELECT v.a FROM delta_scan('./data/generated/variant/spark_shredded_object/delta_lake');
+----
+physical_plan	<!REGEX>:.*variant_extract.*
+
+mode unskip
