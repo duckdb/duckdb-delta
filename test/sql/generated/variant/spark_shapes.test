@@ -1,0 +1,187 @@
+# name: test/sql/generated/variant/spark_shapes.test
+# description: Spark-written VARIANT, unshredded and shredded, read back value for value
+# group: [variant]
+
+require parquet
+
+require delta
+
+require icu
+
+require-env GENERATED_DATA_AVAILABLE
+
+statement ok
+SET TimeZone='UTC';
+
+# Same rows in each table; only the physical shredding of `v` and `n.x` differs.
+foreach tbl spark_unshredded spark_shredded_object spark_shredded_scalar spark_shredded_array
+
+statement ok
+ATTACH './data/generated/variant/{tbl}/delta_lake' AS t (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# Schema
+#
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE t);
+----
+id	INTEGER
+v	VARIANT
+n	STRUCT(x VARIANT, arr VARIANT[])
+
+# -----------------------------------------------------------------------------
+# Delta read matches a direct parquet read of the same files
+#
+
+query I
+SELECT count(*)
+FROM t
+FULL OUTER JOIN read_parquet('./data/generated/variant/{tbl}/delta_lake/*.parquet') p ON t.id = p.id
+WHERE t.id IS NULL OR p.id IS NULL
+   OR t.v::VARCHAR IS DISTINCT FROM p.v::VARCHAR
+   OR variant_typeof(t.v) IS DISTINCT FROM variant_typeof(p.v)
+   OR t.n::VARCHAR IS DISTINCT FROM p.n::VARCHAR;
+----
+0
+
+# Rows from 30 up are per-table shredding cases, covered in spark_shredded.test.
+query I
+SELECT count(*) FROM delta_scan('./data/generated/variant/{tbl}/delta_lake') WHERE id < 30;
+----
+18
+
+# -----------------------------------------------------------------------------
+# Values, as Spark reads them (spark_read.jsonl next to the table)
+#
+
+query II
+SELECT id, v::VARCHAR FROM t WHERE id < 30 ORDER BY id;
+----
+1	NULL
+2	NULL
+3	42
+4	1234567890123
+5	12.34
+6	15000000000.0
+7	hello
+8	true
+9	{'a': 1, 'b': x}
+10	[1, two, true, NULL]
+11	{'a': {'b': [1, {'c': 2}]}, 'd': []}
+12	{}
+20	2024-01-15
+21	2024-01-15 10:30:00+00
+22	2024-01-15 10:30:00
+23	12.34
+24	1.5
+25	\xDE\xAD\xBE\xEF
+
+# Row 3 is INT8 unshredded but INT64 where the file shreds it as bigint, so it is left out.
+query II
+SELECT id, variant_typeof(v) FROM t WHERE id < 30 AND id <> 3 ORDER BY id;
+----
+1	VARIANT_NULL
+2	VARIANT_NULL
+4	INT64
+5	DECIMAL(4, 2)
+6	DOUBLE
+7	VARCHAR
+8	BOOL_TRUE
+9	OBJECT(a, b)
+10	ARRAY(4)
+11	OBJECT(a, d)
+12	OBJECT()
+20	DATE
+21	TIMESTAMP_MICROS_TZ
+22	TIMESTAMP_MICROS
+23	DECIMAL(4, 2)
+24	DOUBLE
+25	BLOB
+
+# -----------------------------------------------------------------------------
+# Variant nested in a struct and in an array
+#
+
+query I
+SELECT count(*) FROM t
+WHERE id < 30 AND (n.x::VARCHAR IS DISTINCT FROM v::VARCHAR
+   OR n.arr[1]::VARCHAR IS DISTINCT FROM v::VARCHAR
+   OR n.arr[2]::VARCHAR IS DISTINCT FROM v::VARCHAR);
+----
+0
+
+query III
+SELECT n.x.a, n.arr[2].b, variant_typeof(n.arr[1].a.b) FROM t WHERE id < 30 AND id IN (9, 11) ORDER BY id;
+----
+1	x	VARIANT_NULL
+{'b': [1, {'c': 2}]}	NULL	ARRAY(2)
+
+# -----------------------------------------------------------------------------
+# Path extraction
+#
+
+query IIII
+SELECT v.a, v.a.b[2].c, v[2], v.d FROM t WHERE id < 30 AND id IN (9, 10, 11) ORDER BY id;
+----
+1	NULL	NULL	NULL
+NULL	NULL	two	NULL
+{'b': [1, {'c': 2}]}	2	NULL	[]
+
+# -----------------------------------------------------------------------------
+# Filters on variant fields
+#
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND v.a = 1;
+----
+[9]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND try_cast(v.b AS VARCHAR) = 'x';
+----
+[9]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND variant_typeof(v) LIKE 'OBJECT%';
+----
+[9, 11, 12]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND try_cast(v AS BIGINT) > 100;
+----
+[4, 6]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND try_cast(v.a.b[2].c AS INT) = 2;
+----
+[11]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND n.x.a = 1;
+----
+[9]
+
+# Core bug, read_parquet fails the same: a variant field of a struct, read through a filtered view.
+mode skip
+
+statement ok
+CREATE OR REPLACE TEMP VIEW shapes AS SELECT * FROM t WHERE id < 30;
+
+query I
+SELECT n.x.a FROM shapes WHERE id = 9;
+----
+1
+
+# Core conflates a variant null (row 2) with SQL NULL (row 1); Spark keeps them apart. read_parquet does the same.
+query I
+SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND v IS NULL;
+----
+[1]
+
+mode unskip
+
+statement ok
+DETACH t;
+
+endloop
