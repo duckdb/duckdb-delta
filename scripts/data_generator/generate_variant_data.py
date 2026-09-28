@@ -1,8 +1,8 @@
 """Spark-written Delta tables with VARIANT columns, unshredded and shredded.
 
-Standalone: python scripts/data_generator/generate_variant_data.py [BASE_PATH]
-Needs pyspark >= 4.2 + delta-spark >= 4.4 and skips itself on older versions, so the tests also
-require VARIANT_DATA_AVAILABLE. In a container set JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport.
+The tables are committed under data/inlined/variant; CI does not run this. To regenerate, delete a
+table's directory and run: python scripts/data_generator/generate_variant_data.py [BASE_PATH]
+Needs pyspark >= 4.2 + delta-spark >= 4.4. In a container set JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport.
 Each table lands in <BASE_PATH>/variant/<name>/delta_lake, with Spark's own read of it in
 <BASE_PATH>/variant/<name>/spark_read.jsonl as the reference result.
 """
@@ -16,7 +16,7 @@ from importlib.metadata import version
 from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
 
-DEFAULT_BASE_PATH = os.path.dirname(os.path.realpath(__file__)) + "/../../data/generated"
+DEFAULT_BASE_PATH = os.path.dirname(os.path.realpath(__file__)) + "/../../data/inlined"
 
 SHRED_WRITE = "spark.sql.variant.writeShredding.enabled"
 SHRED_FORCE = "spark.sql.variant.forceShreddingSchemaForTest"
@@ -310,8 +310,7 @@ def too_old():
 def generate(base_path, spark=None):
     old = too_old()
     if old:
-        print(f"Skipping VARIANT fixtures, need pyspark >= 4.2 and delta-spark >= 4.4: have {', '.join(old)}")
-        return
+        sys.exit(f"Need pyspark >= 4.2 and delta-spark >= 4.4: have {', '.join(old)}")
     spark = spark or spark_session()
     for name, build in TABLES.items():
         table(spark, base_path, name, build)
