@@ -12,6 +12,8 @@ require json
 
 require-env GENERATED_DATA_AVAILABLE
 
+require-env VARIANT_DATA_AVAILABLE
+
 statement ok
 SET TimeZone='UTC';
 

@@ -1,7 +1,8 @@
 """Spark-written Delta tables with VARIANT columns, unshredded and shredded.
 
 Standalone: python scripts/data_generator/generate_variant_data.py [BASE_PATH]
-Needs pyspark + delta-spark 4.x; in a container set JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport.
+Needs pyspark >= 4.2 + delta-spark >= 4.4 and skips itself on older versions, so the tests also
+require VARIANT_DATA_AVAILABLE. In a container set JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport.
 Each table lands in <BASE_PATH>/variant/<name>/delta_lake, with Spark's own read of it in
 <BASE_PATH>/variant/<name>/spark_read.jsonl as the reference result.
 """
@@ -10,6 +11,7 @@ import json
 import os
 import shutil
 import sys
+from importlib.metadata import version
 
 from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
@@ -259,7 +261,20 @@ TABLES = {
 }
 
 
+# Older versions cannot read back their own shredded files (INVALID_VARIANT_FROM_PARQUET on Spark 4.0).
+MIN_VERSIONS = {"pyspark": (4, 2), "delta-spark": (4, 4)}
+
+
+def too_old():
+    installed = {pkg: version(pkg) for pkg in MIN_VERSIONS}
+    return [f"{pkg} {v}" for pkg, v in installed.items() if tuple(int(x) for x in v.split(".")[:2]) < MIN_VERSIONS[pkg]]
+
+
 def generate(base_path, spark=None):
+    old = too_old()
+    if old:
+        print(f"Skipping VARIANT fixtures, need pyspark >= 4.2 and delta-spark >= 4.4: have {', '.join(old)}")
+        return
     spark = spark or spark_session()
     for name, build in TABLES.items():
         table(spark, base_path, name, build)

@@ -8,6 +8,8 @@ require delta
 
 require-env GENERATED_DATA_AVAILABLE
 
+require-env VARIANT_DATA_AVAILABLE
+
 statement ok
 PRAGMA explain_output = PHYSICAL_ONLY;
 

@@ -12,6 +12,8 @@ require notwindows
 
 require-env GENERATED_DATA_AVAILABLE
 
+require-env VARIANT_DATA_AVAILABLE
+
 # -----------------------------------------------------------------------------
 # Table with variantType only: DuckDB write, DuckDB read
 #
