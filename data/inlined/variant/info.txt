@@ -1,0 +1,20 @@
+Spark-written Delta tables with VARIANT columns, read by test/sql/inlined/variant/.
+
+Every directory here except `basic` comes from scripts/data_generator/generate_variant_data.py
+(one function per table, with a comment on what each covers). Each holds the table in
+`delta_lake/` and Spark's own read of it in `spark_read.jsonl`, the reference result.
+
+Written with pyspark 4.2.0 + delta-spark 4.4.0 (engineInfo "Apache-Spark/4.2.0 Delta-Lake/4.4.0"),
+OpenJDK 17, on 2026-09-28. These are committed because CI generates its data with Spark 4.0.1,
+which cannot write them: it writes shredded files that it cannot read back.
+
+To regenerate a table, delete its directory and run
+    JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport python scripts/data_generator/generate_variant_data.py
+(the JAVA_TOOL_OPTIONS setting is only needed in a container). Existing tables are left alone.
+Regenerating changes file names and log contents, so check the tests afterwards.
+
+Delta-Spark 4.4.0 limits that shaped the tables:
+- The shredding writer fails (ArrayIndexOutOfBoundsException in finalizeSchemaAndFlush) on a table
+  with 4 or more top-level columns. Shredded tables have at most 3.
+- The checkpoint writer fails the same way on a table with variant data-skipping stats, so
+  spark_shredded_variant_stats has no checkpoint. spark_shredded_inferred has one.

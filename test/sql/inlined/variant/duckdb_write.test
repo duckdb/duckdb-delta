@@ -1,0 +1,188 @@
+# name: test/sql/inlined/variant/duckdb_write.test
+# description: DuckDB writes VARIANT into Delta tables, with and without the variantShredding feature
+# group: [variant]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Table with variantType only: DuckDB write, DuckDB read
+#
+
+statement ok
+FROM copy_dir('data/inlined/variant/basic', '{TEMP_DIR}/variant_write_basic');
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_write_basic' AS basic (TYPE delta);
+
+statement ok
+INSERT INTO basic VALUES
+	(42, 'test'),
+	(84, {'d': [1, 2, 3]}),
+	(85, {'d': [4]}),
+	(86, {'d': 'not a list'}),
+	(1337, ['testing'::VARIANT, 21, true, {'hello': 'world'}]);
+
+query III
+SELECT id, data::VARCHAR, variant_typeof(data.d) FROM basic ORDER BY id;
+----
+21	{'a': test, 'b': [21, test, true, {'c': 42}]}	VARIANT_NULL
+42	test	VARIANT_NULL
+84	{'d': [1, 2, 3]}	ARRAY(3)
+85	{'d': [4]}	ARRAY(1)
+86	{'d': not a list}	VARCHAR
+1337	[testing, 21, true, {'hello': world}]	VARIANT_NULL
+
+query I
+SELECT list(id ORDER BY id) FROM basic WHERE data.d[1] = 4;
+----
+[85]
+
+query I
+SELECT count(*) FROM (
+	SELECT id, data::VARCHAR FROM basic
+	EXCEPT
+	SELECT id, data::VARCHAR FROM read_parquet('{TEMP_DIR}/variant_write_basic/*.parquet')
+);
+----
+0
+
+query I
+SELECT readerFeatures FROM (
+	SELECT unnest(protocol) FROM read_json('{TEMP_DIR}/variant_write_basic/_delta_log/*.json') WHERE protocol IS NOT NULL
+);
+----
+[variantType]
+
+# Without the variantShredding feature Delta writers must not shred; DuckDB's parquet writer shreds by default
+# and writes 3 typed_value columns here.
+mode skip
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/variant_write_basic/duckdb-*.parquet') WHERE name = 'typed_value';
+----
+0
+
+mode unskip
+
+# -----------------------------------------------------------------------------
+# Table with variantShredding-preview: DuckDB appends to a Spark-shredded table
+#
+
+statement ok
+FROM copy_dir('data/inlined/variant/spark_shredded_variant_stats/delta_lake', '{TEMP_DIR}/variant_write_shredded');
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_write_shredded' AS shr (TYPE delta);
+
+statement ok
+INSERT INTO shr SELECT 100 + i::INT, {'a': i::INT, 'b': 'dw' || i}::VARIANT FROM range(3) r(i);
+
+statement ok
+INSERT INTO shr VALUES
+	(110, 'scalar'::VARIANT),
+	(112, {'a': 'mismatch', 'q': [1, 2]}::VARIANT),
+	(113, [1, 2]::VARIANT),
+	(114, 12.34::DECIMAL(4, 2)::VARIANT),
+	(115, DATE '2024-01-15'::VARIANT),
+	(116, TIMESTAMP '2024-01-15 10:30:00'::VARIANT);
+
+query III
+SELECT id, v::VARCHAR, variant_typeof(v) FROM shr ORDER BY id;
+----
+70	{'a': 1, 'b': x}	OBJECT(a, b)
+71	{'a': 5, 'b': y}	OBJECT(a, b)
+72	{'a': 10, 'b': z}	OBJECT(a, b)
+100	{'a': 0, 'b': dw0}	OBJECT(a, b)
+101	{'a': 1, 'b': dw1}	OBJECT(a, b)
+102	{'a': 2, 'b': dw2}	OBJECT(a, b)
+110	scalar	VARCHAR
+112	{'a': mismatch, 'q': [1, 2]}	OBJECT(a, q)
+113	[1, 2]	ARRAY(2)
+114	12.34	DECIMAL(4, 2)
+115	2024-01-15	DATE
+116	2024-01-15 10:30:00	TIMESTAMP_MICROS
+
+query I
+SELECT list(id ORDER BY id) FROM shr WHERE try_cast(v.a AS INT) >= 1;
+----
+[70, 71, 72, 101, 102]
+
+query I
+SELECT count(*) > 0 FROM parquet_schema('{TEMP_DIR}/variant_write_shredded/duckdb-*.parquet') WHERE name = 'typed_value';
+----
+true
+
+# Parquet VariantShredding.md: object field groups under typed_value are REQUIRED (duckdb#25891).
+query I
+SELECT list(DISTINCT repetition_type) FROM parquet_schema('{TEMP_DIR}/variant_write_shredded/duckdb-*.parquet') WHERE name IN ('a', 'b');
+----
+[REQUIRED]
+
+# -----------------------------------------------------------------------------
+# SQL NULL stays SQL NULL in the file, not a variant null
+#
+
+statement ok
+INSERT INTO shr VALUES (120, NULL);
+
+# Core writes SQL NULL as a present variant holding null (`v, metadata` null count 0); Spark then reads `null`.
+mode skip
+
+query I
+SELECT sum(stats_null_count) FROM parquet_metadata('{TEMP_DIR}/variant_write_shredded/duckdb-*.parquet') WHERE path_in_schema = 'v, metadata';
+----
+1
+
+mode unskip
+
+# -----------------------------------------------------------------------------
+# Variant nested in a struct
+#
+
+statement ok
+FROM copy_dir('data/inlined/variant/spark_shredded_object/delta_lake', '{TEMP_DIR}/variant_write_nested');
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_write_nested' AS nested (TYPE delta);
+
+# Core parquet writer: "ColumnWriter of type 'VARIANT' requires a transform, but is not a root column".
+mode skip
+
+statement ok
+INSERT INTO nested VALUES (100, {'a': 7}::VARIANT, {'x': {'a': 8}::VARIANT, 'arr': [1::VARIANT]});
+
+query II
+SELECT v.a, n.x.a FROM nested WHERE id = 100;
+----
+7	8
+
+mode unskip
+
+# -----------------------------------------------------------------------------
+# CREATE TABLE with a VARIANT column
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_write_create' AS created (TYPE delta);
+
+# Rejected by the Delta schema builder: "Delta CREATE TABLE does not support column 'v' of type VARIANT".
+mode skip
+
+statement ok
+CREATE TABLE created.created (id INTEGER, v VARIANT);
+
+statement ok
+INSERT INTO created VALUES (1, {'a': 1}::VARIANT);
+
+query II
+SELECT id, v.a FROM created;
+----
+1	1
+
+mode unskip
