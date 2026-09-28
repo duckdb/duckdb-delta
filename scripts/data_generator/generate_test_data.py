@@ -303,3 +303,10 @@ generate_test_data_pyspark(
     base_query='SELECT 1 as a, 2 as b',
     domain_metadata_entries=[('test_domain', '{"key": "test_value"}'), ('another_domain', 'config_string')]
 )
+
+################################################
+### Variant
+################################################
+
+import generate_variant_data
+generate_variant_data.generate(BASE_PATH)
