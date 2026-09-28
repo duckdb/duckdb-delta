@@ -247,6 +247,41 @@ def shredded_unannotated(spark, path):
     )
 
 
+# Several small commits, one file each, some without any object or any non-NULL row: per-file reader state
+# stays hidden with a single file.
+MULTI_COMMIT_ROWS = [
+    [(100, '{"a": 1, "b": "x"}'), (101, '{"a": 2}')],
+    [(102, '{"a": 3, "b": "y"}'), (103, '{"b": "no a"}')],
+    [(104, '{"a": "str"}'), (105, '7')],
+    [(106, None), (107, '{"a": 1, "c": {"d": 2}}')],
+    [(108, '42'), (109, 'true')],
+    [(110, None)],
+]
+
+
+def multi_commit(spark, path, with_array, confs, props):
+    columns = "id INT, v VARIANT, s STRUCT<tag: STRING, v: VARIANT>"
+    array = ""
+    if with_array:
+        columns += ", a ARRAY<VARIANT>"
+        array = ", CASE WHEN v IS NULL THEN NULL ELSE array(v, parse_json(concat('{\"a\": ', id, '}'))) END"
+    set_confs(spark, confs)
+    create(spark, path, columns, props)
+    for rows in MULTI_COMMIT_ROWS:
+        spark.sql(f"""INSERT INTO delta.`{path}` SELECT /*+ COALESCE(1) */ id, v,
+            CASE WHEN v IS NULL THEN NULL ELSE named_struct('tag', concat('t', id), 'v', v) END{array}
+            FROM (SELECT id, parse_json(j) AS v FROM VALUES {json_rows(rows)} AS t(id, j))""")
+
+
+def unshredded_multi_commit(spark, path):
+    multi_commit(spark, path, True, {SHRED_WRITE: "false"}, {})
+
+
+def shredded_multi_commit(spark, path):
+    # No top-level ARRAY<VARIANT>: that makes 4 top-level columns, which the shredding writer cannot handle.
+    multi_commit(spark, path, False, {SHRED_WRITE: "true", SHRED_FORCE: "a int, b string"}, SHREDDING)
+
+
 TABLES = {
     "spark_unshredded": unshredded,
     "spark_shredded_object": shredded_object,
@@ -258,6 +293,8 @@ TABLES = {
     "spark_shredded_variant_stats": shredded_variant_stats,
     "spark_shredded_dv_colmap": shredded_dv_colmap,
     "spark_shredded_unannotated": shredded_unannotated,
+    "spark_unshredded_multi_commit": unshredded_multi_commit,
+    "spark_shredded_multi_commit": shredded_multi_commit,
 }
 
 
