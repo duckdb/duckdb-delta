@@ -63,7 +63,8 @@ SELECT readerFeatures FROM (
 ----
 [variantType]
 
-# Without the variantShredding feature Delta writers must not shred; DuckDB's parquet writer shreds by default.
+# Without the variantShredding feature Delta writers must not shred; DuckDB's parquet writer shreds by default
+# and writes 3 typed_value columns here.
 mode skip
 
 query I
@@ -121,16 +122,11 @@ SELECT count(*) > 0 FROM parquet_schema('{TEMP_DIR}/variant_write_shredded/duckd
 ----
 true
 
-# Parquet VariantShredding.md: object field groups under typed_value are REQUIRED. Fixed in duckdb#25891,
-# which the pinned duckdb predates.
-mode skip
-
+# Parquet VariantShredding.md: object field groups under typed_value are REQUIRED (duckdb#25891).
 query I
 SELECT list(DISTINCT repetition_type) FROM parquet_schema('{TEMP_DIR}/variant_write_shredded/duckdb-*.parquet') WHERE name IN ('a', 'b');
 ----
 [REQUIRED]
-
-mode unskip
 
 # -----------------------------------------------------------------------------
 # SQL NULL stays SQL NULL in the file, not a variant null
@@ -139,7 +135,7 @@ mode unskip
 statement ok
 INSERT INTO shr VALUES (120, NULL);
 
-# Core writes SQL NULL as a present variant holding null; Spark then reads it back as `null`, not NULL.
+# Core writes SQL NULL as a present variant holding null (`v, metadata` null count 0); Spark then reads `null`.
 mode skip
 
 query I

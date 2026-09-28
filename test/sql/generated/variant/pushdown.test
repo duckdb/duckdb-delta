@@ -36,7 +36,8 @@ SELECT list(id ORDER BY id) FROM delta_scan('./data/generated/variant/spark_shre
 ----
 [9]
 
-# delta_scan turns off supports_pushdown_extract, so the field stays a variant_extract over the whole column.
+# delta_scan turns off supports_pushdown_extract, so the field stays a variant_extract over the whole column:
+# the filter reads CAST(variant_extract(v, 'b') AS VARCHAR) = 'x'.
 mode skip
 
 query II

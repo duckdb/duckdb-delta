@@ -164,7 +164,8 @@ SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND n.x.a = 1;
 ----
 [9]
 
-# Core bug, read_parquet fails the same: a variant field of a struct, read through a filtered view.
+# Core bug, read_parquet fails the same: a variant field of a struct, read through a filtered view. "INTERNAL Error:
+# Attempted to get the primary index (numeric) for an index that consists of a field identifier (string: a)".
 mode skip
 
 statement ok
@@ -175,7 +176,8 @@ SELECT n.x.a FROM shapes WHERE id = 9;
 ----
 1
 
-# Core conflates a variant null (row 2) with SQL NULL (row 1); Spark keeps them apart. read_parquet does the same.
+# Core conflates a variant null (row 2) with SQL NULL (row 1), giving [1, 2]; Spark keeps them apart. read_parquet
+# does the same.
 query I
 SELECT list(id ORDER BY id) FROM t WHERE id < 30 AND v IS NULL;
 ----
