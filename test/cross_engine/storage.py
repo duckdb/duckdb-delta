@@ -1,6 +1,5 @@
-"""The cross-engine round trip, on each kind of storage: DuckDB creates a table, Spark reads and
-writes it, DuckDB reads it back. On an object store the weak points differ from a local path: a table
-that does not exist yet, paths that need encoding, an attach that must say it writes.
+"""The cross-engine round trip on the bound storage: DuckDB creates a table where nothing exists yet,
+Spark reads and writes it, both engines read it back.
 """
 
 from ducktest5 import test
@@ -16,7 +15,7 @@ CASES = {
         "seed_values": [(1, "duck"), (2, "duck")],
         "append_values": [(3, "spark")],
     },
-    # Partition values that must be encoded in the object key.
+    # Partition values that must be encoded in the path.
     "partitioned_encoded": {
         "columns": "i INTEGER, p VARCHAR",
         "partition_by": "PARTITIONED BY (p)",
@@ -26,13 +25,13 @@ CASES = {
 }
 
 
-@test(engines=["spark"], variants=["storage"], cases=CASES)
+@test(sessions=["duck", "spark"], params=CASES)
 def duckdb_creates_spark_reads_and_writes(ctx):
     path = ctx.location("t")
-    # A remote attach is read-only unless it says otherwise; a local one takes the option too.
-    duck = ctx.duckdb(f"ATTACH '{path}' AS t (TYPE delta, READ_WRITE);", table="t.t")
-    spark = ctx.engine("spark", table=f"delta.`{path}`")
-    case = ctx.case
+    duck = ctx.session("duck", table="t.t")
+    spark = ctx.session("spark", table=f"delta.`{path}`")
+    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    case = ctx.params
     all_rows = "SELECT * FROM {t} ORDER BY i"
 
     # -----------------------------------------------------------------------------
@@ -47,7 +46,7 @@ def duckdb_creates_spark_reads_and_writes(ctx):
     )
 
     # -----------------------------------------------------------------------------
-    # Spark reads through s3a, then writes
+    # Spark reads, then writes
     #
     spark.expects(all_rows, case["seed_values"])
     spark.oks("INSERT INTO {t} VALUES {append_values}", case)

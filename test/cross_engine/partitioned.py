@@ -66,12 +66,13 @@ CASES = {
 }
 
 
-@test(engines=["spark"], cases=CASES)
+@test(sessions=["duck", "spark"], params=CASES)
 def duckdb_creates_partitioned_spark_reads_and_writes(ctx):
     path = ctx.location("t")
-    duck = ctx.duckdb(f"ATTACH '{path}' AS t (TYPE delta);", table="t.t")
-    spark = ctx.engine("spark", table=f"delta.`{path}`")
-    case = ctx.case
+    duck = ctx.session("duck", table="t.t")
+    spark = ctx.session("spark", table=f"delta.`{path}`")
+    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    case = ctx.params
 
     # -----------------------------------------------------------------------------
     # DuckDB creates and fills the partitions

@@ -50,11 +50,12 @@ def delete_commits_before(path, version):
             os.remove(f)
 
 
-@test(engines=["spark"], cases=PROPERTY_SETS)
+@test(sessions=["duck", "spark"], params=PROPERTY_SETS)
 def duckdb_checkpoints_spark_reads_from_the_checkpoint(ctx):
     path = ctx.location("t")
-    duck = ctx.duckdb(f"ATTACH '{path}' AS t (TYPE delta);", table="t.t")
-    spark = ctx.engine("spark", table=f"delta.`{path}`")
+    duck = ctx.session("duck", table="t.t")
+    spark = ctx.session("spark", table=f"delta.`{path}`")
+    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
 
     # -----------------------------------------------------------------------------
     # DuckDB creates, writes 3 commits, checkpoints
@@ -66,14 +67,14 @@ def duckdb_checkpoints_spark_reads_from_the_checkpoint(ctx):
         INSERT INTO {t} VALUES (3, 'duck');
         INSERT INTO {t} VALUES (4, 'duck');
         """,
-        with_properties=with_clause(ctx.case),
+        with_properties=with_clause(ctx.params),
     )
     duck.oks("CHECKPOINT t")
 
     assert last_checkpoint_version(path) == 3
     # The v2Checkpoint feature decides the shape: a V2 checkpoint carries a checkpointMetadata
     # action, a classic one does not. Both keep the classic file name.
-    checkpoint_metadata_columns = "1" if "delta.feature.v2Checkpoint" in ctx.case else "0"
+    checkpoint_metadata_columns = "1" if "delta.feature.v2Checkpoint" in ctx.params else "0"
     duck.expects(
         "SELECT count(*) FROM parquet_schema('{checkpoint}') WHERE name = 'checkpointMetadata'",
         rows=checkpoint_metadata_columns,

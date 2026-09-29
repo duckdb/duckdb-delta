@@ -136,12 +136,13 @@ CASES = {
 }
 
 
-@test(engines=["spark"], cases=CASES)
+@test(sessions=["duck", "spark"], params=CASES)
 def a_type_is_the_same_type_and_value_in_both_engines(ctx):
     path = ctx.location("t")
-    duck = ctx.duckdb(f"ATTACH '{path}' AS t (TYPE delta);", table="t.t")
-    spark = ctx.engine("spark", table=f"delta.`{path}`")
-    case = ctx.case
+    duck = ctx.session("duck", table="t.t")
+    spark = ctx.session("spark", table=f"delta.`{path}`")
+    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    case = ctx.params
 
     compare_as = case.get("compare_as", "c")
     duck_c, spark_c = (compare_as["duckdb"], compare_as["spark"]) if isinstance(compare_as, dict) else (compare_as,) * 2

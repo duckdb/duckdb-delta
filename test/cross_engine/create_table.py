@@ -37,11 +37,12 @@ def shown_by_spark(properties):
     return [(k, v) for k, v in properties.items() if not k.startswith("delta.feature.")]
 
 
-@test(engines=["spark"], cases=PROPERTY_SETS)
+@test(sessions=["duck", "spark"], params=PROPERTY_SETS)
 def duckdb_creates_then_spark_and_duckdb_interleave(ctx):
     path = ctx.location("t")
-    duck = ctx.duckdb(f"ATTACH '{path}' AS t (TYPE delta);", table="t.t")
-    spark = ctx.engine("spark", table=f"delta.`{path}`")
+    duck = ctx.session("duck", table="t.t")
+    spark = ctx.session("spark", table=f"delta.`{path}`")
+    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
 
     # -----------------------------------------------------------------------------
     # DuckDB creates
@@ -51,7 +52,7 @@ def duckdb_creates_then_spark_and_duckdb_interleave(ctx):
         CREATE TABLE {t} (i INTEGER, s VARCHAR) {with_properties};
         INSERT INTO {t} VALUES (1, 'duck'), (2, 'duck'), (3, 'duck');
         """,
-        with_properties=with_clause(ctx.case),
+        with_properties=with_clause(ctx.params),
     )
 
     # -----------------------------------------------------------------------------
@@ -65,7 +66,7 @@ def duckdb_creates_then_spark_and_duckdb_interleave(ctx):
         3	duck
         """,
     )
-    spark.expects_contains("SHOW TBLPROPERTIES {t}", shown_by_spark(ctx.case))
+    spark.expects_contains("SHOW TBLPROPERTIES {t}", shown_by_spark(ctx.params))
 
     spark.oks("""
         INSERT INTO {t} VALUES (4, 'spark');
