@@ -16,3 +16,4 @@ venv
 .vscode
 azurite/
 ccache_dir/
+.venv/

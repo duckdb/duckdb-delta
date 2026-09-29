@@ -1,0 +1,28 @@
+# The environment for delta's Python tests: cross-engine tests that a .test file cannot express.
+#   uv sync && .venv/bin/ducktest5 run test/cross_engine
+[project]
+name = "duckdb-delta-tests"
+version = "0"
+requires-python = ">=3.10"
+dependencies = [
+  "duckdb-pytest-driver",
+  "pyspark==4.2.0",
+  "delta-spark==4.4.0",   # its pyspark pin is <=4.2.0; bump both together
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+duckdb-pytest-driver = { path = "/opt/workspace/src/ducktest/driver-v0.5-resources", editable = true }
+
+# DuckDB std
+[tool.black]
+line-length = 120
+skip-string-normalization = true
+
+# DuckDB std, ported to ruff
+[tool.ruff]
+line-length = 120
+[tool.ruff.format]
+quote-style = "preserve"
