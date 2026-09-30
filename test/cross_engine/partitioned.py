@@ -66,11 +66,11 @@ CASES = {
 }
 
 
-@test(sessions=["duck", "spark"], params=CASES)
+@test(clients=["duck", "spark"], params=CASES)
 def duckdb_creates_partitioned_spark_reads_and_writes(ctx):
     path = ctx.location("t")
-    duck = ctx.session("duck", table="t.t")
-    spark = ctx.session("spark", table=f"delta.`{path}`")
+    duck = ctx.client("duck", table="t.t")
+    spark = ctx.client("spark", table=f"delta.`{path}`")
     duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
     case = ctx.params
 

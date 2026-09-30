@@ -50,11 +50,11 @@ def delete_commits_before(path, version):
             os.remove(f)
 
 
-@test(sessions=["duck", "spark"], params=PROPERTY_SETS)
+@test(clients=["duck", "spark"], params=PROPERTY_SETS)
 def duckdb_checkpoints_spark_reads_from_the_checkpoint(ctx):
     path = ctx.location("t")
-    duck = ctx.session("duck", table="t.t")
-    spark = ctx.session("spark", table=f"delta.`{path}`")
+    duck = ctx.client("duck", table="t.t")
+    spark = ctx.client("spark", table=f"delta.`{path}`")
     duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
 
     # -----------------------------------------------------------------------------

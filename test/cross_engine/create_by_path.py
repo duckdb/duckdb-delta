@@ -5,29 +5,29 @@ both engines then read the rows each wrote, and the property given on CREATE is 
 from ducktest5 import test
 
 
-@test(sessions=["duck", "spark"])
+@test(clients=["duck", "spark"])
 def duckdb_creates_by_path_spark_appends_by_path(ctx):
     path = ctx.location("t")
-    duck = ctx.session("duck")
-    spark = ctx.session("spark")
+    ctx.session.bind(path=path)
+    duck = ctx.client("duck")
+    spark = ctx.client("spark")
 
     # -----------------------------------------------------------------------------
     # DuckDB creates the table at the path and inserts a row
     #
-    duck.setup("ATTACH '{path}' AS people (TYPE delta)", path=path)
+    duck.setup("ATTACH '{path}' AS people (TYPE delta)")
     duck.oks(
         """
         CREATE TABLE people.people (id INTEGER, name VARCHAR)
         WITH (location = '{path}', 'delta.columnMapping.mode' = 'name');
         INSERT INTO people.people VALUES (1, 'duck');
         """,
-        path=path,
     )
 
     # -----------------------------------------------------------------------------
     # Spark appends a row through the same path
     #
-    spark.oks("INSERT INTO delta.`{path}` VALUES (2, 'spark')", path=path)
+    spark.oks("INSERT INTO delta.`{path}` VALUES (2, 'spark')")
 
     # -----------------------------------------------------------------------------
     # Both engines read both rows
@@ -45,7 +45,6 @@ def duckdb_creates_by_path_spark_appends_by_path(ctx):
         1	duck
         2	spark
         """,
-        path=path,
     )
 
     # -----------------------------------------------------------------------------
@@ -58,5 +57,4 @@ def duckdb_creates_by_path_spark_appends_by_path(ctx):
         WHERE metaData IS NOT NULL
         """,
         rows="name",
-        path=path,
     )
