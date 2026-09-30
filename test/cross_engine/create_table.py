@@ -37,7 +37,7 @@ def shown_by_spark(properties):
     return [(k, v) for k, v in properties.items() if not k.startswith("delta.feature.")]
 
 
-@test(clients=["duck", "spark"], params=PROPERTY_SETS)
+@test(engines=["duck", "spark"], params=PROPERTY_SETS)
 def duckdb_creates_then_spark_and_duckdb_interleave(ctx):
     path = ctx.location("t")
     duck = ctx.client("duck", table="t.t")

@@ -5,7 +5,7 @@ both engines then read the rows each wrote, and the property given on CREATE is 
 from ducktest5 import test
 
 
-@test(clients=["duck", "spark"])
+@test(engines=["duck", "spark"])
 def duckdb_creates_by_path_spark_appends_by_path(ctx):
     path = ctx.location("t")
     ctx.session.bind(path=path)

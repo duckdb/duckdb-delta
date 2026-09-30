@@ -25,7 +25,7 @@ CASES = {
 }
 
 
-@test(clients=["duck", "spark"], params=CASES)
+@test(engines=["duck", "spark"], params=CASES)
 def duckdb_creates_spark_reads_and_writes(ctx):
     path = ctx.location("t")
     duck = ctx.client("duck", table="t.t")

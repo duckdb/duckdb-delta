@@ -52,7 +52,7 @@ def with_clause(properties):
     return f"WITH ({pairs})" if pairs else ""
 
 
-@test(clients=["duck", "spark"], params=CASES)
+@test(engines=["duck", "spark"], params=CASES)
 def spark_changes_the_schema_duckdb_reads_and_writes(ctx):
     path = ctx.location("t")
     duck = ctx.client("duck", table="t.t")

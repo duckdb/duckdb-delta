@@ -136,7 +136,7 @@ CASES = {
 }
 
 
-@test(clients=["duck", "spark"], params=CASES)
+@test(engines=["duck", "spark"], params=CASES)
 def a_type_is_the_same_type_and_value_in_both_engines(ctx):
     path = ctx.location("t")
     duck = ctx.client("duck", table="t.t")
