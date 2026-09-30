@@ -30,63 +30,54 @@ def with_clause(properties):
     return f"WITH ({pairs})" if pairs else ""
 
 
-def checkpoint_file(path, version):
-    return os.path.join(path, "_delta_log", f"{version:020d}.checkpoint.parquet")
-
-
-def last_checkpoint_version(path):
-    import json
-
-    with open(os.path.join(path, "_delta_log", "_last_checkpoint")) as f:
-        return json.load(f)["version"]
-
-
-def delete_commits_before(path, version):
+def delete_commits_before(log, version):
     """Log cleanup by hand, as Delta does it: commits before the checkpoint go, the checkpoint's own
     commit stays (Spark refuses a log segment without it). Everything before `version` is now known
     only through the checkpoint."""
-    for f in glob.glob(os.path.join(path, "_delta_log", "*.json")):
+    for f in glob.glob(os.path.join(log, "*.json")):
         if int(os.path.basename(f).split(".")[0]) < version:
             os.remove(f)
 
 
 @test(engines=["duck", "spark"], params=PROPERTY_SETS)
 def duckdb_checkpoints_spark_reads_from_the_checkpoint(ctx):
-    path = ctx.location("t")
-    duck = ctx.client("duck", table="t.t")
-    spark = ctx.client("spark", table=f"delta.`{path}`")
-    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    duck = ctx.client("duck")
+    spark = ctx.client("spark")
+    duck.setup("ATTACH '{TEMP_DIR}/t' AS t (TYPE delta)")
+    log = os.path.join(ctx.session.values["temp_dir"], "t", "_delta_log")
+    # The v2Checkpoint feature decides the shape: a V2 checkpoint carries a checkpointMetadata
+    # action, a classic one does not. Both keep the classic file name.
+    checkpoint_metadata_columns = "1" if "delta.feature.v2Checkpoint" in ctx.params else "0"
 
     # -----------------------------------------------------------------------------
     # DuckDB creates, writes 3 commits, checkpoints
     #
     duck.setup(
         """
-        CREATE TABLE {t} (i INTEGER, s VARCHAR) {with_properties};
-        INSERT INTO {t} VALUES (1, 'duck'), (2, 'duck');
-        INSERT INTO {t} VALUES (3, 'duck');
-        INSERT INTO {t} VALUES (4, 'duck');
+        CREATE TABLE t.t (i INTEGER, s VARCHAR) {with_properties};
+        INSERT INTO t.t VALUES (1, 'duck'), (2, 'duck');
+        INSERT INTO t.t VALUES (3, 'duck');
+        INSERT INTO t.t VALUES (4, 'duck');
         """,
         with_properties=with_clause(ctx.params),
     )
     duck.oks("CHECKPOINT t")
 
-    assert last_checkpoint_version(path) == 3
-    # The v2Checkpoint feature decides the shape: a V2 checkpoint carries a checkpointMetadata
-    # action, a classic one does not. Both keep the classic file name.
-    checkpoint_metadata_columns = "1" if "delta.feature.v2Checkpoint" in ctx.params else "0"
+    duck.expects("SELECT version FROM read_json('{TEMP_DIR}/t/_delta_log/_last_checkpoint')", rows="3")
     duck.expects(
-        "SELECT count(*) FROM parquet_schema('{checkpoint}') WHERE name = 'checkpointMetadata'",
+        """
+        SELECT count(*) FROM parquet_schema('{TEMP_DIR}/t/_delta_log/00000000000000000003.checkpoint.parquet')
+        WHERE name = 'checkpointMetadata'
+        """,
         rows=checkpoint_metadata_columns,
-        checkpoint=checkpoint_file(path, 3),
     )
-    delete_commits_before(path, 3)
+    delete_commits_before(log, 3)
 
     # -----------------------------------------------------------------------------
     # Spark reads from DuckDB's checkpoint alone, then writes
     #
     spark.expects(
-        "SELECT i, s FROM {t} ORDER BY i",
+        "SELECT i, s FROM delta.`{TEMP_DIR}/t` ORDER BY i",
         rows="""
         1	duck
         2	duck
@@ -95,8 +86,8 @@ def duckdb_checkpoints_spark_reads_from_the_checkpoint(ctx):
         """,
     )
     spark.setup("""
-        INSERT INTO {t} VALUES (5, 'spark'), (6, 'spark');
-        DELETE FROM {t} WHERE i IN (2, 6);
+        INSERT INTO delta.`{TEMP_DIR}/t` VALUES (5, 'spark'), (6, 'spark');
+        DELETE FROM delta.`{TEMP_DIR}/t` WHERE i IN (2, 6);
         """)
 
     # -----------------------------------------------------------------------------
@@ -108,19 +99,21 @@ def duckdb_checkpoints_spark_reads_from_the_checkpoint(ctx):
         4	duck
         5	spark
         """
-    duck.expects("SELECT i, s FROM {t} ORDER BY i", rows=after_spark)
+    duck.expects("SELECT i, s FROM t.t ORDER BY i", rows=after_spark)
     duck.oks("CHECKPOINT t")
 
-    assert last_checkpoint_version(path) == 5
+    duck.expects("SELECT version FROM read_json('{TEMP_DIR}/t/_delta_log/_last_checkpoint')", rows="5")
     duck.expects(
-        "SELECT count(*) FROM parquet_schema('{checkpoint}') WHERE name = 'checkpointMetadata'",
+        """
+        SELECT count(*) FROM parquet_schema('{TEMP_DIR}/t/_delta_log/00000000000000000005.checkpoint.parquet')
+        WHERE name = 'checkpointMetadata'
+        """,
         rows=checkpoint_metadata_columns,
-        checkpoint=checkpoint_file(path, 5),
     )
-    delete_commits_before(path, 5)
+    delete_commits_before(log, 5)
 
     # -----------------------------------------------------------------------------
     # Both engines read from the second checkpoint alone
     #
-    spark.expects("SELECT i, s FROM {t} ORDER BY i", rows=after_spark)
-    duck.expects("SELECT i, s FROM {t} ORDER BY i", rows=after_spark)
+    spark.expects("SELECT i, s FROM delta.`{TEMP_DIR}/t` ORDER BY i", rows=after_spark)
+    duck.expects("SELECT i, s FROM t.t ORDER BY i", rows=after_spark)

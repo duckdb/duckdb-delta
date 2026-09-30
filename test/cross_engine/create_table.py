@@ -39,18 +39,17 @@ def shown_by_spark(properties):
 
 @test(engines=["duck", "spark"], params=PROPERTY_SETS)
 def duckdb_creates_then_spark_and_duckdb_interleave(ctx):
-    path = ctx.location("t")
-    duck = ctx.client("duck", table="t.t")
-    spark = ctx.client("spark", table=f"delta.`{path}`")
-    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    duck = ctx.client("duck")
+    spark = ctx.client("spark")
+    duck.setup("ATTACH '{TEMP_DIR}/t' AS t (TYPE delta)")
 
     # -----------------------------------------------------------------------------
     # DuckDB creates
     #
     duck.oks(
         """
-        CREATE TABLE {t} (i INTEGER, s VARCHAR) {with_properties};
-        INSERT INTO {t} VALUES (1, 'duck'), (2, 'duck'), (3, 'duck');
+        CREATE TABLE t.t (i INTEGER, s VARCHAR) {with_properties};
+        INSERT INTO t.t VALUES (1, 'duck'), (2, 'duck'), (3, 'duck');
         """,
         with_properties=with_clause(ctx.params),
     )
@@ -59,39 +58,39 @@ def duckdb_creates_then_spark_and_duckdb_interleave(ctx):
     # Spark reads what DuckDB created, then writes
     #
     spark.expects(
-        "SELECT i, s FROM {t} ORDER BY i",
+        "SELECT i, s FROM delta.`{TEMP_DIR}/t` ORDER BY i",
         rows="""
         1	duck
         2	duck
         3	duck
         """,
     )
-    spark.expects_contains("SHOW TBLPROPERTIES {t}", shown_by_spark(ctx.params))
+    spark.expects_contains("SHOW TBLPROPERTIES delta.`{TEMP_DIR}/t`", shown_by_spark(ctx.params))
 
     spark.oks("""
-        INSERT INTO {t} VALUES (4, 'spark');
-        DELETE FROM {t} WHERE i = 1;
-        UPDATE {t} SET s = 'spark' WHERE i = 2;
+        INSERT INTO delta.`{TEMP_DIR}/t` VALUES (4, 'spark');
+        DELETE FROM delta.`{TEMP_DIR}/t` WHERE i = 1;
+        UPDATE delta.`{TEMP_DIR}/t` SET s = 'spark' WHERE i = 2;
         """)
 
     # -----------------------------------------------------------------------------
     # DuckDB reads what Spark wrote, then writes
     #
     duck.expects(
-        "SELECT i, s FROM {t} ORDER BY i",
+        "SELECT i, s FROM t.t ORDER BY i",
         rows="""
         2	spark
         3	duck
         4	spark
         """,
     )
-    duck.oks("INSERT INTO {t} VALUES (5, 'duck')")
+    duck.oks("INSERT INTO t.t VALUES (5, 'duck')")
 
     # -----------------------------------------------------------------------------
     # Spark reads the table both engines wrote
     #
     spark.expects(
-        "SELECT i, s FROM {t} ORDER BY i",
+        "SELECT i, s FROM delta.`{TEMP_DIR}/t` ORDER BY i",
         rows="""
         2	spark
         3	duck

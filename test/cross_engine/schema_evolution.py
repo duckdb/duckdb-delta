@@ -15,21 +15,21 @@ from ducktest5 import test
 CASES = {
     "add_column": {
         "properties": {},
-        "alters": ["ALTER TABLE {t} ADD COLUMNS (n INTEGER)"],
+        "alters": ["ALTER TABLE delta.`{TEMP_DIR}/t` ADD COLUMNS (n INTEGER)"],
         "spark_values": [(3, "spark", 30)],
         "rows_after_alter": [(1, "duck", None), (2, "duck", None), (3, "spark", 30)],
         "duck_values": [(4, "duck", 40)],
     },
     "rename_column": {
         "properties": {"delta.columnMapping.mode": "name"},
-        "alters": ["ALTER TABLE {t} RENAME COLUMN s TO who"],
+        "alters": ["ALTER TABLE delta.`{TEMP_DIR}/t` RENAME COLUMN s TO who"],
         "spark_values": [(3, "spark")],
         "rows_after_alter": [(1, "duck"), (2, "duck"), (3, "spark")],
         "duck_values": [(4, "duck")],
     },
     "drop_column": {
         "properties": {"delta.columnMapping.mode": "name"},
-        "alters": ["ALTER TABLE {t} DROP COLUMN s"],
+        "alters": ["ALTER TABLE delta.`{TEMP_DIR}/t` DROP COLUMN s"],
         "spark_values": [3],
         "rows_after_alter": [1, 2, 3],
         "duck_values": [4],
@@ -37,8 +37,8 @@ CASES = {
     "widen_type": {
         "properties": {},
         "alters": [
-            "ALTER TABLE {t} SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')",
-            "ALTER TABLE {t} ALTER COLUMN i TYPE BIGINT",
+            "ALTER TABLE delta.`{TEMP_DIR}/t` SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')",
+            "ALTER TABLE delta.`{TEMP_DIR}/t` ALTER COLUMN i TYPE BIGINT",
         ],
         "spark_values": [(3000000000, "spark")],
         "rows_after_alter": [(1, "duck"), (2, "duck"), (3000000000, "spark")],
@@ -54,20 +54,18 @@ def with_clause(properties):
 
 @test(engines=["duck", "spark"], params=CASES)
 def spark_changes_the_schema_duckdb_reads_and_writes(ctx):
-    path = ctx.location("t")
-    duck = ctx.client("duck", table="t.t")
-    spark = ctx.client("spark", table=f"delta.`{path}`")
-    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    duck = ctx.client("duck")
+    spark = ctx.client("spark")
+    duck.setup("ATTACH '{TEMP_DIR}/t' AS t (TYPE delta)")
     case = ctx.params
-    all_rows = "SELECT * FROM {t} ORDER BY 1"
 
     # -----------------------------------------------------------------------------
     # DuckDB creates the table under its first schema
     #
     duck.setup(
         """
-        CREATE TABLE {t} (i INTEGER, s VARCHAR) {with_properties};
-        INSERT INTO {t} VALUES (1, 'duck'), (2, 'duck');
+        CREATE TABLE t.t (i INTEGER, s VARCHAR) {with_properties};
+        INSERT INTO t.t VALUES (1, 'duck'), (2, 'duck');
         """,
         with_properties=with_clause(case["properties"]),
     )
@@ -75,18 +73,18 @@ def spark_changes_the_schema_duckdb_reads_and_writes(ctx):
     # -----------------------------------------------------------------------------
     # Spark changes the schema and writes a row of the new shape
     #
-    spark.oks(case["alters"] + ["INSERT INTO {t} VALUES {spark_values}"], case)
-    spark.expects(all_rows, case["rows_after_alter"])
+    spark.oks(case["alters"] + ["INSERT INTO delta.`{TEMP_DIR}/t` VALUES {spark_values}"], case)
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY 1", case["rows_after_alter"])
 
     # -----------------------------------------------------------------------------
     # DuckDB reads old and new rows under the new schema, then writes a row of the new shape
     #
-    duck.expects(all_rows, case["rows_after_alter"])
+    duck.expects("SELECT * FROM t.t ORDER BY 1", case["rows_after_alter"])
 
-    duck.oks("INSERT INTO {t} VALUES {duck_values}", case)
+    duck.oks("INSERT INTO t.t VALUES {duck_values}", case)
 
     # -----------------------------------------------------------------------------
     # Both engines read the row DuckDB wrote
     #
-    spark.expects(all_rows, case["rows_after_alter"] + case["duck_values"])
-    duck.expects(all_rows, case["rows_after_alter"] + case["duck_values"])
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY 1", case["rows_after_alter"] + case["duck_values"])
+    duck.expects("SELECT * FROM t.t ORDER BY 1", case["rows_after_alter"] + case["duck_values"])

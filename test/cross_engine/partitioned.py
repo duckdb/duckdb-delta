@@ -68,10 +68,9 @@ CASES = {
 
 @test(engines=["duck", "spark"], params=CASES)
 def duckdb_creates_partitioned_spark_reads_and_writes(ctx):
-    path = ctx.location("t")
-    duck = ctx.client("duck", table="t.t")
-    spark = ctx.client("spark", table=f"delta.`{path}`")
-    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    duck = ctx.client("duck")
+    spark = ctx.client("spark")
+    duck.setup("ATTACH '{TEMP_DIR}/t' AS t (TYPE delta)")
     case = ctx.params
 
     # -----------------------------------------------------------------------------
@@ -79,8 +78,8 @@ def duckdb_creates_partitioned_spark_reads_and_writes(ctx):
     #
     duck.oks(
         """
-        CREATE TABLE {t} ({columns}) PARTITIONED BY ({partition_by});
-        INSERT INTO {t} VALUES {seed_values};
+        CREATE TABLE t.t ({columns}) PARTITIONED BY ({partition_by});
+        INSERT INTO t.t VALUES {seed_values};
         """,
         case,
     )
@@ -88,19 +87,16 @@ def duckdb_creates_partitioned_spark_reads_and_writes(ctx):
     # -----------------------------------------------------------------------------
     # Spark sees the partitioning, reads every value back, selects by partition
     #
-    table_detail = spark.record("DESCRIBE DETAIL {t}")
+    table_detail = spark.record("DESCRIBE DETAIL delta.`{TEMP_DIR}/t`")
     assert table_detail["partitionColumns"] == case["partition_by"].split(", ")
 
-    all_rows = "SELECT * FROM {t} ORDER BY i"
-    filtered_ids = "SELECT i FROM {t} WHERE {filter} ORDER BY i"
-
-    spark.expects(all_rows, case["seed_values"])
-    spark.expects(filtered_ids, case["filter_ids"], case)
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", case["seed_values"])
+    spark.expects("SELECT i FROM delta.`{TEMP_DIR}/t` WHERE {filter} ORDER BY i", case["filter_ids"], case)
 
     # -----------------------------------------------------------------------------
     # Spark writes a partition of its own; DuckDB reads everything, selects by partition
     #
-    spark.oks("INSERT INTO {t} VALUES {append_values}", case)
+    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES {append_values}", case)
 
-    duck.expects(all_rows, case["seed_values"] + case["append_values"])
-    duck.expects(filtered_ids, case["filter_ids"], case)
+    duck.expects("SELECT * FROM t.t ORDER BY i", case["seed_values"] + case["append_values"])
+    duck.expects("SELECT i FROM t.t WHERE {filter} ORDER BY i", case["filter_ids"], case)

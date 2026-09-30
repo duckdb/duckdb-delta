@@ -7,19 +7,17 @@ from ducktest5 import test
 
 @test(engines=["duck", "spark"])
 def duckdb_creates_by_path_spark_appends_by_path(ctx):
-    path = ctx.location("t")
-    ctx.session.bind(path=path)
     duck = ctx.client("duck")
     spark = ctx.client("spark")
 
     # -----------------------------------------------------------------------------
     # DuckDB creates the table at the path and inserts a row
     #
-    duck.setup("ATTACH '{path}' AS people (TYPE delta)")
+    duck.setup("ATTACH '{TEMP_DIR}/people' AS people (TYPE delta)")
     duck.oks(
         """
         CREATE TABLE people.people (id INTEGER, name VARCHAR)
-        WITH (location = '{path}', 'delta.columnMapping.mode' = 'name');
+        WITH (location = '{TEMP_DIR}/people', 'delta.columnMapping.mode' = 'name');
         INSERT INTO people.people VALUES (1, 'duck');
         """,
     )
@@ -27,7 +25,7 @@ def duckdb_creates_by_path_spark_appends_by_path(ctx):
     # -----------------------------------------------------------------------------
     # Spark appends a row through the same path
     #
-    spark.oks("INSERT INTO delta.`{path}` VALUES (2, 'spark')")
+    spark.oks("INSERT INTO delta.`{TEMP_DIR}/people` VALUES (2, 'spark')")
 
     # -----------------------------------------------------------------------------
     # Both engines read both rows
@@ -40,7 +38,7 @@ def duckdb_creates_by_path_spark_appends_by_path(ctx):
         """,
     )
     spark.expects(
-        "SELECT id, name FROM delta.`{path}` ORDER BY id",
+        "SELECT id, name FROM delta.`{TEMP_DIR}/people` ORDER BY id",
         rows="""
         1	duck
         2	spark
@@ -53,7 +51,7 @@ def duckdb_creates_by_path_spark_appends_by_path(ctx):
     duck.expects(
         """
         SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"')
-        FROM read_json('{path}/_delta_log/00000000000000000000.json')
+        FROM read_json('{TEMP_DIR}/people/_delta_log/00000000000000000000.json')
         WHERE metaData IS NOT NULL
         """,
         rows="name",

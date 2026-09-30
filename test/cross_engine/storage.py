@@ -27,20 +27,18 @@ CASES = {
 
 @test(engines=["duck", "spark"], params=CASES)
 def duckdb_creates_spark_reads_and_writes(ctx):
-    path = ctx.location("t")
-    duck = ctx.client("duck", table="t.t")
-    spark = ctx.client("spark", table=f"delta.`{path}`")
-    duck.setup(f"ATTACH '{path}' AS t (TYPE delta);")
+    duck = ctx.client("duck")
+    spark = ctx.client("spark")
+    duck.setup("ATTACH '{TEMP_DIR}/t' AS t (TYPE delta)")
     case = ctx.params
-    all_rows = "SELECT * FROM {t} ORDER BY i"
 
     # -----------------------------------------------------------------------------
     # DuckDB creates the table where nothing exists yet
     #
     duck.oks(
         """
-        CREATE TABLE {t} ({columns}) {partition_by};
-        INSERT INTO {t} VALUES {seed_values};
+        CREATE TABLE t.t ({columns}) {partition_by};
+        INSERT INTO t.t VALUES {seed_values};
         """,
         case,
     )
@@ -48,11 +46,11 @@ def duckdb_creates_spark_reads_and_writes(ctx):
     # -----------------------------------------------------------------------------
     # Spark reads, then writes
     #
-    spark.expects(all_rows, case["seed_values"])
-    spark.oks("INSERT INTO {t} VALUES {append_values}", case)
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", case["seed_values"])
+    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES {append_values}", case)
 
     # -----------------------------------------------------------------------------
     # Both engines read what both wrote
     #
-    duck.expects(all_rows, case["seed_values"] + case["append_values"])
-    spark.expects(all_rows, case["seed_values"] + case["append_values"])
+    duck.expects("SELECT * FROM t.t ORDER BY i", case["seed_values"] + case["append_values"])
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", case["seed_values"] + case["append_values"])
