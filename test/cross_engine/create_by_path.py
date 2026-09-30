@@ -1,5 +1,6 @@
 """DuckDB creates a table by naming its path with `location`, and Spark writes through that same path:
 both engines then read the rows each wrote, and the property given on CREATE is in the first commit.
+`location` must be the path DuckDB attached; any other path is refused.
 """
 
 from ducktest5 import test
@@ -10,10 +11,19 @@ def duckdb_creates_by_path_spark_appends_by_path(ctx):
     duck = ctx.client("duck")
     spark = ctx.client("spark")
 
-    # -----------------------------------------------------------------------------
-    # DuckDB creates the table at the path and inserts a row
-    #
     duck.setup("ATTACH '{TEMP_DIR}/people' AS people (TYPE delta)")
+
+    # -----------------------------------------------------------------------------
+    # DuckDB refuses a location other than the attached path
+    #
+    duck.errs(
+        "CREATE TABLE people.people (id INTEGER, name VARCHAR) WITH (location = '{TEMP_DIR}/elsewhere')",
+        "can only create a table at the attached path",
+    )
+
+    # -----------------------------------------------------------------------------
+    # DuckDB creates the table at the attached path and inserts a row
+    #
     duck.oks(
         """
         CREATE TABLE people.people (id INTEGER, name VARCHAR)
