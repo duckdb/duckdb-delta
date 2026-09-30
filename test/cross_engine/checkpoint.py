@@ -6,7 +6,6 @@ checkpoints again over Spark's commits (deletion vectors included), and both eng
 One case per table property set that changes what a checkpoint must carry.
 """
 
-import glob
 import os
 
 from ducktest5 import test
@@ -34,9 +33,10 @@ def delete_commits_before(log, version):
     """Log cleanup by hand, as Delta does it: commits before the checkpoint go, the checkpoint's own
     commit stays (Spark refuses a log segment without it). Everything before `version` is now known
     only through the checkpoint."""
-    for f in glob.glob(os.path.join(log, "*.json")):
-        if int(os.path.basename(f).split(".")[0]) < version:
-            os.remove(f)
+    # Not glob: the test's directory name holds its case as `[name]`, which glob reads as a pattern.
+    for name in os.listdir(log):
+        if name.endswith(".json") and int(name.split(".")[0]) < version:
+            os.remove(os.path.join(log, name))
 
 
 @test(engines=["duck", "spark"], params=PROPERTY_SETS)
