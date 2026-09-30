@@ -73,18 +73,18 @@ def spark_changes_the_schema_duckdb_reads_and_writes(ctx):
     # -----------------------------------------------------------------------------
     # Spark changes the schema and writes a row of the new shape
     #
-    spark.oks(case["alters"] + ["INSERT INTO delta.`{TEMP_DIR}/t` VALUES {spark_values}"], case)
-    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY 1", case["rows_after_alter"])
+    spark.oks(case["alters"] + ["INSERT INTO delta.`{TEMP_DIR}/t` VALUES {spark_values}"], params=case)
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY 1", rows=case["rows_after_alter"])
 
     # -----------------------------------------------------------------------------
     # DuckDB reads old and new rows under the new schema, then writes a row of the new shape
     #
-    duck.expects("SELECT * FROM t.t ORDER BY 1", case["rows_after_alter"])
+    duck.expects("SELECT * FROM t.t ORDER BY 1", rows=case["rows_after_alter"])
 
-    duck.oks("INSERT INTO t.t VALUES {duck_values}", case)
+    duck.oks("INSERT INTO t.t VALUES {duck_values}", params=case)
 
     # -----------------------------------------------------------------------------
     # Both engines read the row DuckDB wrote
     #
-    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY 1", case["rows_after_alter"] + case["duck_values"])
-    duck.expects("SELECT * FROM t.t ORDER BY 1", case["rows_after_alter"] + case["duck_values"])
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY 1", rows=case["rows_after_alter"] + case["duck_values"])
+    duck.expects("SELECT * FROM t.t ORDER BY 1", rows=case["rows_after_alter"] + case["duck_values"])

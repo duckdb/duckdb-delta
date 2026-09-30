@@ -155,26 +155,26 @@ def a_type_is_the_same_type_and_value_in_both_engines(ctx):
         CREATE TABLE t.t (id INTEGER, c {type});
         INSERT INTO t.t VALUES (1, {duck_value}), (2, NULL);
         """,
-        case,
+        params=case,
     )
 
     # -----------------------------------------------------------------------------
     # Spark sees the type and reads the value, then writes the same value
     #
-    spark.expects("SELECT DISTINCT typeof(c) FROM delta.`{TEMP_DIR}/t`", [case["spark_type"]])
+    spark.expects("SELECT DISTINCT typeof(c) FROM delta.`{TEMP_DIR}/t`", rows=[case["spark_type"]])
     spark.expects(
         "SELECT id, {c}, c IS NULL FROM delta.`{TEMP_DIR}/t` ORDER BY id",
-        [(1, value, False), (2, null, True)],
+        rows=[(1, value, False), (2, null, True)],
         c=spark_c,
     )
 
-    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES (3, {spark_value})", case)
+    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES (3, {spark_value})", params=case)
 
     # -----------------------------------------------------------------------------
     # DuckDB still sees its type, and reads both engines' values as the same
     #
     both_wrote = [(1, value, False), (2, null, True), (3, value, False)]
 
-    duck.expects("SELECT DISTINCT typeof(c) FROM t.t", [case["type"]])
-    duck.expects("SELECT id, {c}, c IS NULL FROM t.t ORDER BY id", both_wrote, c=duck_c)
-    spark.expects("SELECT id, {c}, c IS NULL FROM delta.`{TEMP_DIR}/t` ORDER BY id", both_wrote, c=spark_c)
+    duck.expects("SELECT DISTINCT typeof(c) FROM t.t", rows=[case["type"]])
+    duck.expects("SELECT id, {c}, c IS NULL FROM t.t ORDER BY id", rows=both_wrote, c=duck_c)
+    spark.expects("SELECT id, {c}, c IS NULL FROM delta.`{TEMP_DIR}/t` ORDER BY id", rows=both_wrote, c=spark_c)

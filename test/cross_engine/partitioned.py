@@ -81,7 +81,7 @@ def duckdb_creates_partitioned_spark_reads_and_writes(ctx):
         CREATE TABLE t.t ({columns}) PARTITIONED BY ({partition_by});
         INSERT INTO t.t VALUES {seed_values};
         """,
-        case,
+        params=case,
     )
 
     # -----------------------------------------------------------------------------
@@ -90,13 +90,13 @@ def duckdb_creates_partitioned_spark_reads_and_writes(ctx):
     table_detail = spark.record("DESCRIBE DETAIL delta.`{TEMP_DIR}/t`")
     assert table_detail["partitionColumns"] == case["partition_by"].split(", ")
 
-    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", case["seed_values"])
-    spark.expects("SELECT i FROM delta.`{TEMP_DIR}/t` WHERE {filter} ORDER BY i", case["filter_ids"], case)
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", rows=case["seed_values"])
+    spark.expects("SELECT i FROM delta.`{TEMP_DIR}/t` WHERE {filter} ORDER BY i", rows=case["filter_ids"], params=case)
 
     # -----------------------------------------------------------------------------
     # Spark writes a partition of its own; DuckDB reads everything, selects by partition
     #
-    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES {append_values}", case)
+    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES {append_values}", params=case)
 
-    duck.expects("SELECT * FROM t.t ORDER BY i", case["seed_values"] + case["append_values"])
-    duck.expects("SELECT i FROM t.t WHERE {filter} ORDER BY i", case["filter_ids"], case)
+    duck.expects("SELECT * FROM t.t ORDER BY i", rows=case["seed_values"] + case["append_values"])
+    duck.expects("SELECT i FROM t.t WHERE {filter} ORDER BY i", rows=case["filter_ids"], params=case)

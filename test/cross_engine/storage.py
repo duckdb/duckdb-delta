@@ -40,17 +40,17 @@ def duckdb_creates_spark_reads_and_writes(ctx):
         CREATE TABLE t.t ({columns}) {partition_by};
         INSERT INTO t.t VALUES {seed_values};
         """,
-        case,
+        params=case,
     )
 
     # -----------------------------------------------------------------------------
     # Spark reads, then writes
     #
-    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", case["seed_values"])
-    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES {append_values}", case)
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", rows=case["seed_values"])
+    spark.oks("INSERT INTO delta.`{TEMP_DIR}/t` VALUES {append_values}", params=case)
 
     # -----------------------------------------------------------------------------
     # Both engines read what both wrote
     #
-    duck.expects("SELECT * FROM t.t ORDER BY i", case["seed_values"] + case["append_values"])
-    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", case["seed_values"] + case["append_values"])
+    duck.expects("SELECT * FROM t.t ORDER BY i", rows=case["seed_values"] + case["append_values"])
+    spark.expects("SELECT * FROM delta.`{TEMP_DIR}/t` ORDER BY i", rows=case["seed_values"] + case["append_values"])
