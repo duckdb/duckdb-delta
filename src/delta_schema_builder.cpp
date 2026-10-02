@@ -29,49 +29,49 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 	// Mirrors SchemaVisitor's kernel->DuckDB mapping, so a create/read round trip is lossless.
 	switch (type.id()) {
 	case LogicalTypeId::BOOLEAN:
-		return Unpack(ffi::visit_field_boolean(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_boolean(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::TINYINT:
-		return Unpack(ffi::visit_field_byte(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_byte(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::SMALLINT:
-		return Unpack(ffi::visit_field_short(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_short(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::INTEGER:
-		return Unpack(ffi::visit_field_integer(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_integer(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::BIGINT:
-		return Unpack(ffi::visit_field_long(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_long(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::FLOAT:
-		return Unpack(ffi::visit_field_float(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_float(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::DOUBLE:
-		return Unpack(ffi::visit_field_double(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_double(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::VARCHAR:
-		return Unpack(ffi::visit_field_string(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_string(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::BLOB:
-		return Unpack(ffi::visit_field_binary(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_binary(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::DATE:
-		return Unpack(ffi::visit_field_date(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_date(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::TIMESTAMP_TZ:
-		return Unpack(ffi::visit_field_timestamp(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_timestamp(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::TIMESTAMP:
-		return Unpack(ffi::visit_field_timestamp_ntz(state, name_slice, nullable, allocate_error));
+		return Unpack(ffi::visit_field_timestamp_ntz(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::DECIMAL:
 		return Unpack(ffi::visit_field_decimal(state, name_slice, DecimalType::GetWidth(type),
-		                                       DecimalType::GetScale(type), nullable, allocate_error));
+		                                       DecimalType::GetScale(type), nullable, nullptr, allocate_error));
 	case LogicalTypeId::STRUCT: {
 		auto &children = StructType::GetChildTypes(type);
 		vector<uintptr_t> child_ids;
 		for (idx_t i = 0; i < children.size(); i++) {
 			child_ids.push_back(VisitField(state, children[i].first.GetIdentifierName(), children[i].second, true));
 		}
-		return Unpack(
-		    ffi::visit_field_struct(state, name_slice, child_ids.data(), child_ids.size(), nullable, allocate_error));
+		return Unpack(ffi::visit_field_struct(state, name_slice, child_ids.data(), child_ids.size(), nullable, nullptr,
+		                                      allocate_error));
 	}
 	case LogicalTypeId::LIST: {
 		auto element_id = VisitField(state, "element", ListType::GetChildType(type), true);
-		return Unpack(ffi::visit_field_array(state, name_slice, element_id, nullable, allocate_error));
+		return Unpack(ffi::visit_field_array(state, name_slice, element_id, nullable, nullptr, allocate_error));
 	}
 	case LogicalTypeId::MAP: {
 		auto key_id = VisitField(state, "key", MapType::KeyType(type), false);
 		auto value_id = VisitField(state, "value", MapType::ValueType(type), true);
-		return Unpack(ffi::visit_field_map(state, name_slice, key_id, value_id, nullable, allocate_error));
+		return Unpack(ffi::visit_field_map(state, name_slice, key_id, value_id, nullable, nullptr, allocate_error));
 	}
 	default:
 		throw NotImplementedException("Delta CREATE TABLE does not support column '%s' of type %s", name,
@@ -92,7 +92,8 @@ uintptr_t DeltaSchemaBuilder::Build(void *data, ffi::KernelSchemaVisitorState *s
 		// ToDeltaString borrows, so the slice must never outlive a temporary -- keep the string named.
 		const string root_name = "root";
 		return builder.Unpack(ffi::visit_field_struct(state, KernelUtils::ToDeltaString(root_name), field_ids.data(),
-		                                              field_ids.size(), false, DuckDBEngineError::AllocateError));
+		                                              field_ids.size(), false, nullptr,
+		                                              DuckDBEngineError::AllocateError));
 	} catch (std::exception &e) {
 		builder.error = ErrorData(e);
 	} catch (...) {

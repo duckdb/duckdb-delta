@@ -70,8 +70,8 @@ static string parseFromConnectionString(const string &connectionString, const st
 	return "";
 }
 
-static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &path) {
-	ffi::EngineBuilder *builder;
+static ffi::ExclusiveEngineBuilder *CreateBuilder(ClientContext &context, const string &path) {
+	ffi::ExclusiveEngineBuilder *builder;
 
 	// For "regular" paths we early out with the default builder config
 	if (!StringUtil::StartsWith(path, "s3://") && !StringUtil::StartsWith(path, "gcs://") &&
@@ -81,13 +81,13 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		auto interface_builder_res =
 		    ffi::get_engine_builder(KernelUtils::ToDeltaString(path), DuckDBEngineError::AllocateError);
 
-		ffi::EngineBuilder *return_value;
+		ffi::ExclusiveEngineBuilder *return_value;
 		auto res = KernelUtils::TryUnpackResult(interface_builder_res, return_value);
 		if (res.HasError()) {
 			res.Throw();
 		}
 		// Use multi-threaded tokio executor (required for checkpoint support)
-		ffi::set_builder_with_multithreaded_executor(return_value, 0, 0);
+		return_value = ffi::builder_with_multithreaded_executor(return_value, 0, 0);
 		return return_value;
 	}
 
@@ -195,7 +195,7 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		}
 
 		// Use multi-threaded tokio executor (required for checkpoint support)
-		ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
+		builder = ffi::builder_with_multithreaded_executor(builder, 0, 0);
 		return builder;
 	}
 	const auto &kv_secret = dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
@@ -204,13 +204,18 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 
 	// Here you would need to add the logic for setting the builder options for Azure
 	// This is just a placeholder and will need to be replaced with the actual logic
-	auto set_option = [](ffi::EngineBuilder *builder, const string &key, const string &value) {
-		auto res = ffi::set_builder_option(builder, KernelUtils::ToDeltaString(key), KernelUtils::ToDeltaString(value));
-		bool ok;
-		auto err = KernelUtils::TryUnpackResult(res, ok);
+	// builder_with_option consumes the builder it is given and hands back the updated one; on error the
+	// kernel has already dropped it, so the caller's handle is cleared rather than left dangling.
+	auto set_option = [](ffi::ExclusiveEngineBuilder *&builder, const string &key, const string &value) {
+		ffi::ExclusiveEngineBuilder *updated;
+		auto err = KernelUtils::TryUnpackResult(
+		    ffi::builder_with_option(builder, KernelUtils::ToDeltaString(key), KernelUtils::ToDeltaString(value)),
+		    updated);
 		if (err.HasError()) {
+			builder = nullptr;
 			err.Throw();
 		}
+		builder = updated;
 	};
 
 	if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
@@ -357,7 +362,7 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		set_option(builder, "container_name", bucket);
 	}
 	// Use multi-threaded tokio executor (required for checkpoint support)
-	ffi::set_builder_with_multithreaded_executor(builder, 0, 0);
+	builder = ffi::builder_with_multithreaded_executor(builder, 0, 0);
 	return builder;
 }
 
@@ -817,7 +822,7 @@ OpenFileInfo DeltaMultiFileList::GetFile(idx_t i) const {
 // Kernel refuses a catalog-managed table without max_catalog_version -- its newest commit may be
 // catalog-tracked and not yet backfilled. Catch that kernel/API error, and rephrase it for users.
 ffi::Handle<ffi::SharedSnapshot>
-DeltaMultiFileList::BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const {
+DeltaMultiFileList::BuildSnapshot(ffi::Handle<ffi::ExclusiveSnapshotBuilder> builder) const {
 	ffi::Handle<ffi::SharedSnapshot> built;
 	auto res = KernelUtils::TryUnpackResult(ffi::snapshot_builder_build(builder), built);
 	if (res.HasError()) {
@@ -834,10 +839,10 @@ DeltaMultiFileList::BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> bu
 }
 
 // req: this.lock must already be owned
-ffi::Handle<ffi::MutableFfiSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBuilder(ffi::KernelStringSlice path_slice,
-                                                                                      idx_t target_version,
-                                                                                      bool &using_incremental) const {
-	ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder;
+ffi::Handle<ffi::ExclusiveSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBuilder(ffi::KernelStringSlice path_slice,
+                                                                                     idx_t target_version,
+                                                                                     bool &using_incremental) const {
+	ffi::Handle<ffi::ExclusiveSnapshotBuilder> builder;
 	using_incremental = false;
 
 	if (old_snapshot) {
@@ -857,13 +862,13 @@ ffi::Handle<ffi::MutableFfiSnapshotBuilder> DeltaMultiFileList::CreateSnapshotBu
 	}
 
 	if (target_version != DConstants::INVALID_INDEX) {
-		ffi::snapshot_builder_set_version(&builder, target_version);
+		builder = ffi::snapshot_builder_with_version(builder, target_version);
 	}
 	if (delta_log_path) {
-		TryUnpackKernelResult(ffi::snapshot_builder_set_log_tail(&builder, delta_log_path->GetFFIPtr()));
+		builder = TryUnpackKernelResult(ffi::snapshot_builder_with_log_tail(builder, delta_log_path->GetFFIPtr()));
 	}
 	if (max_catalog_version >= 0) {
-		ffi::snapshot_builder_set_max_catalog_version(&builder, static_cast<uint64_t>(max_catalog_version));
+		builder = ffi::snapshot_builder_with_max_catalog_version(builder, static_cast<uint64_t>(max_catalog_version));
 	}
 
 	return builder;

@@ -24,10 +24,10 @@ class DatabaseInstance;
 // Allocator for errors that the kernel might throw
 struct DuckDBEngineError : ffi::EngineError {
 	// Allocate a DuckDBEngineError, function ptr passed to kernel for error allocation
-	static ffi::EngineError *AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg);
-	static ffi::EngineError *AllocateError(ffi::KernelError etype, const string &msg);
+	static ffi::EngineError *AllocateError(ffi::FFIKernelError etype, ffi::KernelStringSlice msg);
+	static ffi::EngineError *AllocateError(ffi::FFIKernelError etype, const string &msg);
 	// Convert a kernel error enum to a string
-	static string KernelErrorEnumToString(ffi::KernelError err);
+	static string KernelErrorEnumToString(ffi::FFIKernelError err);
 
 	// Return the error as a string (WARNING: consumes the object by calling `delete this`)
 	string IntoString();
