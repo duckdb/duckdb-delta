@@ -891,21 +891,21 @@ vector<DeltaMultiFileColumnDefinition> KernelSchemaVisitor::TakeFieldList(uintpt
 	return rval;
 }
 
-ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg) {
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::FFIKernelError etype, ffi::KernelStringSlice msg) {
 	auto error = new DuckDBEngineError;
 	error->etype = etype;
 	error->error_message = string(msg.ptr, msg.len);
 	return error;
 }
 
-ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, const string &msg) {
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::FFIKernelError etype, const string &msg) {
 	auto error = new DuckDBEngineError;
 	error->etype = etype;
 	error->error_message = string(msg.data(), msg.length());
 	return error;
 }
 
-string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
+string DuckDBEngineError::KernelErrorEnumToString(ffi::FFIKernelError err) {
 	const char *KERNEL_ERROR_ENUM_STRINGS[] = {"UnknownError",
 	                                           "FFIError",
 	                                           "ArrowError",
@@ -956,7 +956,7 @@ string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
 
 	static constexpr int KERNEL_ERROR_ENUM_COUNT = (int)(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *));
 
-	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::KernelError::InvalidTransactionStateError,
+	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::FFIKernelError::InvalidTransactionStateError,
 	              "KernelErrorEnumStrings mismatched with kernel");
 
 	if ((int)err < KERNEL_ERROR_ENUM_COUNT) {

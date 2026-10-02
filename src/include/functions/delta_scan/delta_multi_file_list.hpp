@@ -162,10 +162,10 @@ protected:
 	void InitializeScan() const;
 
 	//! Restates the kernel's catalog-managed refusal in terms the caller can act on
-	ffi::Handle<ffi::SharedSnapshot> BuildSnapshot(ffi::Handle<ffi::MutableFfiSnapshotBuilder> builder) const;
+	ffi::Handle<ffi::SharedSnapshot> BuildSnapshot(ffi::Handle<ffi::ExclusiveSnapshotBuilder> builder) const;
 
 	//! Builder for `target_version` (INVALID_INDEX for HEAD), with log tail and catalog bounds applied
-	ffi::Handle<ffi::MutableFfiSnapshotBuilder>
+	ffi::Handle<ffi::ExclusiveSnapshotBuilder>
 	CreateSnapshotBuilder(ffi::KernelStringSlice path_slice, idx_t target_version, bool &using_incremental) const;
 
 	//! The version `timestamp_ms` names, adopting the HEAD snapshot built on the way when it already is
