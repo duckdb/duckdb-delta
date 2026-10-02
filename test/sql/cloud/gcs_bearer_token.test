@@ -1,0 +1,75 @@
+# name: test/sql/cloud/gcs_bearer_token.test
+# description: test delta_scan on GCS with an OAuth bearer token (as vended by Unity Catalog)
+# group: [cloud]
+
+require httpfs
+
+require parquet
+
+require delta
+
+# Without a secret nothing changes: GCS still goes through the S3-compatible endpoint, which needs
+# one to supply its endpoint.
+
+statement error
+select col1 from delta_scan('gs://some-bucket/some-table');
+----
+without a secret providing its endpoint
+
+# HMAC interoperability keys keep taking the S3-compatible endpoint, so the scheme is rewritten and
+# the request is SigV4-signed. SignatureDoesNotMatch is specific to that signing: only a request
+# actually signed with these keys can produce it.
+
+statement ok
+CREATE SECRET gcs_hmac (
+    TYPE GCS,
+    KEY_ID 'SOME_KEY',
+    SECRET 'SOME SECRET',
+    SCOPE 'gs://some-bucket'
+);
+
+statement error
+select col1 from delta_scan('gs://some-bucket/some-table');
+----
+SignatureDoesNotMatch
+
+statement ok
+DROP SECRET gcs_hmac;
+
+# A bearer token takes the native GCS store instead, where object_store attaches it as
+# `Authorization: Bearer`. GCS answers a malformed token with 401, which is what distinguishes
+# delivery from the 403 an unauthenticated or ambient-credential request gets: same URL, same
+# bucket, different credential, and no SigV4 signature in sight.
+
+statement ok
+CREATE SECRET gcs_bearer (
+    TYPE GCS,
+    BEARER_TOKEN 'ya29.not-a-real-token',
+    SCOPE 'gs://some-bucket'
+);
+
+statement error
+select col1 from delta_scan('gs://some-bucket/some-table');
+----
+401
+
+statement ok
+DROP SECRET gcs_bearer;
+
+# gcs:// reaches the same native store, spelled gs:// because that is the only form
+# GoogleCloudStorageBuilder::with_url recognizes.
+
+statement ok
+CREATE SECRET gcs_bearer_alt (
+    TYPE GCS,
+    BEARER_TOKEN 'ya29.not-a-real-token',
+    SCOPE 'gcs://some-bucket'
+);
+
+statement error
+select col1 from delta_scan('gcs://some-bucket/some-table');
+----
+401
+
+statement ok
+DROP SECRET gcs_bearer_alt;
