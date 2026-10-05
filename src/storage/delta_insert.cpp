@@ -556,6 +556,18 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 
 	ApplyColumnMappingToWriteSchema(*table_entry, *info, names_to_write);
 
+	// Delta allows shredded VARIANT files only when delta.enableVariantShredding is true; we always write unshredded.
+	// 'NULL', not 'VARIANT': the latter fails in the parquet writer of duckdb v2.0.0.
+	child_list_t<Value> shredding;
+	for (idx_t i = 0; i < types_to_write.size(); i++) {
+		if (types_to_write[i].id() == LogicalTypeId::VARIANT) {
+			shredding.emplace_back(names_to_write[i], Value("NULL"));
+		}
+	}
+	if (!shredding.empty()) {
+		info->options["shredding"] = {Value::STRUCT(std::move(shredding))};
+	}
+
 	CopyFunctionBindInput bind_input(*info);
 
 	auto function_data =
