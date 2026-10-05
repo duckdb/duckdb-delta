@@ -59,8 +59,8 @@ SELECT readerFeatures FROM (
 ----
 [variantType]
 
-# Without the variantShredding feature Delta writers must not shred; DuckDB's parquet writer shreds by default
-# and writes 3 typed_value columns here.
+# Without the variantShredding feature Delta writers must not shred.
+# Needs the parquet writer fix that makes SHREDDING {col: 'NULL'} write unshredded.
 mode skip
 
 query I
@@ -113,16 +113,54 @@ SELECT list(id ORDER BY id) FROM shr WHERE try_cast(v.a AS INT) >= 1;
 ----
 [70, 71, 72, 101, 102]
 
+# -----------------------------------------------------------------------------
+# Table with shredding enabled: DuckDB appends unshredded, reads mix both
+#
+
+statement ok
+FROM copy_dir('data/inlined/variant/spark_shredded_variant_stats/delta_lake', '{TEMP_DIR}/variant_write_unshredded');
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_write_unshredded' AS unshr (TYPE delta);
+
+statement ok
+INSERT INTO unshr VALUES (100, {'a': 7, 'b': 'dw'}::VARIANT);
+
+# Needs the parquet writer fix that makes SHREDDING {col: 'NULL'} write unshredded.
+mode skip
+
 query I
-SELECT count(*) > 0 FROM parquet_schema('{TEMP_DIR}/variant_write_shredded/duckdb-*.parquet') WHERE name = 'typed_value';
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/variant_write_unshredded/duckdb-*.parquet') WHERE name = 'typed_value';
+----
+0
+
+mode unskip
+
+query I
+SELECT count(*) > 0 FROM parquet_schema('{TEMP_DIR}/variant_write_unshredded/part-*.parquet') WHERE name = 'typed_value';
 ----
 true
 
-# Parquet VariantShredding.md: object field groups under typed_value are REQUIRED (duckdb#25891).
-query I
-SELECT list(DISTINCT repetition_type) FROM parquet_schema('{TEMP_DIR}/variant_write_shredded/duckdb-*.parquet') WHERE name IN ('a', 'b');
+query II
+SELECT id, v::VARCHAR FROM unshr ORDER BY id;
 ----
-[REQUIRED]
+70	{'a': 1, 'b': x}
+71	{'a': 5, 'b': y}
+72	{'a': 10, 'b': z}
+100	{'a': 7, 'b': dw}
+
+query II
+SELECT id, v.a::INT FROM unshr ORDER BY id;
+----
+70	1
+71	5
+72	10
+100	7
+
+query I
+SELECT list(id ORDER BY id) FROM unshr WHERE v.a::INT >= 5;
+----
+[71, 72, 100]
 
 # -----------------------------------------------------------------------------
 # SQL NULL stays SQL NULL in the file, not a variant null
