@@ -562,9 +562,8 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 		auto snapshot_ref = table_entry->snapshot->snapshot->GetLockingRef();
 
 		if (parent_commit) {
-			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
-			    ffi::transaction_with_committer(snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(),
-			                                    CreateCatalogCommitter(path)));
+			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction_with_committer(
+			    snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(), CreateCatalogCommitter(path)));
 		} else {
 			// This builds its own snapshot from the path, so a max_catalog_version given at ATTACH does not
 			// reach it -- and the kernel's own advice, to supply one when loading, is what the caller did.
