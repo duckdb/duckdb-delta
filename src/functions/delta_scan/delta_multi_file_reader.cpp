@@ -154,15 +154,21 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 	options.hive_partitioning = false;
 	options.union_by_name = false;
 
-	// Before core appends the generated filename column (filename=true; not the virtual one): core fills that
-	// column per file as a constant and never looks it up, and the field-id mapper wants an identifier on every
-	// column it is handed.
-	bind_data.schema = DeltaMultiFileColumnDefinition::ColumnsFromNamesAndTypes(names, return_types);
-	for (auto &col : bind_data.schema) {
-		col.default_expression = ConstantExpression::FromValue(Value(col.type));
-	}
+	// Core appends its generated columns (filename=true, file_row_number=true -- not the virtual ones) after
+	// the table's own, so remember where the table's columns end before calling it.
+	const auto table_columns = names.size();
 
 	MultiFileReader::BindOptions(options, files, return_types, names, bind_data);
+
+	// This schema *is* the global column list a scan resolves ids against (multi_file_function.hpp: a reader's
+	// schema wins over the bind's own columns), so the generated columns belong in it or their ids strand.
+	// Only the table's own columns take a default expression -- it is what gives the field-id mapper an
+	// identifier to work from, while a generated column carrying one is never filled and reads back NULL.
+	bind_data.schema = DeltaMultiFileColumnDefinition::ColumnsFromNamesAndTypes(names, return_types);
+	for (idx_t i = 0; i < table_columns; i++) {
+		auto &col = bind_data.schema[i];
+		col.default_expression = ConstantExpression::FromValue(Value(col.type));
+	}
 
 	// We abuse the hive_partitioning_indexes to forward partitioning information to DuckDB
 	// TODO: we should clean up this API: hive_partitioning_indexes is confusingly named here. We should make this
@@ -273,12 +279,30 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 
 	auto &scan_columns = snapshot.GetLazyLoadedGlobalColumns();
 
-	// We need to override the global columns, because only now we have the correct column mapping information
-	D_ASSERT(scan_columns.size() == global_columns.size());
-	auto overridden_global_columns = DeltaMultiFileColumnDefinition::ConvertToBase(scan_columns);
+	// The kernel's column mapping information only exists now, so overlay it onto the columns the bind
+	// produced rather than replacing them: the tail holds core's generated columns, and a requested id indexes
+	// the whole list.
+	D_ASSERT(scan_columns.size() <= global_columns.size());
+	auto overridden_global_columns = global_columns;
+	auto kernel_columns = DeltaMultiFileColumnDefinition::ConvertToBase(scan_columns);
+	for (idx_t i = 0; i < kernel_columns.size(); i++) {
+		overridden_global_columns[i] = std::move(kernel_columns[i]);
+	}
 
-	FinalizeBind(reader_data, bind_data.file_options, bind_data.reader_bind, overridden_global_columns,
-	             global_column_ids, context, global_state);
+	// file_row_number is not a column of the file: it comes from the reader's row-number virtual column, which
+	// core arranges by rewriting the id before it maps. This override has to do the same.
+	auto column_ids = global_column_ids;
+	auto &file_row_number_idx = bind_data.reader_bind.file_row_number_idx;
+	if (file_row_number_idx.IsValid()) {
+		for (auto &column_id : column_ids) {
+			if (column_id.GetPrimaryIndex() == file_row_number_idx.GetIndex()) {
+				column_id = ColumnIndex(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
+			}
+		}
+	}
+
+	FinalizeBind(reader_data, bind_data.file_options, bind_data.reader_bind, overridden_global_columns, column_ids,
+	             context, global_state);
 
 	// Only `id` mode needs the field-id mapper; the name mapper takes a physical-name identifier and an unset
 	// one alike.
@@ -297,7 +321,7 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 		}
 	}
 
-	auto result = CreateMapping(context, reader_data, overridden_global_columns, global_column_ids, table_filters,
+	auto result = CreateMapping(context, reader_data, overridden_global_columns, column_ids, table_filters,
 	                            gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns, mapping_mode);
 	for (auto &expr : reader_data.expressions) {
 		CastNaiveTimestampsAsUtc(expr);
