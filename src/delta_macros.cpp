@@ -52,7 +52,7 @@ static constexpr auto FILE_COPY_MACRO = R"(
 
 void DeltaMacros::RegisterTableMacro(ExtensionLoader &loader, const string &name, const string &query,
                                      const vector<string> &params, const child_list_t<Value> &named_params) {
-	Parser parser;
+	auto parser = Parser::GetBuiltinParser();
 	parser.ParseQuery(query);
 	const auto &stmt = parser.statements.back();
 	auto &node = stmt->Cast<SelectStatement>().node;

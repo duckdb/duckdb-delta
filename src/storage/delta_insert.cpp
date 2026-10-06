@@ -146,6 +146,9 @@ static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 			// PROTOCOL.md (Per-file Statistics, note 1) keeps inside tightBounds=true -- bounds stay tight.
 			// Thus accept and drop.
 			continue;
+		} else if (stats_name == "nan_count") {
+			// NaN count of floating point columns: Delta's per-file statistics have no NaN count, so drop it
+			continue;
 		} else if (stats_name == "variant_type") {
 			//! Should be handled elsewhere
 			continue;
