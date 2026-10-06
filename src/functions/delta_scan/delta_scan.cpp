@@ -127,8 +127,7 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 			options.Add("pushdown_partition_info", LogicalType::BOOLEAN)
 			    .Add("pushdown_filters", LogicalType::VARCHAR)
 			    .Add("version", LogicalType::UBIGINT)
-			    // ANY, since the binder casts a typed named parameter without the session time zone.
-			    .Add("timestamp", LogicalType::ANY)
+			    .Add("timestamp", LogicalType::TIMESTAMP_TZ)
 			    .Add("log_tail", KernelUtils::GetLogPathType())
 			    .Add("max_catalog_version", LogicalType::BIGINT);
 		});
