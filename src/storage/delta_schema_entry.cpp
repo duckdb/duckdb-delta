@@ -308,7 +308,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	                  create_builder, GetDeltaTransaction(transaction).CreateCatalogCommitter(path), engine.get()),
 	              create_transaction)
 	        : KernelUtils::TryUnpackResult(ffi::create_table_builder_build(create_builder, engine.get()),
-	                                      create_transaction);
+	                                       create_transaction);
 	if (build_res.HasError()) {
 		build_res.Throw();
 	}
