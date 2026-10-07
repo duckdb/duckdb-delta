@@ -147,6 +147,8 @@ public:
 	vector<NestedNotNullConstraint> GetNestedNotNullConstraints() const;
 	bool HasNullConstraintsInArrays() const;
 	vector<DeltaStringWidthBound> GetStringWidthBounds() const;
+	//! The `delta.enableVariantShredding` table property: shredded VARIANT files are allowed only when it is true.
+	bool VariantShreddingEnabled() const;
 
 	//! True for `id` mode tables. Initializes the scan.
 	bool ResolvesByFieldId() const;

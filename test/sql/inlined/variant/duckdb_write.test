@@ -114,7 +114,7 @@ SELECT list(id ORDER BY id) FROM shr WHERE try_cast(v.a AS INT) >= 1;
 [70, 71, 72, 101, 102]
 
 # -----------------------------------------------------------------------------
-# Table with shredding enabled: DuckDB appends unshredded, reads mix both
+# Table with shredding enabled: DuckDB appends shredded, reads mix both
 #
 
 statement ok
@@ -126,15 +126,11 @@ ATTACH '{TEMP_DIR}/variant_write_unshredded' AS unshr (TYPE delta);
 statement ok
 INSERT INTO unshr VALUES (100, {'a': 7, 'b': 'dw'}::VARIANT);
 
-# Needs the parquet writer fix that makes SHREDDING {col: 'NULL'} write unshredded.
-mode skip
-
+# delta.enableVariantShredding is true, so DuckDB shreds like Spark does.
 query I
-SELECT count(*) FROM parquet_schema('{TEMP_DIR}/variant_write_unshredded/duckdb-*.parquet') WHERE name = 'typed_value';
+SELECT count(*) > 0 FROM parquet_schema('{TEMP_DIR}/variant_write_unshredded/duckdb-*.parquet') WHERE name = 'typed_value';
 ----
-0
-
-mode unskip
+true
 
 query I
 SELECT count(*) > 0 FROM parquet_schema('{TEMP_DIR}/variant_write_unshredded/part-*.parquet') WHERE name = 'typed_value';

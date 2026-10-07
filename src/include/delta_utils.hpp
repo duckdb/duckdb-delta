@@ -73,6 +73,8 @@ struct KernelUtils {
 	// Read `delta.columnMapping.mode` from the snapshot's table-property
 	// configuration. Returns NONE when the property is absent or `"none"`.
 	static DeltaColumnMappingMode ReadColumnMappingMode(ffi::SharedSnapshot *snapshot);
+	//! A table property from the snapshot's configuration, as written in the log; empty when absent.
+	static string ReadTableProperty(ffi::SharedSnapshot *snapshot, const string &key);
 
 	static void *StringAllocationNew(const struct ffi::KernelStringSlice slice) {
 		return new string(slice.ptr, slice.len);

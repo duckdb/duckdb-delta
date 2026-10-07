@@ -1360,6 +1360,15 @@ vector<DeltaStringWidthBound> DeltaMultiFileList::GetStringWidthBounds() const {
 	return string_width_bounds;
 }
 
+bool DeltaMultiFileList::VariantShreddingEnabled() const {
+	unique_lock<mutex> lck(lock);
+	EnsureSnapshotInitialized();
+	auto snapshot_ref = snapshot->GetLockingRef();
+	// Case-insensitive like Spark's boolean table properties
+	return StringUtil::CIEquals(KernelUtils::ReadTableProperty(snapshot_ref.GetPtr(), "delta.enableVariantShredding"),
+	                            "true");
+}
+
 vector<NestedNotNullConstraint> DeltaMultiFileList::GetNestedNotNullConstraints() const {
 	unique_lock<mutex> lck(lock);
 	EnsureScanInitialized();

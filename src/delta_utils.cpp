@@ -1105,23 +1105,29 @@ optional<Value> KernelUtils::FetchFromMetadataMap(ffi::Handle<ffi::SharedExternE
 	return text.WithType(LogicalType::JSON());
 }
 
-DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *snapshot) {
+string KernelUtils::ReadTableProperty(ffi::SharedSnapshot *snapshot, const string &key) {
 	struct VisitorContext {
-		string mode;
+		const string &key;
+		string value;
 	};
-	VisitorContext ctx;
+	VisitorContext ctx {key, string()};
 	auto visitor = [](ffi::NullableCvoid engine_context, ffi::KernelStringSlice key, ffi::KernelStringSlice value) {
 		auto &c = *static_cast<VisitorContext *>(engine_context);
-		if (FromDeltaString(key) == "delta.columnMapping.mode") {
-			c.mode = FromDeltaString(value);
+		if (FromDeltaString(key) == c.key) {
+			c.value = FromDeltaString(value);
 		}
 	};
 	ffi::visit_metadata_configuration(snapshot, &ctx, visitor);
+	return ctx.value;
+}
+
+DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *snapshot) {
+	auto mode = ReadTableProperty(snapshot, "delta.columnMapping.mode");
 	// Case-sensitive, and an unknown value means unmapped: the same as the kernel's own parse of this property
-	if (ctx.mode == "id") {
+	if (mode == "id") {
 		return DeltaColumnMappingMode::ID;
 	}
-	if (ctx.mode == "name") {
+	if (mode == "name") {
 		return DeltaColumnMappingMode::NAME;
 	}
 	return DeltaColumnMappingMode::NONE;
