@@ -304,6 +304,11 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	FinalizeBind(reader_data, bind_data.file_options, bind_data.reader_bind, overridden_global_columns, column_ids,
 	             context, global_state);
 
+	// The mapper only resolves the table's own columns -- core serves filename from the constant map and
+	// file_row_number from the virtual column above -- and in id mode it asserts a field id on every column.
+	overridden_global_columns.erase(overridden_global_columns.begin() + NumericCast<ptrdiff_t>(scan_columns.size()),
+	                                overridden_global_columns.end());
+
 	// Only `id` mode needs the field-id mapper; the name mapper takes a physical-name identifier and an unset
 	// one alike.
 	auto mapping_mode = bind_data.reader_bind.mapping;

@@ -1,15 +1,15 @@
 # name: test/sql/inlined/column_mapping/filename_option.test
-# description: the generated filename column (filename=true) on an id-mode table leaves data columns resolved by field id
+# description: the generated filename and file_row_number columns leave column-mapped data columns resolved by field id or physical name
 # group: [column_mapping]
 
 require parquet
 
 require delta
 
-# filename=true makes DuckDB append a generated constant column at bind time, filled per file; it is
-# not the virtual `filename` column, which needs no option and is not affected. The generated column
-# carries no field id and sits outside the scan schema, so it must not demote an id-mode read to name
-# matching.
+# filename=true and file_row_number=true make DuckDB append generated columns at bind time; they are
+# not the virtual `filename` and `file_row_number` columns, which need no option and are not affected.
+# The generated columns carry no field id and are not columns of the file, so they must not demote an
+# id-mode read to name matching.
 
 # -----------------------------------------------------------------------------
 # Logical parquet names, resolved by field id
@@ -29,3 +29,46 @@ FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names', filename=tr
 WHERE filename LIKE '%snappy.parquet' AND a = 2;
 ----
 2	bob
+
+# -----------------------------------------------------------------------------
+# file_row_number=true
+#
+
+query III
+SELECT a, b, file_row_number
+FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names', file_row_number=true)
+ORDER BY a;
+----
+1	alice	0
+2	bob	1
+
+# -----------------------------------------------------------------------------
+# Both options together
+#
+
+query IIII
+SELECT a, b, parse_filename(filename), file_row_number
+FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names', filename=true, file_row_number=true)
+ORDER BY a;
+----
+1	alice	part-00000.snappy.parquet	0
+2	bob	part-00000.snappy.parquet	1
+
+query II
+SELECT file_row_number, a
+FROM delta_scan('data/inlined/column_mapping/id_mode_logical_names', filename=true, file_row_number=true)
+WHERE file_row_number = 1;
+----
+1	2
+
+# -----------------------------------------------------------------------------
+# Name mode, both options
+#
+
+query IIII
+SELECT a, b, parse_filename(filename), file_row_number
+FROM delta_scan('data/inlined/column_mapping/name_mode_physical_names', filename=true, file_row_number=true)
+ORDER BY a;
+----
+1	alice	part-00000.snappy.parquet	0
+2	bob	part-00000.snappy.parquet	1
