@@ -60,15 +60,10 @@ SELECT readerFeatures FROM (
 [variantType]
 
 # Without the variantShredding feature Delta writers must not shred.
-# Needs the parquet writer fix that makes SHREDDING {col: 'NULL'} write unshredded.
-mode skip
-
 query I
 SELECT count(*) FROM parquet_schema('{TEMP_DIR}/variant_write_basic/duckdb-*.parquet') WHERE name = 'typed_value';
 ----
 0
-
-mode unskip
 
 # -----------------------------------------------------------------------------
 # Table with variantShredding-preview: DuckDB appends to a Spark-shredded table
