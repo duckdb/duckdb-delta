@@ -100,19 +100,23 @@ SELECT id FROM v.v WHERE data IS NULL;
 7
 
 # -----------------------------------------------------------------------------
-# Known gap: written files are shredded, the protocol says they are not
-#
-# The parquet writer shreds a VARIANT column whenever it can derive a shredded
-# type, and exposes no way to turn that off, so the variant group gets a third
-# 'typed_value' child. DuckDB reads those files back, but an engine that honours
-# the protocol reads only 'value' and sees nothing. Flip this to 2 once the
-# writer can be told not to shred.
+# Written files are unshredded, as the protocol requires without variantShredding
 #
 
+# The variant group holds only 'metadata' and 'value', no 'typed_value'
 query I
 SELECT DISTINCT num_children FROM parquet_schema('{TEMP_DIR}/variant_create/*.parquet') WHERE name = 'data';
 ----
-3
+2
+
+# Kernel does not let CREATE TABLE enable shredding, so a created table never gets shredded files
+statement ok
+ATTACH '{TEMP_DIR}/variant_create_shredded' AS shredded (TYPE delta);
+
+statement error
+CREATE TABLE shredded.shredded (id INTEGER, data VARIANT) WITH ('delta.enableVariantShredding' = 'true');
+----
+Setting delta property 'delta.enableVariantShredding' is not supported during CREATE TABLE
 
 # -----------------------------------------------------------------------------
 # The schema survives a fresh attach
