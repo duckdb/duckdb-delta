@@ -2,6 +2,7 @@
 
 #include "duckdb/common/sorting/hashed_sort.hpp"
 #include "duckdb/common/path.hpp"
+#include "duckdb/common/type_visitor.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
@@ -550,6 +551,15 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 
 	// Bind Copy Function
 	auto &columns = table_entry->GetColumns();
+	// The parquet writer writes VARIANT only as a top-level column; name the column instead of passing its error on
+	for (auto &col : columns.Logical()) {
+		auto &type = col.Type();
+		if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
+			throw NotImplementedException("Delta INSERT does not support column '%s' with a VARIANT nested in a %s "
+			                              "yet; only top-level VARIANT columns can be written",
+			                              col.Name().GetIdentifierName(), LogicalTypeIdToString(type.id()));
+		}
+	}
 
 	auto names_to_write = columns.GetColumnNames();
 	auto types_to_write = columns.GetColumnTypes();

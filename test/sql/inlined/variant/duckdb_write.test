@@ -185,6 +185,11 @@ FROM copy_dir('data/inlined/variant/spark_shredded_object/delta_lake', '{TEMP_DI
 statement ok
 ATTACH '{TEMP_DIR}/variant_write_nested' AS nested (TYPE delta);
 
+statement error
+INSERT INTO nested VALUES (100, {'a': 7}::VARIANT, {'x': {'a': 8}::VARIANT, 'arr': [1::VARIANT]});
+----
+Not implemented Error: Delta INSERT does not support column 'n' with a VARIANT nested in a STRUCT yet; only top-level VARIANT columns can be written
+
 # Core parquet writer: "ColumnWriter of type 'VARIANT' requires a transform, but is not a root column".
 mode skip
 
