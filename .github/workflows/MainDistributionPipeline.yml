@@ -4,6 +4,8 @@
 name: Main Extension Distribution Pipeline
 on:
   push:
+    branches: [main, "v[12].[0-9]+-[a-zA-Z]*", "features/**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
