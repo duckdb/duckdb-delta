@@ -81,7 +81,7 @@ jobs:
       - name: Launch & populate Azure test service
         run: |
           # skipApiVersionCheck -- see https://learn.microsoft.com/en-us/rest/api/storageservices/versioning-for-the-azure-storage-services
-          azurite --skipApiVersionCheck > azurite_log.txt 2>&1 &
+          azurite --skipApiVersionCheck --blobPort 28000 --queuePort 28001 --tablePort 28002 > azurite_log.txt 2>&1 &
           sleep 10
           ./scripts/upload_test_files_to_azurite.sh
 
