@@ -32,7 +32,7 @@ jobs:
     with:
       # Main config
       extension_name: &ext_name delta
-      ci_tools_version: &ci_tools_ref main
+      ci_tools_version: &ci_tools_ref 969bc76276acec1c0a3922ff500d2ec3a1a3b037 # 2026-10-08 v2.0-cyanoptera
       runners: ${{ needs.prepare.outputs.runners }}
       enable_rust: true
       exclude_archs: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
