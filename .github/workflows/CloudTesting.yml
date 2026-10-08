@@ -8,7 +8,7 @@ defaults:
     shell: bash
 env:
   BUILD_EXTENSION_TEST_DEPS: full
-  GEN: Ninja
+  GEN: ninja
   VCPKG_COMMIT_ID: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3 # Release 2026.06.24
   VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
   # Pull prebuilt vcpkg packages (OpenSSL etc.) from duckdb's hosted read-only cache,
