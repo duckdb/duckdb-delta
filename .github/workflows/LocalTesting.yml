@@ -28,7 +28,7 @@ env:
 jobs:
   azurite-tests-linux:
     name: Azurite (local azure test server) tests (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-x64' || 'ubuntu-latest' }}
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
@@ -95,7 +95,7 @@ jobs:
 
   s3-tests-linux:
     name: S3 (local RustFS test server) tests (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-x64' || 'ubuntu-latest' }}
 
     steps:
       - *checkout
@@ -118,7 +118,7 @@ jobs:
 
   generated-tests-linux:
     name: Generated Tests (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-x64' || 'ubuntu-latest' }}
     steps:
       - *checkout
       - *ninja
@@ -134,7 +134,7 @@ jobs:
 
   regression-test-benchmark-runner:
     name: Performance Regression Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-x64' || 'ubuntu-latest' }}
     env:
       BUILD_BENCHMARK: 1
     if: false # FIXME: @benfleis - disabling to unblock v1.5 progress - https://github.com/duckdblabs/duckdb-internal/issues/7233

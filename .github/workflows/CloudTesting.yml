@@ -23,7 +23,7 @@ env:
 jobs:
   azure-tests-linux:
     name: Azure tests (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-x64' || 'ubuntu-latest' }}
     env:
       VCPKG_TARGET_TRIPLET: x64-linux
       DUCKDB_PLATFORM: linux_amd64
