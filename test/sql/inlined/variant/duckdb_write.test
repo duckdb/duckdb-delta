@@ -160,15 +160,10 @@ SELECT list(id ORDER BY id) FROM unshr WHERE v.a::INT >= 5;
 statement ok
 INSERT INTO shr VALUES (120, NULL);
 
-# Core writes SQL NULL as a present variant holding null (`v, metadata` null count 0); Spark then reads `null`.
-mode skip
-
 query I
 SELECT sum(stats_null_count) FROM parquet_metadata('{TEMP_DIR}/variant_write_shredded/duckdb-*.parquet') WHERE path_in_schema = 'v, metadata';
 ----
 1
-
-mode unskip
 
 # -----------------------------------------------------------------------------
 # Variant nested in a struct

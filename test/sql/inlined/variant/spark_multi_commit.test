@@ -185,10 +185,6 @@ SELECT list(id ORDER BY id) FROM read_parquet('./data/inlined/variant/spark_shre
 ----
 [100, 107]
 
-# Core bug on unshredded files, which delta makes the parquet reader take as the legacy layout: `v.a` returns the
-# whole `v`, cast: "INTERNAL Error: Vector::Shred can only be used on variant vectors", filter: no rows.
-mode skip
-
 query I
 SELECT list(v.a::VARCHAR ORDER BY id) FROM read_parquet('./data/inlined/variant/spark_unshredded_multi_commit/delta_lake/*.parquet');
 ----
@@ -198,5 +194,3 @@ query I
 SELECT list(id ORDER BY id) FROM read_parquet('./data/inlined/variant/spark_unshredded_multi_commit/delta_lake/*.parquet') WHERE v.a = 1;
 ----
 [100, 107]
-
-mode unskip
