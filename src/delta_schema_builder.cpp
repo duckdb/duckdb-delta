@@ -56,9 +56,10 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 		return Unpack(ffi::visit_field_decimal(state, name_slice, DecimalType::GetWidth(type),
 		                                       DecimalType::GetScale(type), nullable, allocate_error));
 	case LogicalTypeId::VARIANT: {
-		// Kernel takes the variant's physical layout as a struct. The unshredded layout (non-null
-		// metadata and value) is the only one we emit: the write path never passes a parquet
-		// SHREDDING option, so the table must not claim variantShredding.
+		// Delta declares a variant by its unshredded physical struct (metadata, value) no matter how files
+		// are shredded later; shredding is a per-file parquet layout, allowed only when
+		// delta.enableVariantShredding is true. Kernel's CREATE TABLE refuses that property, so tables made
+		// here are always written unshredded.
 		const string metadata_name = "metadata";
 		const string value_name = "value";
 		uintptr_t physical_ids[2] = {
