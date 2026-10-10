@@ -2,6 +2,7 @@
 
 #include "duckdb/common/sorting/hashed_sort.hpp"
 #include "duckdb/common/path.hpp"
+#include "duckdb/common/type_visitor.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
@@ -550,11 +551,34 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 
 	// Bind Copy Function
 	auto &columns = table_entry->GetColumns();
+	// The parquet writer writes VARIANT only as a top-level column; name the column instead of passing its error on
+	for (auto &col : columns.Logical()) {
+		auto &type = col.Type();
+		if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
+			throw NotImplementedException("Delta INSERT does not support column '%s' with a VARIANT nested in a %s "
+			                              "yet; only top-level VARIANT columns can be written",
+			                              col.Name().GetIdentifierName(), LogicalTypeIdToString(type.id()));
+		}
+	}
 
 	auto names_to_write = columns.GetColumnNames();
 	auto types_to_write = columns.GetColumnTypes();
 
 	ApplyColumnMappingToWriteSchema(*table_entry, *info, names_to_write);
+
+	// Delta allows shredded VARIANT files only when delta.enableVariantShredding is true; otherwise write unshredded.
+	// A shredding type of 'NULL' tells the parquet writer to leave the column unshredded.
+	if (!table_entry->snapshot->VariantShreddingEnabled()) {
+		child_list_t<Value> shredding;
+		for (idx_t i = 0; i < types_to_write.size(); i++) {
+			if (types_to_write[i].id() == LogicalTypeId::VARIANT) {
+				shredding.emplace_back(names_to_write[i], Value("NULL"));
+			}
+		}
+		if (!shredding.empty()) {
+			info->options["shredding"] = {Value::STRUCT(std::move(shredding))};
+		}
+	}
 
 	CopyFunctionBindInput bind_input(*info);
 

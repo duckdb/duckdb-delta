@@ -26,13 +26,13 @@ jobs:
 
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@969bc76276acec1c0a3922ff500d2ec3a1a3b037
     needs: prepare
     secrets: inherit # required for writing to vcpkg binary cache
     with:
       # Main config
       extension_name: &ext_name delta
-      ci_tools_version: &ci_tools_ref main
+      ci_tools_version: &ci_tools_ref 969bc76276acec1c0a3922ff500d2ec3a1a3b037 # 2026-10-08 v2.0-cyanoptera
       runners: ${{ needs.prepare.outputs.runners }}
       enable_rust: true
       exclude_archs: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
@@ -46,7 +46,7 @@ jobs:
   duckdb-stable-deploy:
     name: Deploy extension binaries
     needs: duckdb-stable-build
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@main
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@969bc76276acec1c0a3922ff500d2ec3a1a3b037
     secrets: inherit
     with:
       extension_name: *ext_name
@@ -58,7 +58,7 @@ jobs:
 
   code-quality-check:
     name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@969bc76276acec1c0a3922ff500d2ec3a1a3b037
     with:
       extension_name: *ext_name
       duckdb_version: c29eca15a2f119e9c9d958fcd54542ba9171da76 # v2.0-cyanoptera 2026-10-09 pin

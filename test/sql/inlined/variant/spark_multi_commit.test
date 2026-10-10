@@ -1,0 +1,196 @@
+# name: test/sql/inlined/variant/spark_multi_commit.test
+# description: Spark-written VARIANT over several commits, one file each: field projection and filters
+# group: [variant]
+
+require parquet
+
+require delta
+
+# -----------------------------------------------------------------------------
+# Every table has one file per commit
+#
+
+foreach tbl spark_unshredded_multi_commit spark_shredded_multi_commit
+
+query I
+SELECT count(*) FROM glob('./data/inlined/variant/{tbl}/delta_lake/*.parquet');
+----
+6
+
+endloop
+
+query I
+SELECT count(*) > 0 FROM parquet_schema('./data/inlined/variant/spark_shredded_multi_commit/delta_lake/*.parquet') WHERE name = 'typed_value';
+----
+true
+
+query I
+SELECT count(*) FROM parquet_schema('./data/inlined/variant/spark_unshredded_multi_commit/delta_lake/*.parquet') WHERE name = 'typed_value';
+----
+0
+
+# -----------------------------------------------------------------------------
+# Field projection and filters, unshredded and shredded
+#
+
+foreach tbl spark_unshredded_multi_commit spark_shredded_multi_commit
+
+statement ok
+RESET threads;
+
+statement ok
+ATTACH './data/inlined/variant/{tbl}/delta_lake' AS t (TYPE delta);
+
+# First pass on the default thread count, second on one thread.
+loop pass 0 2
+
+query I
+SELECT count(*) FROM t;
+----
+11
+
+query II
+SELECT id, v.a::VARCHAR FROM t ORDER BY id;
+----
+100	1
+101	2
+102	3
+103	NULL
+104	str
+105	NULL
+106	NULL
+107	1
+108	NULL
+109	NULL
+110	NULL
+
+query II
+SELECT id, s.v.a::VARCHAR FROM t ORDER BY id;
+----
+100	1
+101	2
+102	3
+103	NULL
+104	str
+105	NULL
+106	NULL
+107	1
+108	NULL
+109	NULL
+110	NULL
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE v.a = 1;
+----
+[100, 107]
+
+query I
+SELECT count(*) FROM t WHERE v.a = 1;
+----
+2
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE v.a = 1 AND id > 100;
+----
+[107]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE s.v.a = 1;
+----
+[100, 107]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE try_cast(v.a AS INT) >= 2;
+----
+[101, 102]
+
+query I
+SELECT list(id ORDER BY id) FROM t WHERE try_cast(v.a AS INT) >= 2 AND id <= 101;
+----
+[101]
+
+statement error
+SELECT list(id ORDER BY id) FROM t WHERE v.a::INT >= 2;
+----
+<REGEX>:Conversion Error.*str.*
+
+query I
+SELECT list(v.a::VARCHAR ORDER BY id) FROM delta_scan('./data/inlined/variant/{tbl}/delta_lake');
+----
+[1, 2, 3, NULL, str, NULL, NULL, 1, NULL, NULL, NULL]
+
+query I
+SELECT list(id ORDER BY id) FROM delta_scan('./data/inlined/variant/{tbl}/delta_lake') WHERE v.a = 1;
+----
+[100, 107]
+
+query I
+SELECT list(id ORDER BY id) FROM delta_scan('./data/inlined/variant/{tbl}/delta_lake') WHERE try_cast(v.a AS INT) >= 2;
+----
+[101, 102]
+
+query I
+SELECT count(*) FROM delta_scan('./data/inlined/variant/{tbl}/delta_lake') WHERE s.v.a = 1 AND id >= 105;
+----
+1
+
+statement ok
+SET threads=1;
+
+endloop
+
+statement ok
+DETACH t;
+
+endloop
+
+# -----------------------------------------------------------------------------
+# Top-level ARRAY<VARIANT> (unshredded only)
+#
+
+statement ok
+ATTACH './data/inlined/variant/spark_unshredded_multi_commit/delta_lake' AS u (TYPE delta);
+
+query III
+SELECT id, a[1].a::VARCHAR, a[2].a::VARCHAR FROM u ORDER BY id;
+----
+100	1	100
+101	2	101
+102	3	102
+103	NULL	103
+104	str	104
+105	NULL	105
+106	NULL	NULL
+107	1	107
+108	NULL	108
+109	NULL	109
+110	NULL	NULL
+
+query I
+SELECT list(id ORDER BY id) FROM u WHERE a[2].a::INT >= 105;
+----
+[105, 107, 108, 109]
+
+# -----------------------------------------------------------------------------
+# read_parquet on the same files
+#
+
+query I
+SELECT list(v.a::VARCHAR ORDER BY id) FROM read_parquet('./data/inlined/variant/spark_shredded_multi_commit/delta_lake/*.parquet');
+----
+[1, 2, 3, NULL, str, NULL, NULL, 1, NULL, NULL, NULL]
+
+query I
+SELECT list(id ORDER BY id) FROM read_parquet('./data/inlined/variant/spark_shredded_multi_commit/delta_lake/*.parquet') WHERE v.a = 1;
+----
+[100, 107]
+
+query I
+SELECT list(v.a::VARCHAR ORDER BY id) FROM read_parquet('./data/inlined/variant/spark_unshredded_multi_commit/delta_lake/*.parquet');
+----
+[1, 2, 3, NULL, str, NULL, NULL, 1, NULL, NULL, NULL]
+
+query I
+SELECT list(id ORDER BY id) FROM read_parquet('./data/inlined/variant/spark_unshredded_multi_commit/delta_lake/*.parquet') WHERE v.a = 1;
+----
+[100, 107]
