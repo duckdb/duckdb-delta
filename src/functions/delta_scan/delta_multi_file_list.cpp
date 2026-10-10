@@ -160,13 +160,32 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		secret_type = "azure";
 	}
 
+	auto &secret_manager = SecretManager::Get(context);
+	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+	auto secret_match = secret_manager.LookupSecret(transaction, path, secret_type);
+
+	// A GCS bearer token only reaches object_store's native GCS store; the S3-compatible endpoint
+	// has no bearer auth mode. So the credential decides the scheme: a bearer keeps gs://, while
+	// HMAC interoperability keys and the no-secret case keep the existing s3:// rewrite.
+	bool gcs_bearer = false;
+	if (secret_type == "gcs" && secret_match.HasMatch()) {
+		const auto &gcs_secret = dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
+		KeyValueSecretReader gcs_reader(gcs_secret, *context.client_data->file_opener);
+		string bearer_token;
+		gcs_reader.TryGetSecretKey("bearer_token", bearer_token);
+		gcs_bearer = !bearer_token.empty();
+	}
+
 	// We need to substitute DuckDB's usage of s3 and r2 paths because delta kernel needs to just interpret them as s3
-	// protocol servers.
+	// protocol servers. GCS goes the same way unless a bearer token sends it to the native store, where gcs:// has to
+	// be spelled gs:// because that is the only form GoogleCloudStorageBuilder::with_url recognizes.
 	string cleaned_path;
-	if (StringUtil::StartsWith(path, "r2://") || StringUtil::StartsWith(path, "gs://")) {
+	if (StringUtil::StartsWith(path, "r2://")) {
 		cleaned_path = "s3://" + path.substr(5);
+	} else if (StringUtil::StartsWith(path, "gs://")) {
+		cleaned_path = gcs_bearer ? path : "s3://" + path.substr(5);
 	} else if (StringUtil::StartsWith(path, "gcs://")) {
-		cleaned_path = "s3://" + path.substr(6);
+		cleaned_path = (gcs_bearer ? string("gs://") : string("s3://")) + path.substr(6);
 	} else {
 		cleaned_path = path;
 	}
@@ -178,12 +197,6 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 	if (res.HasError()) {
 		res.Throw();
 	}
-
-	// For S3 or Azure paths we need to trim the url, set the container, and fetch a potential secret
-	auto &secret_manager = SecretManager::Get(context);
-	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
-
-	auto secret_match = secret_manager.LookupSecret(transaction, path, secret_type);
 
 	// No secret: nothing left to do here!
 	if (!secret_match.HasMatch()) {
@@ -213,7 +226,13 @@ static ffi::EngineBuilder *CreateBuilder(ClientContext &context, const string &p
 		}
 	};
 
-	if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
+	if (gcs_bearer) {
+		// object_store 0.14 added GoogleConfigKey::BearerToken, so the pre-issued OAuth token that
+		// Unity Catalog vends for GCP can be handed to the native GCS store as a plain option.
+		string bearer_token;
+		secret_reader.TryGetSecretKey("bearer_token", bearer_token);
+		set_option(builder, "bearer_token", bearer_token);
+	} else if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
 		string key_id, secret, session_token, region, endpoint, url_style;
 		bool use_ssl = true;
 		secret_reader.TryGetSecretKey("key_id", key_id);
