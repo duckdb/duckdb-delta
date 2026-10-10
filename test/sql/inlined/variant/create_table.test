@@ -1,0 +1,188 @@
+# name: test/sql/inlined/variant/create_table.test
+# description: CREATE TABLE with VARIANT columns
+# group: [variant]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Create a table with a variant column
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_create' AS v (TYPE delta);
+
+statement ok
+CREATE TABLE v.v (id INTEGER, data VARIANT);
+
+query IIIIII
+DESCRIBE v.v;
+----
+id	INTEGER	YES	NULL	NULL	NULL
+data	VARIANT	YES	NULL	NULL	NULL
+
+# -----------------------------------------------------------------------------
+# The committed protocol and schema
+#
+
+query I
+SELECT json_extract_string(metaData.schemaString, '$.fields[1].type')
+FROM read_json('{TEMP_DIR}/variant_create/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL
+----
+variant
+
+# variantType is a reader/writer feature, so it must appear on both lists
+query IIII
+SELECT protocol.minReaderVersion, protocol.minWriterVersion,
+       list_contains(protocol.readerFeatures, 'variantType'),
+       list_contains(protocol.writerFeatures, 'variantType')
+FROM read_json('{TEMP_DIR}/variant_create/_delta_log/00000000000000000000.json')
+WHERE protocol IS NOT NULL
+----
+3	7	true	true
+
+# The write path never shreds, so the table must not claim it can
+query II
+SELECT list_contains(protocol.readerFeatures, 'variantShredding'),
+       list_contains(protocol.writerFeatures, 'variantShredding')
+FROM read_json('{TEMP_DIR}/variant_create/_delta_log/00000000000000000000.json')
+WHERE protocol IS NOT NULL
+----
+false	false
+
+# -----------------------------------------------------------------------------
+# Payload shapes round trip through the created table
+#
+
+statement ok
+INSERT INTO v.v VALUES
+	(1, {'a': 'test', 'b': 21}),
+	(2, {'outer': {'inner': [1, 2, 3]}}),
+	(3, 'a string'),
+	(4, 42),
+	(5, true),
+	(6, [1::VARIANT, 'two', false]),
+	(7, NULL)
+;
+
+query II
+SELECT id, data FROM v.v ORDER BY id;
+----
+1	{'a': test, 'b': 21}
+2	{'outer': {'inner': [1, 2, 3]}}
+3	a string
+4	42
+5	true
+6	[1, two, false]
+7	NULL
+
+query II
+SELECT id, variant_typeof(data) FROM v.v ORDER BY id;
+----
+1	OBJECT(a, b)
+2	OBJECT(outer)
+3	VARCHAR
+4	INT32
+5	BOOL_TRUE
+6	ARRAY(3)
+7	VARIANT_NULL
+
+# variant_typeof labels a SQL NULL VARIANT_NULL, so pin down that it really is a SQL NULL
+query I
+SELECT id FROM v.v WHERE data IS NULL;
+----
+7
+
+# -----------------------------------------------------------------------------
+# Written files are unshredded, as the protocol requires without variantShredding
+#
+
+# The variant group holds only 'metadata' and 'value', no 'typed_value'
+query I
+SELECT DISTINCT num_children FROM parquet_schema('{TEMP_DIR}/variant_create/*.parquet') WHERE name = 'data';
+----
+2
+
+# Kernel does not let CREATE TABLE enable shredding, so a created table never gets shredded files
+statement ok
+ATTACH '{TEMP_DIR}/variant_create_shredded' AS shredded (TYPE delta);
+
+statement error
+CREATE TABLE shredded.shredded (id INTEGER, data VARIANT) WITH ('delta.enableVariantShredding' = 'true');
+----
+Setting delta property 'delta.enableVariantShredding' is not supported during CREATE TABLE
+
+# -----------------------------------------------------------------------------
+# The schema survives a fresh attach
+#
+
+statement ok
+DETACH v;
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_create' AS v2 (TYPE delta);
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'v2' ORDER BY column_index;
+----
+id	INTEGER
+data	VARIANT
+
+query I
+SELECT count(*) FROM v2.v2;
+----
+7
+
+statement ok
+DETACH v2;
+
+# -----------------------------------------------------------------------------
+# Variants nested in struct, list and map children
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_create_nested' AS n (TYPE delta);
+
+statement ok
+CREATE TABLE n.n (id INTEGER, s STRUCT(v VARIANT), l VARIANT[], m MAP(VARCHAR, VARIANT));
+
+query III
+SELECT json_extract_string(metaData.schemaString, '$.fields[1].type.fields[0].type'),
+       json_extract_string(metaData.schemaString, '$.fields[2].type.elementType'),
+       json_extract_string(metaData.schemaString, '$.fields[3].type.valueType')
+FROM read_json('{TEMP_DIR}/variant_create_nested/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL
+----
+variant	variant	variant
+
+query IIII
+SELECT protocol.minReaderVersion, protocol.minWriterVersion,
+       list_contains(protocol.readerFeatures, 'variantType'),
+       list_contains(protocol.writerFeatures, 'variantType')
+FROM read_json('{TEMP_DIR}/variant_create_nested/_delta_log/00000000000000000000.json')
+WHERE protocol IS NOT NULL
+----
+3	7	true	true
+
+statement ok
+DETACH n;
+
+statement ok
+ATTACH '{TEMP_DIR}/variant_create_nested' AS n2 (TYPE delta);
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'n2' ORDER BY column_index;
+----
+id	INTEGER
+s	STRUCT(v VARIANT)
+l	VARIANT[]
+m	MAP(VARCHAR, VARIANT)
+
+statement ok
+DETACH n2;
