@@ -3,6 +3,8 @@
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
 
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
+#include "duckdb/common/multi_file/multi_file_states.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/query_profiler.hpp"
@@ -80,6 +82,17 @@ static unique_ptr<FunctionData> DeltaScanDeserialize(Deserializer &deserializer,
 	throw NotImplementedException("DeltaScan deserialization not implemented");
 }
 
+// An extracted field is converted to its table type inside the parquet reader, out of reach of the rewrite that reads
+// a naive (e.g. INT96) timestamp as UTC, so a column with a timestamptz anywhere in it is read whole.
+static bool DeltaScanSupportsPushdownExtract(const FunctionData &bind_data_p, const LogicalIndex &col_idx) {
+	auto &bind_data = bind_data_p.Cast<MultiFileBindData>();
+	auto &type = bind_data.columns[col_idx.index].type;
+	if (!StructType::IsStruct(type) && type.id() != LogicalTypeId::VARIANT) {
+		return false;
+	}
+	return !TypeVisitor::Contains(type, LogicalTypeId::TIMESTAMP_TZ);
+}
+
 TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 	// Parquet extension needs to be loaded for this to make sense
 	auto &instance = loader.GetDatabaseInstance();
@@ -102,7 +115,7 @@ TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {
 		function.table_scan_progress = nullptr;
 		function.get_bind_info = nullptr;
 		function.get_virtual_columns = DeltaVirtualColumns;
-		function.supports_pushdown_extract = nullptr;
+		function.supports_pushdown_extract = DeltaScanSupportsPushdownExtract;
 		function.late_materialization = false;
 
 		function.to_string = DeltaFunctionToString;

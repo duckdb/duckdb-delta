@@ -43,6 +43,18 @@ SELECT nested_col FROM delta_scan('data/inlined/column_mapping/id_mode_nested_st
 {'x': 1, 'y': alice}
 {'x': 2, 'y': bob}
 
+# A field read on its own resolves through the field's id as well.
+query II
+SELECT nested_col.y, nested_col.x FROM delta_scan('data/inlined/column_mapping/id_mode_nested_struct') ORDER BY nested_col.x;
+----
+alice	1
+bob	2
+
+query I
+SELECT nested_col.y FROM delta_scan('data/inlined/column_mapping/id_mode_nested_struct') WHERE nested_col.x = 2;
+----
+bob
+
 # -----------------------------------------------------------------------------
 # id mode, list and map columns
 #

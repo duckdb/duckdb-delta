@@ -1040,7 +1040,7 @@ void DeltaMultiFileList::EnsureScanInitialized() const {
 }
 
 unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContext &context, TableFilterSet &new_filters,
-                                                                    vector<column_t> column_indexes) const {
+                                                                    const vector<ColumnIndex> &column_indexes) const {
 	auto filtered_list = make_uniq<DeltaMultiFileList>(context, paths[0].path, version);
 
 	DeltaTableFilters result_filter_set;
@@ -1052,7 +1052,13 @@ unique_ptr<DeltaMultiFileList> DeltaMultiFileList::PushdownInternal(ClientContex
 
 	// Add new filters
 	for (auto &entry : new_filters) {
-		auto &column_id = column_indexes[entry.GetIndex()];
+		auto &column_index = column_indexes[entry.GetIndex()];
+		// A filter on an extracted field names only the top-level column, and would replace the field-path form
+		// of the same filter that an earlier pass already pushed
+		if (column_index.IsPushdownExtract()) {
+			continue;
+		}
+		auto column_id = column_index.GetPrimaryIndex();
 		if (column_id < global_columns.size()) {
 			auto &filter =
 			    ExpressionFilter::GetExpressionFilter(entry.Filter(), "DeltaMultiFileList::PushdownInternal");
@@ -1109,7 +1115,7 @@ unique_ptr<MultiFileList> DeltaMultiFileList::ComplexFilterPushdown(ClientContex
 		return nullptr;
 	}
 
-	auto filtered_list = PushdownInternal(context, filter_set, info.column_ids);
+	auto filtered_list = PushdownInternal(context, filter_set, info.column_indexes);
 
 	ReportFilterPushdown(context, *filtered_list, info.column_ids, "constant", info);
 
@@ -1240,6 +1246,9 @@ DeltaMultiFileList::DynamicFilterPushdown(MultiFileDynamicPushdownInfo &dynamic_
 		auto proj_id = entry.GetIndex();
 		auto &filter =
 		    ExpressionFilter::GetExpressionFilter(entry.Filter(), "DeltaMultiFileList::DynamicFilterPushdown");
+		if (dynamic_pushdown_info.column_indexes[proj_id].IsPushdownExtract()) {
+			continue;
+		}
 		auto column_id = column_ids[proj_id];
 		auto previously_pushed_down_filter = table_filters.TryGetFilterByColumnIndex(column_id);
 		if (previously_pushed_down_filter && filter.Equals(*previously_pushed_down_filter)) {
@@ -1250,7 +1259,7 @@ DeltaMultiFileList::DynamicFilterPushdown(MultiFileDynamicPushdownInfo &dynamic_
 	}
 
 	if (filters_copy.HasFilters()) {
-		auto new_snap = PushdownInternal(context, filters_copy, column_ids);
+		auto new_snap = PushdownInternal(context, filters_copy, dynamic_pushdown_info.column_indexes);
 		ReportFilterPushdown(context, *new_snap, column_ids, "dynamic", nullptr);
 		return std::move(new_snap);
 	}

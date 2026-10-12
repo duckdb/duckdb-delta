@@ -33,3 +33,20 @@ SELECT * FROM delta_scan('./data/generated/evolution_struct_field_modification_n
 ----
 {'top_level_struct': {'struct_field_a': value1, 'struct_field_b': value2, 'struct_field_c': NULL}}
 {'top_level_struct': {'struct_field_a': value3, 'struct_field_b': value4, 'struct_field_c': value5}}
+
+# A field added by a later commit reads as NULL from the files that predate it, also when read on its own
+query II
+SELECT top_level_column.struct_field_a, top_level_column.struct_field_c FROM delta_scan('./data/generated/evolution_struct_field_modification/delta_lake') ORDER BY ALL
+----
+value1	NULL
+value3	value5
+
+query I
+SELECT top_level_column.struct_field_a FROM delta_scan('./data/generated/evolution_struct_field_modification/delta_lake') WHERE top_level_column.struct_field_c IS NULL
+----
+value1
+
+query I
+SELECT top_level_column.top_level_struct.struct_field_a FROM delta_scan('./data/generated/evolution_struct_field_modification_nested/delta_lake') WHERE top_level_column.top_level_struct.struct_field_c = 'value5'
+----
+value3

@@ -1,0 +1,74 @@
+# name: test/sql/main/struct_field_pushdown.test
+# description: a scan that reads struct fields on their own still skips files on their statistics
+# group: [main]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# Three files: part p1 with s.a in [1, 2], part p2 with s.a = 30, part p1 with s.a = 40. "Scanning Files" keeps
+# the best count of any planning pass, so "Total Files Read" is what shows a later pass undid the skipping.
+
+statement ok
+ATTACH '{TEMP_DIR}/struct_field_pushdown' AS t (TYPE delta);
+
+statement ok
+CREATE TABLE t.t (id INTEGER, s STRUCT(a INTEGER, b VARCHAR), p VARCHAR) PARTITIONED BY (p);
+
+statement ok
+INSERT INTO t.t VALUES (1, {'a': 1, 'b': 'x'}, 'p1'), (2, {'a': 2, 'b': 'y'}, 'p1');
+
+statement ok
+INSERT INTO t.t VALUES (3, {'a': 30, 'b': 'z'}, 'p2'), (4, {'a': 40, 'b': 'w'}, 'p1');
+
+# -----------------------------------------------------------------------------
+# One field
+#
+
+query III
+SELECT id, s.b, p FROM t.t WHERE s.a > 10 ORDER BY id;
+----
+3	z	p2
+4	w	p1
+
+query II
+EXPLAIN ANALYZE SELECT s.b FROM t.t WHERE s.a > 10;
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2\b.*
+
+# -----------------------------------------------------------------------------
+# Two fields of the same struct
+#
+
+# Each filter alone keeps a different file; together they keep none.
+query I
+SELECT count(*) FROM t.t WHERE s.a > 35 AND s.b >= 'x';
+----
+0
+
+query II
+EXPLAIN ANALYZE SELECT s.b FROM t.t WHERE s.a > 35 AND s.b >= 'x';
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 0\b.*
+
+# -----------------------------------------------------------------------------
+# Field and partition column
+#
+
+query IIII
+SELECT id, s, s.b, p FROM t.t WHERE p = 'p1' AND s.a > 10;
+----
+4	{'a': 40, 'b': w}	w	p1
+
+query II
+EXPLAIN ANALYZE SELECT id FROM t.t WHERE p = 'p1' AND s.a > 10;
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1\b.*
+
+query II
+SELECT p, list(s.a ORDER BY s.a) FROM t.t GROUP BY p ORDER BY p;
+----
+p1	[1, 2, 40]
+p2	[30]

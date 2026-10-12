@@ -32,10 +32,6 @@ SELECT list(id ORDER BY id) FROM delta_scan('./data/inlined/variant/spark_shredd
 ----
 [9]
 
-# delta_scan turns off supports_pushdown_extract, so the field stays a variant_extract over the whole column:
-# the filter reads CAST(variant_extract(v, 'b') AS VARCHAR) = 'x'.
-mode skip
-
 query II
 EXPLAIN SELECT id FROM delta_scan('./data/inlined/variant/spark_shredded_object/delta_lake') WHERE v.b::VARCHAR = 'x';
 ----
@@ -46,4 +42,58 @@ EXPLAIN SELECT v.a FROM delta_scan('./data/inlined/variant/spark_shredded_object
 ----
 physical_plan	<!REGEX>:.*variant_extract.*
 
-mode unskip
+# -----------------------------------------------------------------------------
+# Fields across several files
+#
+
+# One file per commit, some without any object or any non-NULL row; `s.v` is a variant inside a struct.
+query II
+EXPLAIN SELECT v.a, s.v.b FROM delta_scan('./data/inlined/variant/spark_shredded_multi_commit/delta_lake');
+----
+physical_plan	<!REGEX>:.*variant_extract.*
+
+query IIII
+SELECT id, v.a, s.tag, s.v.b FROM delta_scan('./data/inlined/variant/spark_shredded_multi_commit/delta_lake') ORDER BY id;
+----
+100	1	t100	x
+101	2	t101	NULL
+102	3	t102	y
+103	NULL	t103	no a
+104	str	t104	NULL
+105	NULL	t105	NULL
+106	NULL	NULL	NULL
+107	1	t107	NULL
+108	NULL	t108	NULL
+109	NULL	t109	NULL
+110	NULL	NULL	NULL
+
+query I
+SELECT list(id ORDER BY id) FROM delta_scan('./data/inlined/variant/spark_shredded_multi_commit/delta_lake') WHERE TRY_CAST(v.a AS INTEGER) = 1;
+----
+[100, 107]
+
+query I
+SELECT list(id ORDER BY id) FROM delta_scan('./data/inlined/variant/spark_shredded_multi_commit/delta_lake') WHERE s.v.b::VARCHAR = 'y';
+----
+[102]
+
+# -----------------------------------------------------------------------------
+# Column mapping, deletion vectors and generated columns
+#
+
+# Name mode, `v` renamed to `w` after the write, and row 81 deleted through a deletion vector.
+query II
+EXPLAIN SELECT w.a FROM delta_scan('./data/inlined/variant/spark_shredded_dv_colmap/delta_lake') WHERE w.b::VARCHAR = 'x';
+----
+physical_plan	<!REGEX>:.*variant_extract.*
+
+query IIIII
+SELECT id, w.a, w.b, file_row_number, filename LIKE '%.parquet' FROM delta_scan('./data/inlined/variant/spark_shredded_dv_colmap/delta_lake', filename = true, file_row_number = true) ORDER BY id;
+----
+80	1	x	0	true
+82	3	NULL	2	true
+
+query III
+SELECT id, w.a, file_row_number FROM delta_scan('./data/inlined/variant/spark_shredded_dv_colmap/delta_lake', file_row_number = true) WHERE w.b::VARCHAR = 'x';
+----
+80	1	0

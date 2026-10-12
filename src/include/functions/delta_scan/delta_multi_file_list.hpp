@@ -127,7 +127,7 @@ public:
 	unique_ptr<MultiFileList> DynamicFilterPushdown(MultiFileDynamicPushdownInfo &pushdown_info) const override;
 
 	unique_ptr<DeltaMultiFileList> PushdownInternal(ClientContext &context, TableFilterSet &new_filters,
-	                                                vector<column_t> column_indexes) const;
+	                                                const vector<ColumnIndex> &column_indexes) const;
 
 	vector<OpenFileInfo> GetAllFiles() const override;
 	FileExpandResult GetExpandResult() const override;
