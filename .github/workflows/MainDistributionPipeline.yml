@@ -61,7 +61,7 @@ jobs:
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@969bc76276acec1c0a3922ff500d2ec3a1a3b037
     with:
       extension_name: *ext_name
-      duckdb_version: 57eff1742dfb706c19d9a8a7c45e46b7cb7cc34f # v2.0-cyanoptera 2026-10-13 pin
+      duckdb_version: c5c5adc80da2491e6c5ecbb8d07f84301207dc17 # v2.0-cyanoptera 2026-10-13 pin
       ci_tools_version: *ci_tools_ref
       format_checks: format
       extra_toolchains: "python3"
