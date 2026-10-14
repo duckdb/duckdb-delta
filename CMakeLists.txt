@@ -117,9 +117,6 @@ message(STATUS "Building for rust target: ${RUST_PLATFORM_TARGET}")
 # Remove whitespaces before and after to prevent messed up env variables
 string(STRIP "${RUST_ENV_VARS}" RUST_ENV_VARS)
 
-# Having these set will mess up cross compilation to linux arm
-set(RUST_UNSET_ENV_VARS --unset=CC --unset=CXX --unset=LD)
-
 # Define all the relevant delta-kernel-rs paths/names
 set(DELTA_KERNEL_LIBNAME
     "${CMAKE_STATIC_LIBRARY_PREFIX}delta_kernel_ffi${CMAKE_STATIC_LIBRARY_SUFFIX}"
