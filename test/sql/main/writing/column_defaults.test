@@ -1,0 +1,117 @@
+# name: test/sql/main/writing/column_defaults.test
+# description: writes to tables with the allowColumnDefaults writer feature are refused; reads are not
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+CALL copy_dir('data/inlined/column_defaults/with_default', '{TEMP_DIR}/column_defaults/with_default');
+
+statement ok
+CALL copy_dir('data/inlined/column_defaults/feature_only', '{TEMP_DIR}/column_defaults/feature_only');
+
+statement ok
+CALL copy_dir('data/inlined/column_defaults/without_feature', '{TEMP_DIR}/column_defaults/without_feature');
+
+statement ok
+ATTACH '{TEMP_DIR}/column_defaults/with_default/delta_lake' AS with_default (TYPE delta);
+
+statement ok
+ATTACH '{TEMP_DIR}/column_defaults/feature_only/delta_lake' AS feature_only (TYPE delta);
+
+statement ok
+ATTACH '{TEMP_DIR}/column_defaults/without_feature/delta_lake' AS without_feature (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# Reads are unaffected
+#
+
+# Spark filled x from its default 7
+query II
+SELECT * FROM with_default;
+----
+1	7
+
+query II
+SELECT * FROM delta_scan('{TEMP_DIR}/column_defaults/with_default/delta_lake');
+----
+1	7
+
+# -----------------------------------------------------------------------------
+# Every write path is refused
+#
+
+# The omitted column would be NULL, not 7
+statement error
+INSERT INTO with_default (id) VALUES (2);
+----
+Not implemented Error: Delta table "with_default" uses the 'allowColumnDefaults' writer feature
+
+# Refused per table, even when the statement names every column
+statement error
+INSERT INTO with_default VALUES (2, 7);
+----
+Not implemented Error: Delta table "with_default" uses the 'allowColumnDefaults' writer feature
+
+statement error
+INSERT INTO with_default VALUES (2, DEFAULT);
+----
+Not implemented Error: Delta table "with_default" uses the 'allowColumnDefaults' writer feature
+
+statement ok
+COPY (SELECT 2 AS id, 7 AS x) TO '{TEMP_DIR}/column_defaults/row.csv';
+
+statement error
+COPY with_default FROM '{TEMP_DIR}/column_defaults/row.csv';
+----
+Not implemented Error: Delta table "with_default" uses the 'allowColumnDefaults' writer feature
+
+# MERGE does not reach the Delta insert yet; once it does, its INSERT action must be refused like INSERT
+statement error
+MERGE INTO with_default USING (SELECT 2 AS id) AS src ON with_default.id = src.id
+WHEN NOT MATCHED THEN INSERT (id) VALUES (src.id);
+----
+Binder Error: Can only merge into base tables!
+
+# The feature alone is enough: Spark may add a default to any column later
+statement error
+INSERT INTO feature_only VALUES (2, 2);
+----
+Not implemented Error: Delta table "feature_only" uses the 'allowColumnDefaults' writer feature
+
+# Nothing was written: Spark's own commits and data file only
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/column_defaults/with_default/delta_lake/_delta_log/*.json');
+----
+2
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/column_defaults/with_default/delta_lake/*.parquet');
+----
+1
+
+query II
+SELECT * FROM with_default;
+----
+1	7
+
+# -----------------------------------------------------------------------------
+# A table without the feature accepts writes
+#
+
+statement ok
+INSERT INTO without_feature (id) VALUES (2);
+
+statement ok
+COPY without_feature FROM '{TEMP_DIR}/column_defaults/row.csv';
+
+query II
+SELECT * FROM without_feature ORDER BY id, x;
+----
+1	1
+2	7
+2	NULL

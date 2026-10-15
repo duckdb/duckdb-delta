@@ -521,6 +521,15 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		table_entry = op.table.Cast<DeltaTableEntry>();
 	}
 
+	// The table entry carries no DEFAULT, so the binder fills an omitted column with NULL instead of the table's
+	// default. Refused per table, not per statement, like the kernel's refusal of `generatedColumns`.
+	if (table_entry->snapshot->AllowsColumnDefaults()) {
+		throw NotImplementedException("Delta table \"%s\" uses the 'allowColumnDefaults' writer feature (column "
+		                              "DEFAULT values), which duckdb-delta cannot write yet. Refusing the write "
+		                              "rather than committing NULL where the table's default belongs.",
+		                              table_entry->name.GetIdentifierName());
+	}
+
 	string delta_path = Path::Normalize(table_entry->snapshot->GetPath());
 
 	// Create Copy Info
