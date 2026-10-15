@@ -1376,6 +1376,13 @@ bool DeltaMultiFileList::VariantShreddingEnabled() const {
 	                            "true");
 }
 
+bool DeltaMultiFileList::AllowsColumnDefaults() const {
+	unique_lock<mutex> lck(lock);
+	EnsureSnapshotInitialized();
+	auto snapshot_ref = snapshot->GetLockingRef();
+	return KernelUtils::HasWriterFeature(snapshot_ref.GetPtr(), "allowColumnDefaults");
+}
+
 vector<NestedNotNullConstraint> DeltaMultiFileList::GetNestedNotNullConstraints() const {
 	unique_lock<mutex> lck(lock);
 	EnsureScanInitialized();

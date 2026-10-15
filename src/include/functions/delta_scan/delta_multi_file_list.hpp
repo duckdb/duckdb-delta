@@ -149,6 +149,8 @@ public:
 	vector<DeltaStringWidthBound> GetStringWidthBounds() const;
 	//! The `delta.enableVariantShredding` table property: shredded VARIANT files are allowed only when it is true.
 	bool VariantShreddingEnabled() const;
+	//! The protocol lists the `allowColumnDefaults` writer feature: columns may carry a DEFAULT expression.
+	bool AllowsColumnDefaults() const;
 
 	//! True for `id` mode tables. Initializes the scan.
 	bool ResolvesByFieldId() const;

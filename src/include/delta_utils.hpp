@@ -75,6 +75,8 @@ struct KernelUtils {
 	static DeltaColumnMappingMode ReadColumnMappingMode(ffi::SharedSnapshot *snapshot);
 	//! A table property from the snapshot's configuration, as written in the log; empty when absent.
 	static string ReadTableProperty(ffi::SharedSnapshot *snapshot, const string &key);
+	//! Is `feature` among the protocol's writer features? Always false for a protocol below writer version 7.
+	static bool HasWriterFeature(ffi::SharedSnapshot *snapshot, const string &feature);
 
 	static void *StringAllocationNew(const struct ffi::KernelStringSlice slice) {
 		return new string(slice.ptr, slice.len);

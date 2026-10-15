@@ -1121,6 +1121,26 @@ string KernelUtils::ReadTableProperty(ffi::SharedSnapshot *snapshot, const strin
 	return ctx.value;
 }
 
+bool KernelUtils::HasWriterFeature(ffi::SharedSnapshot *snapshot, const string &feature) {
+	struct VisitorContext {
+		const string &feature;
+		bool found;
+	};
+	VisitorContext ctx {feature, false};
+	auto visit_versions = [](ffi::NullableCvoid, int32_t, int32_t) {
+	};
+	auto visit_feature = [](ffi::NullableCvoid context, bool is_reader, ffi::KernelStringSlice name) {
+		auto &c = *static_cast<VisitorContext *>(context);
+		if (!is_reader && FromDeltaString(name) == c.feature) {
+			c.found = true;
+		}
+	};
+	auto protocol = ffi::snapshot_get_protocol(snapshot);
+	ffi::visit_protocol(protocol, &ctx, visit_versions, visit_feature);
+	ffi::free_protocol(protocol);
+	return ctx.found;
+}
+
 DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *snapshot) {
 	auto mode = ReadTableProperty(snapshot, "delta.columnMapping.mode");
 	// Case-sensitive, and an unknown value means unmapped: the same as the kernel's own parse of this property
