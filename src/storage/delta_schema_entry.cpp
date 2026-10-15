@@ -226,6 +226,19 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		throw NotImplementedException("Delta CREATE TABLE must use the attached name ('%s'), found '%s'",
 		                              catalog.GetName().GetIdentifierName(), table_name);
 	}
+	// Delta stores a default or a generation expression only with the `allowColumnDefaults` or
+	// `generatedColumns` writer feature, which we do not request: without one the table would be
+	// created without what the statement asked for, and an omitted value would read as NULL.
+	for (auto &column : base.columns.Logical()) {
+		if (column.Generated()) {
+			throw NotImplementedException("Delta CREATE TABLE does not support generated columns ('%s')",
+			                              column.GetName().GetIdentifierName());
+		}
+		if (column.HasDefaultValue()) {
+			throw NotImplementedException("Delta CREATE TABLE does not support DEFAULT values ('%s')",
+			                              column.GetName().GetIdentifierName());
+		}
+	}
 	// SORTED BY is rejected by DeltaCatalog::SupportsCreateTable, which the binder consults first.
 	for (auto &constraint : base.constraints) {
 		// Delta requires columns to be nullable unless the `invariants` writer feature is enabled,

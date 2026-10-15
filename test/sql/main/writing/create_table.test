@@ -409,6 +409,29 @@ CREATE TABLE unsupported.unsupported (i INTEGER NOT NULL);
 ----
 does not support NOT NULL
 
+# A default or a generation expression needs a writer feature we do not request, so the table would
+# be created without it: refused rather than dropped
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER DEFAULT 7);
+----
+does not support DEFAULT values ('i')
+
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER, j INTEGER GENERATED ALWAYS AS (i * 2));
+----
+does not support generated columns ('j')
+
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER, j INTEGER AS (i * 2) VIRTUAL);
+----
+does not support generated columns ('j')
+
+# Refused before anything is written
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_unsupported/_delta_log/*.json');
+----
+0
+
 statement error
 CREATE TABLE unsupported.unsupported (i UINTEGER);
 ----
