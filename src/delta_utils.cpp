@@ -873,21 +873,21 @@ vector<DeltaMultiFileColumnDefinition> KernelSchemaVisitor::TakeFieldList(uintpt
 	return rval;
 }
 
-ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg) {
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::FFIKernelError etype, ffi::KernelStringSlice msg) {
 	auto error = new DuckDBEngineError;
 	error->etype = etype;
 	error->error_message = string(msg.ptr, msg.len);
 	return error;
 }
 
-ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::KernelError etype, const string &msg) {
+ffi::Handle<ffi::EngineError> DuckDBEngineError::AllocateError(ffi::FFIKernelError etype, const string &msg) {
 	auto error = new DuckDBEngineError;
 	error->etype = etype;
 	error->error_message = string(msg.data(), msg.length());
 	return error;
 }
 
-string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
+string DuckDBEngineError::KernelErrorEnumToString(ffi::FFIKernelError err) {
 	const char *KERNEL_ERROR_ENUM_STRINGS[] = {"UnknownError",
 	                                           "FFIError",
 	                                           "ArrowError",
@@ -938,7 +938,7 @@ string DuckDBEngineError::KernelErrorEnumToString(ffi::KernelError err) {
 
 	static constexpr int KERNEL_ERROR_ENUM_COUNT = (int)(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *));
 
-	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::KernelError::InvalidTransactionStateError,
+	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::FFIKernelError::InvalidTransactionStateError,
 	              "KernelErrorEnumStrings mismatched with kernel");
 
 	if ((int)err < KERNEL_ERROR_ENUM_COUNT) {
@@ -1057,6 +1057,24 @@ vector<bool> KernelUtils::FromDeltaBoolSlice(const struct ffi::KernelBoolSlice s
 bool KernelUtils::IsMissingMaxCatalogVersion(const ErrorData &error) {
 	return StringUtil::Contains(error.RawMessage(),
 	                            "Max catalog version is required when loading a catalog-managed table");
+}
+
+static void IgnoreProtocolVersions(ffi::NullableCvoid, int32_t, int32_t) {
+}
+
+static void NoteCatalogManagedFeature(ffi::NullableCvoid context, bool, ffi::KernelStringSlice feature) {
+	auto name = KernelUtils::FromDeltaString(feature);
+	if (name == "catalogManaged" || name == "catalogOwned-preview") {
+		*static_cast<bool *>(context) = true;
+	}
+}
+
+bool KernelUtils::IsCatalogManaged(ffi::SharedSnapshot *snapshot) {
+	bool catalog_managed = false;
+	auto protocol = ffi::snapshot_get_protocol(snapshot);
+	ffi::visit_protocol(protocol, &catalog_managed, IgnoreProtocolVersions, NoteCatalogManagedFeature);
+	ffi::free_protocol(protocol);
+	return catalog_managed;
 }
 
 optional<Value> KernelUtils::FetchFromMetadataMap(ffi::Handle<ffi::SharedExternEngine> engine,

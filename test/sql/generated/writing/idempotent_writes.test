@@ -119,3 +119,68 @@ query I
 FROM get_app_version
 ----
 1
+
+#####################################################
+# A version registered after the first write is still applied
+#####################################################
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+INSERT INTO delta_table values (1);
+
+statement ok
+CALL delta_set_transaction_version('delta_table', 'late_app_id', 1::UBIGINT, NULL::UBIGINT);
+
+statement ok
+COMMIT
+
+query I
+SELECT version FROM delta_get_transaction_version('delta_table', 'late_app_id');
+----
+1
+
+# ... and its expected version is still checked at commit
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+INSERT INTO delta_table values (1);
+
+statement ok
+CALL delta_set_transaction_version('delta_table', 'late_app_id', 3::UBIGINT, 2::UBIGINT);
+
+statement error
+COMMIT
+----
+did not match the expected previous version
+
+query I
+SELECT version FROM delta_get_transaction_version('delta_table', 'late_app_id');
+----
+1
+
+#####################################################
+# Reading before registering the version is allowed
+#####################################################
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+SELECT count(*) FROM delta_table;
+
+statement ok
+CALL delta_set_transaction_version('delta_table', 'read_first_app_id', 1::UBIGINT, NULL::UBIGINT);
+
+statement ok
+INSERT INTO delta_table values (1);
+
+statement ok
+COMMIT
+
+query I
+SELECT version FROM delta_get_transaction_version('delta_table', 'read_first_app_id');
+----
+1

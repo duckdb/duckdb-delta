@@ -224,15 +224,16 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	auto engine = CreateDeltaEngine(context, path);
 
 	// The builder holds a borrowed pointer to `schema_builder`, and kernel runs the visitor during
-	// get_create_table_builder -- both must outlive that call.
+	// new_create_table_txn_builder -- both must outlive that call.
 	DeltaSchemaBuilder schema_builder(base.columns);
 	auto engine_schema = schema_builder.CreateEngineSchema();
 
-	ffi::ExclusiveCreateTableBuilder *create_builder;
-	auto builder_res =
-	    KernelUtils::TryUnpackResult(ffi::get_create_table_builder(KernelUtils::ToDeltaString(path), &engine_schema,
-	                                                               KernelUtils::ToDeltaString("DuckDB"), engine.get()),
-	                                 create_builder);
+	// data_change matches what kernel defaulted to before it had to be stated.
+	ffi::ExclusiveCreateTableTransactionBuilder *create_builder;
+	auto builder_res = KernelUtils::TryUnpackResult(
+	    ffi::new_create_table_txn_builder(KernelUtils::ToDeltaString(path), &engine_schema,
+	                                      KernelUtils::ToDeltaString("DuckDB"), true, engine.get()),
+	    create_builder);
 	if (builder_res.HasError()) {
 		// A schema-lowering failure surfaces from kernel as a generic schema error; the specific
 		// cause (e.g. an unsupported column type) is only on the builder.
@@ -249,8 +250,8 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		}
 		// Consumes the builder handle unconditionally, including on error.
 		auto partition_res =
-		    KernelUtils::TryUnpackResult(ffi::create_table_builder_with_partition_columns(create_builder, slices.data(),
-		                                                                                  slices.size(), engine.get()),
+		    KernelUtils::TryUnpackResult(ffi::create_table_txn_builder_with_partition_columns(
+		                                     create_builder, slices.data(), slices.size(), engine.get()),
 		                                 create_builder);
 		if (partition_res.HasError()) {
 			partition_res.Throw();
@@ -259,10 +260,10 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 
 	for (auto &property : table_properties) {
 		// Consumes the builder handle unconditionally, including on error.
-		auto property_res = KernelUtils::TryUnpackResult(
-		    ffi::create_table_builder_with_table_property(create_builder, KernelUtils::ToDeltaString(property.first),
-		                                                  KernelUtils::ToDeltaString(property.second), engine.get()),
-		    create_builder);
+		auto property_res = KernelUtils::TryUnpackResult(ffi::create_table_txn_builder_with_table_property(
+		                                                     create_builder, KernelUtils::ToDeltaString(property.first),
+		                                                     KernelUtils::ToDeltaString(property.second), engine.get()),
+		                                                 create_builder);
 		if (property_res.HasError()) {
 			property_res.Throw();
 		}
@@ -271,14 +272,14 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	// A catalog-managed table's version 0 goes through the catalog's committer, as every commit after it
 	// does: kernel refuses to create one through the filesystem committer. Kernel writes version 0 itself
 	// and leaves the table unregistered, so whoever staged it finishes the registration.
-	ffi::ExclusiveCreateTransaction *create_transaction;
+	ffi::ExclusiveCreateTableTransaction *create_transaction;
 	auto build_res =
 	    delta_catalog.parent_commit
 	        ? KernelUtils::TryUnpackResult(
-	              ffi::create_table_builder_build_with_committer(
-	                  create_builder, GetDeltaTransaction(transaction).CreateCatalogCommitter(path), engine.get()),
+	              ffi::create_table_txn_builder_build_with_committer(
+	                  create_builder, engine.get(), GetDeltaTransaction(transaction).CreateCatalogCommitter(path)),
 	              create_transaction)
-	        : KernelUtils::TryUnpackResult(ffi::create_table_builder_build(create_builder, engine.get()),
+	        : KernelUtils::TryUnpackResult(ffi::create_table_txn_builder_build(create_builder, engine.get()),
 	                                       create_transaction);
 	if (build_res.HasError()) {
 		build_res.Throw();
@@ -286,7 +287,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 
 	ffi::ExclusiveCommittedTransaction *committed;
 	auto commit_res =
-	    KernelUtils::TryUnpackResult(ffi::create_table_commit(create_transaction, engine.get()), committed);
+	    KernelUtils::TryUnpackResult(ffi::create_table_txn_commit(create_transaction, engine.get()), committed);
 	if (commit_res.HasError()) {
 		commit_res.Throw();
 	}

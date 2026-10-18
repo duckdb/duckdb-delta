@@ -24,10 +24,10 @@ class DatabaseInstance;
 // Allocator for errors that the kernel might throw
 struct DuckDBEngineError : ffi::EngineError {
 	// Allocate a DuckDBEngineError, function ptr passed to kernel for error allocation
-	static ffi::EngineError *AllocateError(ffi::KernelError etype, ffi::KernelStringSlice msg);
-	static ffi::EngineError *AllocateError(ffi::KernelError etype, const string &msg);
+	static ffi::EngineError *AllocateError(ffi::FFIKernelError etype, ffi::KernelStringSlice msg);
+	static ffi::EngineError *AllocateError(ffi::FFIKernelError etype, const string &msg);
 	// Convert a kernel error enum to a string
-	static string KernelErrorEnumToString(ffi::KernelError err);
+	static string KernelErrorEnumToString(ffi::FFIKernelError err);
 
 	// Return the error as a string (WARNING: consumes the object by calling `delete this`)
 	string IntoString();
@@ -65,6 +65,8 @@ struct KernelUtils {
 	static vector<bool> FromDeltaBoolSlice(const struct ffi::KernelBoolSlice slice);
 	//! Did kernel refuse to load a catalog-managed table for lack of a max catalog version?
 	static bool IsMissingMaxCatalogVersion(const ErrorData &error);
+	//! Does the snapshot's protocol name the catalogManaged feature (or its catalogOwned-preview predecessor)?
+	static bool IsCatalogManaged(ffi::SharedSnapshot *snapshot);
 	//! A schema field's metadata value typed as kernel holds it: BIGINT, VARCHAR, BOOLEAN, or JSON for any other
 	//! JSON (a JSON null included); nothing when the key is absent. Compare whole types, never ids: JSON is a
 	//! VARCHAR with an alias.
@@ -693,7 +695,8 @@ typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadata, ffi::free_scan_met
 typedef TemplatedUniqueKernelPointer<ffi::StringSliceIterator, ffi::free_string_slice_data> KernelStringSliceIterator;
 typedef TemplatedUniqueKernelPointer<ffi::SharedScanMetadataIterator, ffi::free_scan_metadata_iter>
     KernelScanDataIterator;
-typedef TemplatedUniqueKernelPointer<ffi::ExclusiveTransaction, ffi::free_transaction> KernelExclusiveTransaction;
+typedef TemplatedUniqueKernelPointer<ffi::ExclusiveUpdateTableTransaction, ffi::free_update_table_txn>
+    KernelExclusiveTransaction;
 typedef TemplatedUniqueKernelPointer<ffi::ExclusiveEngineData, ffi::free_engine_data> KernelEngineData;
 
 template <typename KernelType, void (*DeleteFunction)(KernelType *)>

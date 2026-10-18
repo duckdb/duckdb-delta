@@ -474,9 +474,9 @@ void DeltaTransaction::Commit(ClientContext &context) {
 					                           app_id, expected_version.ToString(), error_version);
 				}
 
-				kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
-				    ffi::with_transaction_id(kernel_transaction.release(), KernelUtils::ToDeltaString(app_id),
-				                             new_version, table_entry->snapshot->extern_engine.get()));
+				kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::update_table_txn_with_transaction_id(
+				    kernel_transaction.release(), KernelUtils::ToDeltaString(app_id), NumericCast<int64_t>(new_version),
+				    table_entry->snapshot->extern_engine.get()));
 			}
 
 			// We have some special error handling here to ensure the error created by DuckDB is properly thrown here,
@@ -486,7 +486,8 @@ void DeltaTransaction::Commit(ClientContext &context) {
 			DUCKDB_LOG_INTERNAL(context, "delta.Commit", LogLevel::LOG_DEBUG, "Committing %s",
 			                    table_entry->snapshot->GetPath());
 			auto res = KernelUtils::TryUnpackResult(
-			    ffi::commit(kernel_transaction.release(), table_entry->snapshot->extern_engine.get()), commit_result);
+			    ffi::update_table_txn_commit(kernel_transaction.release(), table_entry->snapshot->extern_engine.get()),
+			    commit_result);
 			if (res.HasError()) {
 				if (active_error.HasError()) {
 					active_error.Throw();
@@ -541,32 +542,35 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 
 	// Start the kernel transaction
 	string path = table_entry->snapshot->GetPath();
-	auto path_slice = KernelUtils::ToDeltaString(path);
-
-	ffi::Handle<ffi::ExclusiveTransaction> new_kernel_transaction;
+	ffi::ExclusiveUpdateTableTransaction *new_kernel_transaction;
 
 	{
 		auto snapshot_ref = table_entry->snapshot->snapshot->GetLockingRef();
+		auto engine = table_entry->snapshot->extern_engine.get();
+
+		// Kernel only refuses a path-based commit to a catalog-managed table at commit time, after the data files
+		// are written, so refuse it here instead.
+		if (!parent_commit && KernelUtils::IsCatalogManaged(snapshot_ref.GetPtr())) {
+			throw InvalidInputException(
+			    "Table at '%s' is a catalog-managed Delta table: writing to it directly from storage would "
+			    "bypass the catalog that orders its commits. Attach the catalog that owns it instead (e.g. "
+			    "ATTACH '<catalog>' AS <name> (TYPE unity_catalog)) and write through that catalog. "
+			    "max_catalog_version pins a snapshot to read from and does not permit writes.",
+			    path);
+		}
+
+		// Every write here appends to an existing table, so it is a WRITE that changes data.
+		string engine_info = "DuckDB";
+		auto builder = table_entry->snapshot->TryUnpackKernelResult(ffi::new_update_table_txn_builder(
+		    snapshot_ref.GetPtr(), ffi::KernelUpdateTableOperation::KernelUpdateTableOperationWrite,
+		    KernelUtils::ToDeltaString(engine_info), true, engine));
 
 		if (parent_commit) {
-			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::transaction_with_committer(
-			    snapshot_ref.GetPtr(), table_entry->snapshot->extern_engine.get(), CreateCatalogCommitter(path)));
+			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
+			    ffi::update_table_txn_builder_build_with_committer(builder, engine, CreateCatalogCommitter(path)));
 		} else {
-			// This builds its own snapshot from the path, so a max_catalog_version given at ATTACH does not
-			// reach it -- and the kernel's own advice, to supply one when loading, is what the caller did.
-			auto res = KernelUtils::TryUnpackResult(
-			    ffi::transaction(path_slice, table_entry->snapshot->extern_engine.get()), new_kernel_transaction);
-			if (res.HasError()) {
-				if (KernelUtils::IsMissingMaxCatalogVersion(res)) {
-					throw InvalidInputException(
-					    "Table at '%s' is a catalog-managed Delta table: writing to it directly from storage would "
-					    "bypass the catalog that orders its commits. Attach the catalog that owns it instead (e.g. "
-					    "ATTACH '<catalog>' AS <name> (TYPE unity_catalog)) and write through that catalog. "
-					    "max_catalog_version pins a snapshot to read from and does not permit writes.",
-					    path);
-				}
-				res.Throw();
-			}
+			new_kernel_transaction =
+			    table_entry->snapshot->TryUnpackKernelResult(ffi::update_table_txn_builder_build(builder, engine));
 		}
 	}
 
@@ -580,9 +584,7 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 	KernelEngineData commit_info_engine_data = table_entry->snapshot->TryUnpackKernelResult(
 	    ffi::get_engine_data(commit_info_arrow.array, &commit_info_arrow.schema, DuckDBEngineError::AllocateError));
 
-	string engine_info = "DuckDB";
-	kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::with_engine_info(
-	    new_kernel_transaction, KernelUtils::ToDeltaString(engine_info), table_entry->snapshot->extern_engine.get()));
+	kernel_transaction = new_kernel_transaction;
 	write_entry = table_entry.get();
 }
 
@@ -618,7 +620,7 @@ void DeltaTransaction::Append(ClientContext &context, const vector<DeltaDataFile
 		KernelEngineData write_metadata_engine_data = table_entry->snapshot->TryUnpackKernelResult(ffi::get_engine_data(
 		    write_metadata_ffi.array, &write_metadata_ffi.schema, DuckDBEngineError::AllocateError));
 
-		ffi::add_files(kernel_transaction.get(), write_metadata_engine_data.release());
+		ffi::update_table_txn_add_files(kernel_transaction.get(), write_metadata_engine_data.release());
 	}
 }
 
