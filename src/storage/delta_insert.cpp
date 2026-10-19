@@ -461,13 +461,13 @@ static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, Ph
 //! column mapping. Nested and partitioned mapped tables reach here too: they are only mapped in part, and
 //! DeltaTableEntry::ThrowOnUnsupportedFieldForInserting refuses them later, when the insert executes.
 static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyInfo &info, vector<string> &names) {
-	// The snapshot schema, which the sink resolves its stats against too -- one source of truth for physical
-	// names at both ends of the write. The kernel's write context is the more direct answer but is not usable
-	// here: the only accessor is the unpartitioned one, which throws outright on a partitioned table.
-	// Without the protocol feature the mapping annotations are ignored, by readers and so by us
+	// Without the protocol feature, readers ignore the mapping annotations, so the file must not use them either
 	if (!table_entry.snapshot->UsesColumnMapping()) {
 		return;
 	}
+	// The snapshot schema, which the sink resolves its stats against too -- one source of truth for physical
+	// names at both ends of the write. The kernel's write context is the more direct answer but is not usable
+	// here: the only accessor is the unpartitioned one, which throws outright on a partitioned table.
 	auto &schema = table_entry.snapshot->GetLazyLoadedGlobalColumns();
 
 	unordered_map<string, const_reference<DeltaMultiFileColumnDefinition>> by_logical_name;

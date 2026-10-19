@@ -1,8 +1,8 @@
 # Column-mapping fixtures
 
-Hand-written Delta logs. Each has a `metaData` action whose `schemaString` carries
+Delta logs, hand-written unless named `spark_*`. Each has a `metaData` action whose `schemaString` carries
 `delta.columnMapping.physicalName` and `delta.columnMapping.id` per field, plus a `protocol` action
-enabling the `columnMapping` feature.
+enabling the `columnMapping` feature (except `mode_without_feature*`, which are about its absence).
 
 **Write fixtures start empty**: `write_field_ids.test` and `invalid_annotations.test` inspect parquet
 files they just wrote, so the assertions are about what our writer emits. **Read fixtures carry one
