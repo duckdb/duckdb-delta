@@ -1413,6 +1413,12 @@ bool DeltaMultiFileList::HasNullConstraintsInArrays() const {
 	return has_null_constraints_in_arrays;
 };
 
+bool DeltaMultiFileList::UsesColumnMapping() const {
+	unique_lock<mutex> lck(lock);
+	EnsureSnapshotInitialized();
+	return column_mapping_mode != DeltaColumnMappingMode::NONE;
+}
+
 bool DeltaMultiFileList::ResolvesByFieldId() const {
 	unique_lock<mutex> lck(lock);
 	EnsureScanInitialized();

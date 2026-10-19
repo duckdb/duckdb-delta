@@ -31,6 +31,9 @@ resolves it. The table says which is which.
 | `invalid_id_string` | `name` | as `name_mode`, `id`'s id is `"1"` | A numeric-looking string is still not a number. Kernel refuses it too. |
 | `invalid_nested_id_range` | `id` | `a`, `l BIGINT[]`, `m MAP`, one nested id above `INT32` max | Read fixture. A nested id that cannot be a parquet field id must be a readable error at bind, not an abort inside the kernel's schema callback. Read by `invalid_annotations.test`. |
 | `invalid_physical_name_empty` | `name` | as `name_mode`, `id`'s physical name is `""` | Kernel accepts an empty physical name on read (delta-spark accepts them); it names no column, so DuckDB refuses it. |
+| `mode_without_feature` | `id`, ignored | `a`, `b`; reader version 1 | Read fixture. The mode property without the `columnMapping` feature, which the protocol says to ignore; the file names its columns by logical name. Read by `mode_without_feature.test`. |
+| `mode_without_feature_v3` | `name`, ignored | `a`, `b`; reader version 3, no `columnMapping` in the feature lists | Read and write fixture, as above. A write must use the logical names too. |
+| `name_mode_legacy_protocol` | `name` | `a`, `b`; reader version 2, no feature lists | Read fixture. Reader version 2 implies the feature; the file names its columns by physical name. |
 | `spark_partitioned_name_mode`, `spark_partitioned_id_mode` | `name`, `id` | `id`, `p`, `v` partitioned on `p` | Read fixture, written by Spark. Partition values are keyed by `p`'s physical name, and the kernel places `p` after the physical name of `id`. Read by `spark_partitioned.test`. |
 
 The `spark_*` tables are written by Spark through `scripts/data_generator/generate_column_mapping_data.py` and committed.

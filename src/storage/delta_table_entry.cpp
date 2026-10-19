@@ -122,6 +122,9 @@ void DeltaTableEntry::ThrowOnUnsupportedFieldForInserting() const {
 	// columns only, so the cases below would produce a file that is mapped in part -- which reads back as nulls
 	// for whatever went unmapped, and in id mode is worse than writing nothing mapped at all: a file carrying
 	// some field ids no longer trips the reader's "no field ids, refuse it" rule, so partial loss passes silently.
+	if (!snapshot->UsesColumnMapping()) {
+		return;
+	}
 	bool column_mapped = false;
 	bool mapped_nested = false;
 	for (auto &col : snapshot->GetLazyLoadedGlobalColumns()) {

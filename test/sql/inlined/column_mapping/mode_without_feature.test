@@ -1,0 +1,73 @@
+# name: test/sql/inlined/column_mapping/mode_without_feature.test
+# description: a column mapping mode property counts only when the protocol has the columnMapping feature
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# The protocol allows `delta.columnMapping.mode` on a table without the feature and says to ignore it, as the
+# kernel does. Each table below has field ids and physical names in its schema; the file names its columns by
+# the logical names, which is what an unmapped reader matches.
+
+# -----------------------------------------------------------------------------
+# Reader version 1, mode 'id'
+#
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/mode_without_feature') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# Reader version 3, a feature list without columnMapping, mode 'name'
+#
+
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/mode_without_feature_v3') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# Reader version 2 implies the feature without listing it
+#
+
+# The file names its columns by physical name, so only a mapped read finds them
+query II
+SELECT * FROM delta_scan('data/inlined/column_mapping/name_mode_legacy_protocol') ORDER BY a;
+----
+1	alice
+2	bob
+
+# -----------------------------------------------------------------------------
+# A write ignores the mode as well
+#
+
+# Written under the physical names, the new row would read back as NULL
+statement ok
+FROM copy_dir('data/inlined/column_mapping/mode_without_feature_v3', '{TEMP_DIR}/cm_no_feature');
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_no_feature' AS no_feature (TYPE delta);
+
+statement ok
+INSERT INTO no_feature VALUES (3, 'carol');
+
+query II
+SELECT * FROM no_feature ORDER BY a;
+----
+1	alice
+2	bob
+3	carol
+
+query II
+SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/cm_no_feature/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema' ORDER BY name;
+----
+a	NULL
+b	NULL
+
+statement ok
+DETACH no_feature;

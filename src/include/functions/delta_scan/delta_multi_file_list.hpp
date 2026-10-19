@@ -154,6 +154,8 @@ public:
 
 	//! True for `id` mode tables. Initializes the scan.
 	bool ResolvesByFieldId() const;
+	//! The table's column mapping mode is `name` or `id`, with the protocol feature that makes it count
+	bool UsesColumnMapping() const;
 
 protected:
 	//! Get the i-th expanded file

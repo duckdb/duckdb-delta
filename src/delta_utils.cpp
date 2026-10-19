@@ -1141,7 +1141,33 @@ bool KernelUtils::HasWriterFeature(ffi::SharedSnapshot *snapshot, const string &
 	return ctx.found;
 }
 
+//! The protocol's columnMapping feature, judged as the kernel judges it: reader version 2 implies it, reader version 3
+//! needs it among the writer features, and below 2 there is none.
+static bool HasColumnMappingFeature(ffi::SharedSnapshot *snapshot) {
+	struct VisitorContext {
+		int32_t min_reader = 0;
+		bool listed = false;
+	};
+	VisitorContext ctx;
+	auto visit_versions = [](ffi::NullableCvoid context, int32_t min_reader, int32_t) {
+		static_cast<VisitorContext *>(context)->min_reader = min_reader;
+	};
+	auto visit_feature = [](ffi::NullableCvoid context, bool is_reader, ffi::KernelStringSlice name) {
+		if (!is_reader && KernelUtils::FromDeltaString(name) == "columnMapping") {
+			static_cast<VisitorContext *>(context)->listed = true;
+		}
+	};
+	auto protocol = ffi::snapshot_get_protocol(snapshot);
+	ffi::visit_protocol(protocol, &ctx, visit_versions, visit_feature);
+	ffi::free_protocol(protocol);
+	return ctx.min_reader == 2 || (ctx.min_reader == 3 && ctx.listed);
+}
+
 DeltaColumnMappingMode KernelUtils::ReadColumnMappingMode(ffi::SharedSnapshot *snapshot) {
+	// The protocol allows the property on a table without the feature, and says to ignore it there
+	if (!HasColumnMappingFeature(snapshot)) {
+		return DeltaColumnMappingMode::NONE;
+	}
 	auto mode = ReadTableProperty(snapshot, "delta.columnMapping.mode");
 	// Case-sensitive, and an unknown value means unmapped: the same as the kernel's own parse of this property
 	if (mode == "id") {
