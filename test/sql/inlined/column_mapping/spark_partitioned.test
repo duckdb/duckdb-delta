@@ -1,0 +1,51 @@
+# name: test/sql/inlined/column_mapping/spark_partitioned.test
+# description: partition values of a column-mapped partitioned table, as Spark writes it, read back in both modes
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# Schema (id, p, v) partitioned on p, written by Spark in each mode. The log keys partition values by
+# p's physical name, and the kernel places p after the physical name of the column before it.
+
+foreach mode name id
+
+# -----------------------------------------------------------------------------
+# ${mode} mode
+#
+
+query III
+SELECT * FROM delta_scan('data/inlined/column_mapping/spark_partitioned_${mode}_mode') ORDER BY id;
+----
+1	a	10
+2	a	20
+3	b	30
+4	NULL	40
+
+query II
+SELECT p, count(*) FROM delta_scan('data/inlined/column_mapping/spark_partitioned_${mode}_mode') GROUP BY p ORDER BY p;
+----
+a	2
+b	1
+NULL	1
+
+# A filter on the partition column prunes files by the values the log holds
+query I
+SELECT id FROM delta_scan('data/inlined/column_mapping/spark_partitioned_${mode}_mode') WHERE p = 'b';
+----
+3
+
+query I
+SELECT id FROM delta_scan('data/inlined/column_mapping/spark_partitioned_${mode}_mode') WHERE p IS NULL;
+----
+4
+
+query I
+SELECT partitions['p'] FROM delta_list_files('data/inlined/column_mapping/spark_partitioned_${mode}_mode')
+WHERE partitions['p'] IN ('a', 'b') ORDER BY 1;
+----
+a
+b
+
+endloop

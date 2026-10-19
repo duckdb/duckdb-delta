@@ -382,8 +382,9 @@ static void KernelPartitionStringVisitor(ffi::NullableCvoid engine_context, ffi:
 	data->partitions.push_back(KernelUtils::FromDeltaString(slice));
 }
 
-static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transformation,
-                                                       const vector<DeltaMultiFileColumnDefinition> &cols) {
+//! `mapped`: the kernel names the field a value goes after by its physical name when the table uses column mapping
+static unordered_map<idx_t, Value>
+FindPartitionValues(ParsedExpression &transformation, const vector<DeltaMultiFileColumnDefinition> &cols, bool mapped) {
 	if (transformation.Cast<FunctionExpression>().FunctionName() != "delta_kernel_transform_expression") {
 		throw IOException("Unexpected function of root expression returned by delta kernel: %s",
 		                  transformation.Cast<FunctionExpression>().FunctionName());
@@ -461,7 +462,9 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 		} else if (kind == "field" && has_field_name) {
 			bool found = false;
 			for (idx_t i = 0; i < cols.size(); ++i) {
-				if (field_name == cols[i].name) {
+				const auto &kernel_name =
+				    mapped && !cols[i].physical_name.empty() ? cols[i].physical_name : cols[i].name.GetIdentifierName();
+				if (field_name == kernel_name) {
 					index_to_insert = keep_input ? i + 1 : i;
 					found = true;
 					break;
@@ -469,6 +472,11 @@ static unordered_map<idx_t, Value> FindPartitionValues(ParsedExpression &transfo
 			}
 			if (!found && optional) {
 				continue;
+			}
+			// Falling through would put the values on column 0 and leave their own columns NULL, silently
+			if (!found) {
+				throw IOException("Delta kernel transform names column '%s', which is not in the table schema",
+				                  field_name);
 			}
 		}
 
@@ -543,7 +551,8 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 		}
 
 		auto transform_partitions =
-		    FindPartitionValues(*(*parsed_transformation_expression)[0], snapshot.global_columns);
+		    FindPartitionValues(*(*parsed_transformation_expression)[0], snapshot.global_columns,
+		                        snapshot.column_mapping_mode != DeltaColumnMappingMode::NONE);
 
 		identifier_map_t<Value> constant_map;
 		for (idx_t i = 0; i < snapshot.partitions.size(); ++i) {

@@ -31,8 +31,10 @@ resolves it. The table says which is which.
 | `invalid_id_string` | `name` | as `name_mode`, `id`'s id is `"1"` | A numeric-looking string is still not a number. Kernel refuses it too. |
 | `invalid_nested_id_range` | `id` | `a`, `l BIGINT[]`, `m MAP`, one nested id above `INT32` max | Read fixture. A nested id that cannot be a parquet field id must be a readable error at bind, not an abort inside the kernel's schema callback. Read by `invalid_annotations.test`. |
 | `invalid_physical_name_empty` | `name` | as `name_mode`, `id`'s physical name is `""` | Kernel accepts an empty physical name on read (delta-spark accepts them); it names no column, so DuckDB refuses it. |
+| `spark_partitioned_name_mode`, `spark_partitioned_id_mode` | `name`, `id` | `id`, `p`, `v` partitioned on `p` | Read fixture, written by Spark. Partition values are keyed by `p`'s physical name, and the kernel places `p` after the physical name of `id`. Read by `spark_partitioned.test`. |
 
-Hand-written rather than generated because the field metadata above is the entire input to the write
+The `spark_*` tables are written by Spark through `scripts/data_generator/generate_column_mapping_data.py` and committed.
+The others are hand-written rather than generated because the field metadata above is the entire input to the write
 path, and because there is no way here to generate with Spark and read back with DuckDB in one run.
 Spark-generated equivalents live under `data/generated/simple_table_column_mapped*` but cannot stand
 in: they were created with type widening, which also enables `checkConstraints`, `generatedColumns`,
