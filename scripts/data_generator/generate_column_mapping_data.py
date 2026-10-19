@@ -15,12 +15,19 @@ from pyspark.sql import SparkSession
 
 DEFAULT_BASE_PATH = os.path.dirname(os.path.realpath(__file__)) + "/../../data/inlined"
 
-# name -> the statements that build it; {t} is the table. The partition column sits between two data columns,
-# so the reader has to place it after a named column rather than at either end.
+# name -> the statements that build it; {t} is the table
 TABLES = {
+    # The partition column sits between two data columns, so the reader has to place it after a named column
     "partitioned": [
         "CREATE TABLE {t} (id INT, p STRING, v INT) USING delta PARTITIONED BY (p) TBLPROPERTIES ({props})",
         "INSERT INTO {t} VALUES (1, 'a', 10), (2, 'a', 20), (3, 'b', 30), (4, NULL, 40)",
+    ],
+    # Rows on both sides of the rename; the files keep the physical name throughout
+    "renamed": [
+        "CREATE TABLE {t} (id INT, s STRING) USING delta TBLPROPERTIES ({props})",
+        "INSERT INTO {t} VALUES (1, 'before')",
+        "ALTER TABLE {t} RENAME COLUMN s TO who",
+        "INSERT INTO {t} VALUES (2, 'after')",
     ],
 }
 

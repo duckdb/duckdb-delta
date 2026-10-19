@@ -1,0 +1,65 @@
+# name: test/sql/inlined/column_mapping/spark_renamed.test
+# description: a column Spark renamed reads under its new name, before and after the rename, in both modes
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+# Spark wrote (id, s), renamed s to who, then wrote again: version 1 has the row before the rename,
+# version 3 the row after it. A rename changes only the logical name; the files keep the physical one.
+
+foreach mode name id
+
+# -----------------------------------------------------------------------------
+# ${mode} mode
+#
+
+query II
+SELECT id, who FROM delta_scan('data/inlined/column_mapping/spark_renamed_${mode}_mode') ORDER BY id;
+----
+1	before
+2	after
+
+query I
+SELECT id FROM delta_scan('data/inlined/column_mapping/spark_renamed_${mode}_mode') WHERE who = 'before';
+----
+1
+
+statement error
+SELECT s FROM delta_scan('data/inlined/column_mapping/spark_renamed_${mode}_mode');
+----
+Referenced column "s" not found
+
+# Before the rename the same data reads under the old name
+query II
+SELECT id, s FROM delta_scan('data/inlined/column_mapping/spark_renamed_${mode}_mode', version => 1);
+----
+1	before
+
+# DuckDB appends under the new name and writes the column's physical name
+statement ok
+FROM copy_dir('data/inlined/column_mapping/spark_renamed_${mode}_mode', '{TEMP_DIR}/renamed_${mode}');
+
+statement ok
+ATTACH '{TEMP_DIR}/renamed_${mode}' AS renamed (TYPE delta);
+
+statement ok
+INSERT INTO renamed (id, who) VALUES (3, 'duck');
+
+query II
+SELECT id, who FROM renamed ORDER BY id;
+----
+1	before
+2	after
+3	duck
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/renamed_${mode}/duckdb-*.parquet') WHERE name IN ('s', 'who');
+----
+0
+
+statement ok
+DETACH renamed;
+
+endloop
