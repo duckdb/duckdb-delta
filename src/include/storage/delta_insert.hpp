@@ -69,7 +69,7 @@ public:
 };
 
 struct DeltaPartition {
-	//! As the copy wrote it, which is the key the log wants: the physical name on a column-mapped table
+	//! The column's name as the copy wrote it, which is the key the log wants: the physical name on a mapped table
 	string partition_column;
 	optional<string> partition_value; // absent -> NULL
 };

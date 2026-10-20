@@ -349,6 +349,20 @@ WHERE metaData IS NOT NULL;
 ----
 [p]	name
 
+# Mode `none` maps nothing
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_cm_none' AS cm_none (TYPE delta);
+
+statement ok
+CREATE TABLE cm_none.cm_none (i INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'none');
+
+query I
+SELECT json_extract_string(metaData.schemaString, '$.fields[0].metadata')
+FROM read_json('{TEMP_DIR}/delta_create_cm_none/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+{}
+
 # The mode is matched exactly, as kernel matches it, so an unrecognized spelling is kernel's
 # to reject rather than silently treated as a mapped table
 statement ok
