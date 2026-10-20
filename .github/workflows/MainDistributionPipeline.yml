@@ -8,6 +8,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      archs:
+        description: "';'-separated duckdb archs to build and deploy, opt-in ones included (empty: the normal matrix)"
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
@@ -19,10 +24,39 @@ jobs:
     name: Prepare
     outputs:
       runners: ${{ steps.runners.outputs.runners }}
+      exclude_archs: ${{ steps.archs.outputs.exclude_archs }}
+      opt_in_archs: ${{ steps.archs.outputs.opt_in_archs }}
     steps:
       - name: Detect runners
         id: runners
         uses: duckdb/duckdb-ci/detect-runners@main
+
+      # A dispatch with archs builds exactly those: everything else in the matrix is excluded, and
+      # the requested ones are opted in so opt-in archs (e.g. osx_amd64) are built too.
+      - name: Select architectures
+        id: archs
+        shell: bash
+        env:
+          ARCHS: ${{ inputs.archs }}
+          CI_TOOLS_REF: &ci_tools_ref main
+          DEFAULT_EXCLUDE_ARCHS: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
+        run: |
+          set -euo pipefail
+          wanted=$(tr ';' '\n' <<< "${ARCHS// /}" | grep -v '^$' | sort -u || true)
+          if [[ -z "$wanted" ]]; then
+            echo "exclude_archs=$DEFAULT_EXCLUDE_ARCHS" >> "$GITHUB_OUTPUT"
+            echo "opt_in_archs=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          known=$(curl -fsSL "https://raw.githubusercontent.com/duckdb/extension-ci-tools/$CI_TOOLS_REF/config/distribution_matrix.json" \
+            | grep -oE '"duckdb_arch": *"[^"]+"' | cut -d'"' -f4 | sort -u)
+          unknown=$(comm -23 <(echo "$wanted") <(echo "$known") | paste -sd';' -)
+          if [[ -n "$unknown" ]]; then
+            echo "::error::unknown archs: $unknown (known: $(paste -sd';' - <<< "$known"))"
+            exit 1
+          fi
+          echo "exclude_archs=$(comm -13 <(echo "$wanted") <(echo "$known") | paste -sd';' -)" >> "$GITHUB_OUTPUT"
+          echo "opt_in_archs=$(paste -sd';' - <<< "$wanted")" >> "$GITHUB_OUTPUT"
 
   # TODO: switch extension-ci-tools to v2.0 when ready
   duckdb-stable-build:
@@ -33,10 +67,11 @@ jobs:
     with:
       # Main config
       extension_name: &ext_name delta
-      ci_tools_version: &ci_tools_ref main
+      ci_tools_version: *ci_tools_ref
       runners: ${{ needs.prepare.outputs.runners }}
       enable_rust: true
-      exclude_archs: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
+      exclude_archs: ${{ needs.prepare.outputs.exclude_archs }}
+      opt_in_archs: ${{ needs.prepare.outputs.opt_in_archs }}
 
       # Config to write vcpkg binary cache
       extra_toolchains: ${{ github.event_name != 'pull_request' && ';downgraded_aws_cli;python3;' || 'python3' }}
@@ -46,13 +81,14 @@ jobs:
 
   duckdb-stable-deploy:
     name: Deploy extension binaries
-    needs: duckdb-stable-build
+    needs: [prepare, duckdb-stable-build]
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@main
     secrets: inherit
     with:
       extension_name: *ext_name
       ci_tools_version: *ci_tools_ref
-      exclude_archs: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
+      exclude_archs: ${{ needs.prepare.outputs.exclude_archs }}
+      opt_in_archs: ${{ needs.prepare.outputs.opt_in_archs }}
       deploy_latest: ${{ startsWith(github.ref, 'refs/heads/v') || github.ref == 'refs/heads/main' }}
       deploy_versioned: ${{ startsWith(github.ref, 'refs/heads/v') || github.ref == 'refs/heads/main' }}
       reduced_ci_mode: ${{ github.event_name == 'pull_request' && 'enabled' || 'disabled'}}
