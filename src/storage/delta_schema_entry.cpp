@@ -128,9 +128,9 @@ static string EffectiveColumnMappingMode(const vector<pair<string, string>> &pro
 	return mode;
 }
 
-//! The writer maps top-level columns only and refuses nested or partitioned mapped tables at INSERT, so
-//! refuse those shapes here rather than create a table nothing can insert into.
-static void ThrowIfColumnMappingUnwritable(const CreateTableInfo &base, const vector<string> &partition_columns,
+//! The writer maps top-level columns only and refuses nested mapped tables at INSERT, so refuse that shape here
+//! rather than create a table nothing can insert into.
+static void ThrowIfColumnMappingUnwritable(const CreateTableInfo &base,
                                            const vector<pair<string, string>> &properties) {
 	auto mode = EffectiveColumnMappingMode(properties);
 	if (mode != "name" && mode != "id") {
@@ -142,9 +142,6 @@ static void ThrowIfColumnMappingUnwritable(const CreateTableInfo &base, const ve
 			throw NotImplementedException(
 			    "Creating a Delta table that uses column mapping on a nested column is not supported");
 		}
-	}
-	if (!partition_columns.empty()) {
-		throw NotImplementedException("Creating a partitioned Delta table that uses column mapping is not supported");
 	}
 }
 
@@ -254,7 +251,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	auto path = GetCreateTablePath(context, option_binder, base, delta_catalog);
 	auto partition_columns = GetCreateTablePartitionColumns(base);
 	auto table_properties = GetCreateTableProperties(context, option_binder, base);
-	ThrowIfColumnMappingUnwritable(base, partition_columns, table_properties);
+	ThrowIfColumnMappingUnwritable(base, table_properties);
 
 	// After the options are read, so that a bad option fails even where IF NOT EXISTS makes the
 	// statement a no-op: embedded SQL should not carry a typo until the day the table is gone.

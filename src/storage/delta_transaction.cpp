@@ -258,7 +258,7 @@ struct WriteMetaData {
 			vector<Value> partition_keys;
 			vector<Value> partition_vals;
 			for (const auto &part : file.partition_values) {
-				partition_keys.emplace_back(snapshot.GetPartitionColumns()[part.partition_column_idx]);
+				partition_keys.emplace_back(part.partition_column);
 				partition_vals.push_back(part.partition_value ? Value(*part.partition_value)
 				                                              : Value(LogicalType::VARCHAR));
 			}

@@ -165,10 +165,10 @@ statement ok
 DETACH p;
 
 # -----------------------------------------------------------------------------
-# Shapes that cannot be mapped completely are refused
+# A shape that cannot be mapped completely is refused
 #
-# Only top-level columns get a physical name and a field id here, so a nested or partitioned mapped
-# table would be written mapped in part. In id mode that is worse than writing nothing mapped: a file
+# Only top-level columns get a physical name and a field id here, so a nested mapped table would be
+# written mapped in part. In id mode that is worse than writing nothing mapped: a file
 # carrying some field ids no longer trips the reader's refusal rule, and the unmapped fields come back
 # as nulls with no error anywhere.
 #
@@ -188,23 +188,3 @@ column mapping on a nested column is not supported
 
 statement ok
 DETACH nested;
-
-statement ok
-FROM copy_dir('data/inlined/column_mapping/partitioned_name_mode', '{TEMP_DIR}/cm_part');
-
-statement ok
-ATTACH '{TEMP_DIR}/cm_part' AS part (TYPE delta);
-
-statement error
-INSERT INTO part VALUES (1, 'x');
-----
-partitioned Delta table that uses column mapping is not supported
-
-# The refusal must land before anything is written, not after
-query I
-SELECT count(*) FROM glob('{TEMP_DIR}/cm_part/**/*.parquet');
-----
-0
-
-statement ok
-DETACH part;

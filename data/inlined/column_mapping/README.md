@@ -15,7 +15,7 @@ resolves it. The table says which is which.
 | `id_mode` | `id` | `id`, `code` | A reader matches parquet field ids and must refuse a file that has none, which makes the table unreadable rather than merely wrong. |
 | `not_null_name_mode` | `name` | `id NOT NULL`, `code` | Constraints are keyed on the logical name while statistics arrive under the physical one. |
 | `nested_name_mode` | `name` | `id`, `s STRUCT(x)` | The struct and its child each carry their own physical name and id, so the fixture is well formed; we only map top-level columns, so the write is refused. |
-| `partitioned_name_mode` | `name` | `id`, `p` partitioned on `p` | Partition values are written under logical names, so a mapped partitioned write is refused for the same reason. |
+| `partitioned_name_mode` | `name` | `id`, `p` partitioned on `p` | Write fixture. The log must key partition values by `p`'s physical name, `col-bbbb`. Written by `write_partitioned.test`. |
 | `name_mode_nested_ids` | `name` | `a`, `l BIGINT[]`, `m MAP` | Read fixture. The list and map carry `delta.columnMapping.nested.ids` as UniForm writes them; a name-mode reader must keep resolving their children by name, not by those ids. Read by `name_mode_nested_ids.test`. |
 | `id_mode_logical_names` | `id` | `a`, `b` | Read fixture. The file names its columns `a`/`b` and carries field ids 1/2; only the ids connect file to schema. Read by `read_by_mode.test` and `filename_option.test`. |
 | `id_mode_physical_names` | `id` | `a`, `b` | Read fixture. Spark's layout: physical column names and field ids both present. |

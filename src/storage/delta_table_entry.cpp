@@ -122,30 +122,14 @@ void DeltaTableEntry::ThrowOnUnsupportedFieldForInserting() const {
 		return;
 	}
 	// Column mapping addresses parquet columns by physical name and field id. We supply both for top-level
-	// columns only, so the cases below would produce a file that is mapped in part -- which reads back as nulls
+	// columns only, so a nested column would produce a file that is mapped in part -- which reads back as nulls
 	// for whatever went unmapped, and in id mode is worse than writing nothing mapped at all: a file carrying
 	// some field ids no longer trips the reader's "no field ids, refuse it" rule, so partial loss passes silently.
-	bool column_mapped = false;
-	bool mapped_nested = false;
 	for (auto &col : snapshot->GetLazyLoadedGlobalColumns()) {
-		if (col.physical_name.empty() && !col.field_id.IsValid()) {
-			continue;
+		if (col.IsColumnMapped() && !col.children.empty()) {
+			throw NotImplementedException(
+			    "Inserting into a Delta table that uses column mapping on a nested column is not supported");
 		}
-		column_mapped = true;
-		if (!col.children.empty()) {
-			mapped_nested = true;
-		}
-	}
-	if (!column_mapped) {
-		return;
-	}
-	if (mapped_nested) {
-		throw NotImplementedException(
-		    "Inserting into a Delta table that uses column mapping on a nested column is not supported");
-	}
-	if (!snapshot->GetPartitionColumns().empty()) {
-		throw NotImplementedException(
-		    "Inserting into a partitioned Delta table that uses column mapping is not supported");
 	}
 }
 

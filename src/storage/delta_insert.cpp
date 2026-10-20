@@ -271,7 +271,7 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 				auto &struct_children = StructValue::GetChildren(partition_children[col_idx]);
 
 				DeltaPartition file_partition_info;
-				file_partition_info.partition_column_idx = col_idx;
+				file_partition_info.partition_column = StringValue::Get(struct_children[0]);
 				// The kernel reads a null map value as a null partition and "" as the empty string. The
 				// protocol's "an empty string for any type translates to a null partition value" cannot
 				// hold for STRING columns, where "" is itself a legal value.
@@ -458,8 +458,9 @@ static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, Ph
 }
 
 //! Rewrites the parquet column names to their physical names and attaches the field ids, for a table that uses
-//! column mapping. Nested and partitioned mapped tables reach here too: they are only mapped in part, and
-//! DeltaTableEntry::ThrowOnUnsupportedFieldForInserting refuses them later, when the insert executes.
+//! column mapping. The hive directories take the physical name with it. Nested mapped tables reach here too: they
+//! are only mapped in part, and DeltaTableEntry::ThrowOnUnsupportedFieldForInserting refuses them later, when the
+//! insert executes.
 static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyInfo &info, vector<string> &names) {
 	// Without the protocol feature, readers ignore the mapping annotations, so the file must not use them either
 	if (!table_entry.snapshot->UsesColumnMapping()) {
@@ -467,7 +468,7 @@ static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyIn
 	}
 	// The snapshot schema, which the sink resolves its stats against too -- one source of truth for physical
 	// names at both ends of the write. The kernel's write context is the more direct answer but is not usable
-	// here: the only accessor is the unpartitioned one, which throws outright on a partitioned table.
+	// here: for a partitioned table it takes the partition values, which are not known until the copy runs.
 	auto &schema = table_entry.snapshot->GetLazyLoadedGlobalColumns();
 
 	unordered_map<string, const_reference<DeltaMultiFileColumnDefinition>> by_logical_name;
