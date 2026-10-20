@@ -1,5 +1,5 @@
 # name: test/sql/inlined/column_mapping/spark_partitioned.test
-# description: partition values of a column-mapped partitioned table, as Spark writes it, read back in both modes
+# description: partition values of column-mapped partitioned tables, as Spark writes them in both modes, and with two partition columns
 # group: [column_mapping]
 
 require parquet
@@ -30,7 +30,6 @@ a	2
 b	1
 NULL	1
 
-# A filter on the partition column prunes files by the values the log holds
 query I
 SELECT id FROM delta_scan('data/inlined/column_mapping/spark_partitioned_${mode}_mode') WHERE p = 'b';
 ----
@@ -49,3 +48,20 @@ a
 b
 
 endloop
+
+# -----------------------------------------------------------------------------
+# Two partition columns, one of them first in the schema
+#
+
+# Hand-written, name mode: schema (p1, id, p2, v) partitioned on p1 and p2. Kernel prepends p1 and places p2
+# after the physical name of id.
+query IIII
+SELECT * FROM delta_scan('data/inlined/column_mapping/partitioned_two_columns_name_mode') ORDER BY id;
+----
+x	1	y	10
+z	2	NULL	20
+
+query I
+SELECT id FROM delta_scan('data/inlined/column_mapping/partitioned_two_columns_name_mode') WHERE p1 = 'z';
+----
+2

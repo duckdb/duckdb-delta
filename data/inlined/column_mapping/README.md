@@ -34,6 +34,7 @@ resolves it. The table says which is which.
 | `mode_without_feature` | `id`, ignored | `a`, `b`; reader version 1 | Read fixture. The mode property without the `columnMapping` feature, which the protocol says to ignore; the file names its columns by logical name. Read by `mode_without_feature.test`. |
 | `mode_without_feature_v3` | `name`, ignored | `a`, `b`; reader version 3, no `columnMapping` in the feature lists | Read and write fixture, as above. A write must use the logical names too. |
 | `name_mode_legacy_protocol` | `name` | `a`, `b`; reader version 2, no feature lists | Read fixture. Reader version 2 implies the feature; the file names its columns by physical name. |
+| `partitioned_two_columns_name_mode` | `name` | `p1`, `id`, `p2`, `v` partitioned on `p1`, `p2` | Read fixture. One partition column first, one between data columns, and a NULL partition. Read by `spark_partitioned.test`. |
 | `spark_partitioned_name_mode`, `spark_partitioned_id_mode` | `name`, `id` | `id`, `p`, `v` partitioned on `p` | Read fixture, written by Spark. Partition values are keyed by `p`'s physical name, and the kernel places `p` after the physical name of `id`. Read by `spark_partitioned.test`. |
 | `spark_renamed_name_mode`, `spark_renamed_id_mode` | `name`, `id` | `id`, `who` (was `s`) | Read and write fixture, written by Spark: one row before `RENAME COLUMN s TO who`, one after. Read by `spark_renamed.test`. |
 

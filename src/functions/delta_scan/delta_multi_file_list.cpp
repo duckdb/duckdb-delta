@@ -464,7 +464,7 @@ FindPartitionValues(ParsedExpression &transformation, const vector<DeltaMultiFil
 			for (idx_t i = 0; i < cols.size(); ++i) {
 				const auto &kernel_name =
 				    mapped && !cols[i].physical_name.empty() ? cols[i].physical_name : cols[i].name.GetIdentifierName();
-				if (field_name == kernel_name) {
+				if (StringUtil::CIEquals(field_name, kernel_name)) {
 					index_to_insert = keep_input ? i + 1 : i;
 					found = true;
 					break;
@@ -473,7 +473,8 @@ FindPartitionValues(ParsedExpression &transformation, const vector<DeltaMultiFil
 			if (!found && optional) {
 				continue;
 			}
-			// Falling through would put the values on column 0 and leave their own columns NULL, silently
+			// Kernel names a column of the table's own schema, so a miss means the names are compared in the wrong
+			// vocabulary; carrying on would put the values on column 0 and leave their own columns NULL
 			if (!found) {
 				throw IOException("Delta kernel transform names column '%s', which is not in the table schema",
 				                  field_name);
