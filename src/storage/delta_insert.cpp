@@ -494,9 +494,8 @@ static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, Ph
 }
 
 //! Rewrites the parquet column names to their physical names and attaches the field ids, for a table that uses
-//! column mapping. The hive directories take the physical name with it, which the protocol allows: readers take
-//! partition values from the log, never from the path. Nested mapped tables reach here too: they are only mapped in
-//! part, and DeltaTableEntry::ThrowOnUnsupportedFieldForInserting refuses them later, when the insert executes.
+//! column mapping. Nested mapped tables reach here too: they are only mapped in part, and
+//! DeltaTableEntry::ThrowOnUnsupportedFieldForInserting refuses them later, when the insert executes.
 static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyInfo &info, vector<string> &names) {
 	// Without the protocol feature, readers ignore the mapping annotations, so the file must not use them either
 	if (!table_entry.snapshot->UsesColumnMapping()) {
