@@ -710,7 +710,9 @@ static void ExtractNotNullConstraints(vector<NestedNotNullConstraint> &constrain
 	idx_t col_id = 0;
 	for (auto &col : columns) {
 		// Traverse struct
-		string field_path = parent_path.empty() ? "\"" + col.name + "\"" : parent_path + ".\"" + col.name + "\"";
+		// Quoted as the parquet writer names stats paths, an inner quote doubled
+		auto quoted = "\"" + StringUtil::Replace(col.name.GetIdentifierName(), "\"", "\"\"") + "\"";
+		string field_path = parent_path.empty() ? quoted : parent_path + "." + quoted;
 		idx_t index_to_set = index == DConstants::INVALID_INDEX ? col_id++ : index;
 
 		if (!col.nullable) {

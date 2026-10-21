@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER) WITH (location = NULL);
 ----
 NULL is not a valid value for Delta CREATE TABLE option 'location'
 
+# So does a refused column
 statement error
 CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER DEFAULT 7);
 ----

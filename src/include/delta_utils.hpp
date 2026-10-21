@@ -314,10 +314,17 @@ struct DeltaMultiFileColumnDefinition : public MultiFileColumnDefinition {
 		return position == 0 ? parent_id : ~parent_id;
 	}
 
-	//! Works on the scan schema and on the parquet reader's columns alike. The parquet reader puts a
-	//! `key_value` struct between a map and its entries; the schema does not.
+	//! Works on the scan schema and on the parquet reader's columns alike, down through structs, whose fields carry
+	//! ids of their own. The parquet reader puts a `key_value` struct between a map and its entries; the schema does
+	//! not.
 	template <class COLUMN>
 	static void FillContainerChildIds(COLUMN &column) {
+		if (column.type.id() == LogicalTypeId::STRUCT) {
+			for (auto &child : column.children) {
+				FillContainerChildIds(child);
+			}
+			return;
+		}
 		if (column.identifier.IsNull()) {
 			return;
 		}

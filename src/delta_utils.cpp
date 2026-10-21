@@ -704,8 +704,9 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 vector<DeltaMultiFileColumnDefinition>
 KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
                                          ffi::SharedWriteContext *write_context) {
-	// Writes address columns through `physical_name` and `field_id`, never `identifier`, so the mode is moot here
-	KernelSchemaVisitor visitor_state(engine, DeltaColumnMappingMode::NONE);
+	// A write takes `physical_name` and `field_id`, never `identifier`; any mapping mode fills both, nested ids
+	// included, and `name` keeps `identifier` a string
+	KernelSchemaVisitor visitor_state(engine, DeltaColumnMappingMode::NAME);
 	auto visitor = CreateSchemaVisitor(visitor_state);
 	auto schema = ffi::get_write_schema(write_context);
 	uintptr_t result = visit_schema(schema, &visitor);

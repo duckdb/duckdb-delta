@@ -266,7 +266,8 @@ static vector<string> WrittenPath(const DeltaMultiFileColumnDefinition &col, con
 			}
 		}
 		if (!next) {
-			return logical_path;
+			throw InternalException("Delta column \"%s\" has no field \"%s\"", col.name.GetIdentifierName(),
+			                        logical_path[i]);
 		}
 		result.push_back(WrittenName(*next));
 		current = *next;
@@ -331,8 +332,7 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 					break;
 				}
 			}
-			bool found = column != nullptr;
-			if (!found) {
+			if (!column) {
 				throw InternalException("Column %s not found in table %s", StringUtil::Join(column_names, "."),
 				                        global_state.table_name);
 			}
@@ -550,7 +550,7 @@ static PhysicalOperator &PlanInsertProjection(ClientContext &context, PhysicalPl
 
 	if (types.size() != columns.PhysicalColumnCount()) {
 		// The binder resolves the child into table order and width, so this should not fire; refuse the write rather
-		// than check widths against columns we cannot line up.
+		// than rewrite columns we cannot line up.
 		throw BinderException("Cannot write to Delta table: the insert produces %llu columns but the table has %llu",
 		                      types.size(), columns.PhysicalColumnCount());
 	}

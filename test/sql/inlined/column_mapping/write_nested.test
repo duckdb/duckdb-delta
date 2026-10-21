@@ -82,31 +82,33 @@ statement ok
 ATTACH '{TEMP_DIR}/created_{mode}' AS created (TYPE delta);
 
 statement ok
-CREATE TABLE created.created (id INTEGER, s STRUCT(x INTEGER, inner_s STRUCT(z VARCHAR)), l INTEGER[],
+CREATE TABLE created.created (id INTEGER,
+    s STRUCT(x INTEGER, inner_s STRUCT(z VARCHAR), sl INTEGER[], sm MAP(VARCHAR, INTEGER)), l INTEGER[],
     m MAP(VARCHAR, INTEGER[])) WITH ('delta.columnMapping.mode' = '{mode}');
 
 statement ok
-INSERT INTO created.created VALUES (1, {'x': 1, 'inner_s': {'z': 'a'}}, [1], MAP {'k': [1, 2]}),
-    (2, NULL, NULL, NULL);
+INSERT INTO created.created VALUES (1, {'x': 1, 'inner_s': {'z': 'a'}, 'sl': [5], 'sm': MAP {'q': 6}}, [1],
+    MAP {'k': [1, 2]}), (2, NULL, NULL, NULL);
 
 query IIII
 SELECT * FROM created.created ORDER BY id;
 ----
-1	{'x': 1, 'inner_s': {'z': a}}	[1]	{k=[1, 2]}
+1	{'x': 1, 'inner_s': {'z': a}, 'sl': [5], 'sm': {q=6}}	[1]	{k=[1, 2]}
 2	NULL	NULL	NULL
 
-query I
-SELECT s.inner_s.z FROM created.created WHERE s.x = 1;
+# A list and a map inside a struct resolve too: in id mode their entries have no ids, on either side
+query III
+SELECT s.inner_s.z, s.sl[1], s.sm['q'] FROM created.created WHERE s.x = 1;
 ----
-a
+a	5	6
 
 # No logical name reaches the file; field ids on the columns and every struct field, none on containers
 query II
-SELECT count(*) FILTER (name IN ('s', 'x', 'inner_s', 'z', 'l', 'm')),
+SELECT count(*) FILTER (name IN ('s', 'x', 'inner_s', 'z', 'sl', 'sm', 'l', 'm')),
        count(*) FILTER (field_id IS NOT NULL)
 FROM parquet_schema('{TEMP_DIR}/created_{mode}/duckdb-*.parquet');
 ----
-0	7
+0	9
 
 statement ok
 DETACH created;
