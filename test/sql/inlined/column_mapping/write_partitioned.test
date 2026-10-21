@@ -60,6 +60,22 @@ WHERE name LIKE 'col-%' AND field_id IS NOT NULL;
 ----
 9
 
+# Each partition gets a directory of its own, named part- and 16 hex digits, never after the column
+query II
+SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/duckdb_[^/]*\.parquet$', 1))
+FROM glob('{TEMP_DIR}/cm_part_${mode}/**/*.parquet');
+----
+3	3
+
+# The string 'NULL' is a partition of its own, apart from the NULL partition
+statement ok
+INSERT INTO part.part VALUES (4, 'NULL', 40);
+
+query II
+SELECT count(*) FILTER (p IS NULL), count(*) FILTER (p = 'NULL') FROM part.part;
+----
+1	1
+
 statement ok
 DETACH part;
 

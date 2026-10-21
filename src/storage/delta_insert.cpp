@@ -3,6 +3,7 @@
 #include "duckdb/common/sorting/hashed_sort.hpp"
 #include "duckdb/common/path.hpp"
 #include "duckdb/common/type_visitor.hpp"
+#include "duckdb/common/crypto/md5.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
@@ -406,6 +407,41 @@ ScalarFunction GetStringWidthCheckFunction() {
 	return function;
 }
 
+struct DeltaPartitionDirectoryData : public FunctionData {
+	explicit DeltaPartitionDirectoryData(string write_uuid_p) : write_uuid(std::move(write_uuid_p)) {
+	}
+
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<DeltaPartitionDirectoryData>(write_uuid);
+	}
+	bool Equals(const FunctionData &other_p) const override {
+		return write_uuid == other_p.Cast<DeltaPartitionDirectoryData>().write_uuid;
+	}
+
+	string write_uuid;
+};
+
+//! `part-` and 16 hex digits of a hash over the write and the partition values: random from one write to the next,
+//! and the same for every file of one partition within a write, as the copy requires of a partition's directory.
+//! ToSQLString keeps NULL and the string 'NULL' apart.
+static void DeltaPartitionDirectory(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &info = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<DeltaPartitionDirectoryData>();
+	for (idx_t row = 0; row < args.size(); row++) {
+		MD5Context md5;
+		md5.Add(info.write_uuid);
+		for (idx_t col = 0; col < args.ColumnCount(); col++) {
+			md5.Add("\x1f");
+			md5.Add(args.GetValue(col, row).ToSQLString());
+		}
+		result.SetValue(row, Value("part-" + md5.FinishHex().substr(0, 16)));
+	}
+}
+
+//! Not registered in the catalog, for the same reason as GetStringWidthCheckFunction
+static ScalarFunction GetPartitionDirectoryFunction(const vector<LogicalType> &partition_types) {
+	return ScalarFunction("delta_partition_directory", partition_types, LogicalType::VARCHAR, DeltaPartitionDirectory);
+}
+
 } // namespace
 
 //! Adapts the insert child plan to what the parquet copy expects. Any further per-column rewrite on the write path
@@ -627,6 +663,21 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		physical_copy_ref.partition_output = true;
 		physical_copy_ref.partition_columns = partition_columns;
 		physical_copy_ref.write_empty_file = true;
+		// Hive directories would carry the physical names, long and meaningless to a reader of the path. The log holds
+		// the partition values either way; Spark and the kernel's own writer give a mapped table random directories
+		// too.
+		if (table_entry->snapshot->UsesColumnMapping()) {
+			vector<LogicalType> partition_types;
+			vector<unique_ptr<Expression>> partition_refs;
+			for (idx_t i = 0; i < partition_columns.size(); i++) {
+				auto &type = types_to_write[partition_columns[i]];
+				partition_types.push_back(type);
+				partition_refs.push_back(make_uniq<BoundReferenceExpression>(type, i));
+			}
+			physical_copy_ref.partition_path_expression = make_uniq<BoundFunctionExpression>(
+			    BoundScalarFunction(GetPartitionDirectoryFunction(partition_types)), std::move(partition_refs),
+			    make_uniq<DeltaPartitionDirectoryData>(current_write_uuid));
+		}
 	} else {
 		physical_copy_ref.file_path =
 		    Path::FromString(delta_path).Join("duckdb-" + current_write_uuid + ".parquet").ToString();
@@ -643,7 +694,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	    PlanInsertProjection(planner, *plan, columns, table_entry->snapshot->GetStringWidthBounds()));
 	physical_copy_ref.names = StringsToIdentifiers(names_to_write);
 	physical_copy_ref.expected_types = types_to_write;
-	physical_copy_ref.hive_file_pattern = true;
+	physical_copy_ref.hive_file_pattern = !physical_copy_ref.partition_path_expression;
 
 	insert.children.push_back(physical_copy);
 
