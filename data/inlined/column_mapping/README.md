@@ -14,7 +14,7 @@ resolves it. The table says which is which.
 | `name_mode` | `name` | `id`, `code` | A reader matches physical names, so a file written with logical names reads back as NULL with no error. |
 | `id_mode` | `id` | `id`, `code` | A reader matches parquet field ids and must refuse a file that has none, which makes the table unreadable rather than merely wrong. |
 | `not_null_name_mode` | `name` | `id NOT NULL`, `code` | Constraints are keyed on the logical name while statistics arrive under the physical one. |
-| `nested_name_mode` | `name` | `id`, `s STRUCT(x)` | The struct and its child each carry their own physical name and id, so the fixture is well formed; we only map top-level columns, so the write is refused. |
+| `nested_name_mode` | `name` | `id`, `s STRUCT(x)` | Write fixture. The struct and its child each carry their own physical name and id, and the file must use both. |
 | `partitioned_name_mode` | `name` | `id`, `p` partitioned on `p` | Write fixture. The log must key partition values by `p`'s physical name, `col-bbbb`. Written by `write_partitioned.test`. |
 | `name_mode_nested_ids` | `name` | `a`, `l BIGINT[]`, `m MAP` | Read fixture. The list and map carry `delta.columnMapping.nested.ids` as UniForm writes them; a name-mode reader must keep resolving their children by name, not by those ids. Read by `name_mode_nested_ids.test`. |
 | `id_mode_logical_names` | `id` | `a`, `b` | Read fixture. The file names its columns `a`/`b` and carries field ids 1/2; only the ids connect file to schema. Read by `read_by_mode.test` and `filename_option.test`. |
@@ -37,6 +37,7 @@ resolves it. The table says which is which.
 | `partitioned_two_columns_name_mode` | `name` | `p1`, `id`, `p2`, `v` partitioned on `p1`, `p2` | Read fixture. One partition column first, one between data columns, and a NULL partition. Read by `spark_partitioned.test`. |
 | `spark_partitioned_name_mode`, `spark_partitioned_id_mode` | `name`, `id` | `id`, `p`, `v` partitioned on `p` | Read fixture, written by Spark. Partition values are keyed by `p`'s physical name, and the kernel places `p` after the physical name of `id`. Read by `spark_partitioned.test`. |
 | `spark_renamed_name_mode`, `spark_renamed_id_mode` | `name`, `id` | `id`, `who` (was `s`) | Read and write fixture, written by Spark: one row before `RENAME COLUMN s TO who`, one after. Read by `spark_renamed.test`. |
+| `spark_nested_name_mode`, `spark_nested_id_mode` | `name`, `id` | `id`, `s STRUCT(x2, y NOT NULL)`, `l INT[]`, `ls STRUCT(a)[]`, `m MAP(VARCHAR, STRUCT(b))` | Read and write fixture, written by Spark: every nested shape, with `s.x` renamed to `s.x2` between its two inserts. A DuckDB append must match Spark's names and field ids at every level. Written by `write_nested.test`. |
 
 The `spark_*` tables are written by Spark through `scripts/data_generator/generate_column_mapping_data.py` and committed.
 The others are hand-written rather than generated because the field metadata above is the entire input to the write

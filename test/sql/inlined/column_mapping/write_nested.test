@@ -1,0 +1,170 @@
+# name: test/sql/inlined/column_mapping/write_nested.test
+# description: INSERT into column-mapped tables with STRUCT, LIST and MAP columns writes physical names and field ids at every level
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+require json
+
+# spark_nested_<mode>_mode, written by Spark: (id, s STRUCT(x2, y NOT NULL), l INT[], ls STRUCT(a)[],
+# m MAP(VARCHAR, STRUCT(b))), with s.x renamed to s.x2 between its two inserts. Every struct field has
+# a physical name and a field id; a list element and a map's key and value have neither, as Spark writes them.
+
+foreach mode name id
+
+# -----------------------------------------------------------------------------
+# {mode} mode, appending to a table Spark wrote
+#
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/spark_nested_{mode}_mode', '{TEMP_DIR}/nested_{mode}');
+
+statement ok
+ATTACH '{TEMP_DIR}/nested_{mode}' AS nested (TYPE delta);
+
+statement ok
+INSERT INTO nested VALUES (3, {'x2': 30, 'y': 'three'}, [4, 5], [{'a': 3}], MAP {'k3': {'b': 300}});
+
+query IIIII
+SELECT * FROM nested ORDER BY id;
+----
+1	{'x2': 10, 'y': one}	[1, 2]	[{'a': 1}]	{k1={'b': 100}}
+2	{'x2': 20, 'y': two}	[3]	[{'a': 2}]	{k2={'b': 200}}
+3	{'x2': 30, 'y': three}	[4, 5]	[{'a': 3}]	{k3={'b': 300}}
+
+query II
+SELECT s.x2, ls[1].a FROM nested WHERE m['k3'].b = 300;
+----
+30	3
+
+# DuckDB's file has the same names and field ids at every level as Spark's
+query I
+SELECT count(*) FROM (
+    SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/nested_{mode}/duckdb-*.parquet') WHERE name <> 'duckdb_schema'
+    EXCEPT
+    SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/nested_{mode}/*/part-*.parquet') WHERE name <> 'spark_schema'
+);
+----
+0
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/nested_{mode}/duckdb-*.parquet') WHERE field_id IS NOT NULL;
+----
+9
+
+# Statistics are keyed by physical name at every level of a struct
+query II
+WITH stats AS (
+    SELECT json_extract_string(json, '$.add.stats') AS s
+    FROM read_ndjson_objects('{TEMP_DIR}/nested_{mode}/_delta_log/00000000000000000004.json')
+    WHERE json_extract(json, '$.add') IS NOT NULL
+)
+SELECT s LIKE '%"x2"%', s LIKE '%"col-%":{"col-%":30%' FROM stats;
+----
+false	true
+
+# A NOT NULL struct field is enforced, and named by its logical path
+statement error
+INSERT INTO nested VALUES (4, {'x2': 40, 'y': NULL}, [], [], MAP {});
+----
+NOT NULL constraint failed: nested.s.y
+
+statement ok
+DETACH nested;
+
+# -----------------------------------------------------------------------------
+# {mode} mode, a table DuckDB creates
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/created_{mode}' AS created (TYPE delta);
+
+statement ok
+CREATE TABLE created.created (id INTEGER, s STRUCT(x INTEGER, inner_s STRUCT(z VARCHAR)), l INTEGER[],
+    m MAP(VARCHAR, INTEGER[])) WITH ('delta.columnMapping.mode' = '{mode}');
+
+statement ok
+INSERT INTO created.created VALUES (1, {'x': 1, 'inner_s': {'z': 'a'}}, [1], MAP {'k': [1, 2]}),
+    (2, NULL, NULL, NULL);
+
+query IIII
+SELECT * FROM created.created ORDER BY id;
+----
+1	{'x': 1, 'inner_s': {'z': a}}	[1]	{k=[1, 2]}
+2	NULL	NULL	NULL
+
+query I
+SELECT s.inner_s.z FROM created.created WHERE s.x = 1;
+----
+a
+
+# No logical name reaches the file; field ids on the columns and every struct field, none on containers
+query II
+SELECT count(*) FILTER (name IN ('s', 'x', 'inner_s', 'z', 'l', 'm')),
+       count(*) FILTER (field_id IS NOT NULL)
+FROM parquet_schema('{TEMP_DIR}/created_{mode}/duckdb-*.parquet');
+----
+0	7
+
+statement ok
+DETACH created;
+
+endloop
+
+# -----------------------------------------------------------------------------
+# icebergCompatV3: the log assigns ids to list elements and map entries, and the file must carry them
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/nested_iceberg' AS iceberg (TYPE delta);
+
+statement ok
+CREATE TABLE iceberg.iceberg (id INTEGER, l INTEGER[], m MAP(VARCHAR, INTEGER[]))
+WITH ('delta.enableIcebergCompatV3' = 'true');
+
+statement ok
+INSERT INTO iceberg.iceberg VALUES (1, [1, 2], MAP {'k': [3, 4]});
+
+query III
+SELECT * FROM iceberg.iceberg;
+----
+1	[1, 2]	{k=[3, 4]}
+
+# The ids the log's delta.columnMapping.nested.ids assigns, and the ids the file carries on its containers' children,
+# the list inside the map's value included: its id sits in the map column's nested.ids too
+query II
+SELECT
+    (SELECT list(id::INTEGER ORDER BY id::INTEGER) FROM (
+        SELECT unnest(json_extract(f, '$.metadata."delta.columnMapping.nested.ids".*')) AS id
+        FROM read_ndjson_objects('{TEMP_DIR}/nested_iceberg/_delta_log/00000000000000000000.json'),
+             unnest(json_extract(json_extract_string(json, '$.metaData.schemaString'), '$.fields[*]')) AS t(f))),
+    (SELECT list(field_id::INTEGER ORDER BY field_id) FROM parquet_schema('{TEMP_DIR}/nested_iceberg/duckdb-*.parquet')
+     WHERE name IN ('element', 'key', 'value'));
+----
+[4, 5, 6, 7]	[4, 5, 6, 7]
+
+# -----------------------------------------------------------------------------
+# icebergCompatV3 in id mode: containers inside containers resolve by those ids on read too
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/nested_iceberg_id' AS iceberg_id (TYPE delta);
+
+statement ok
+CREATE TABLE iceberg_id.iceberg_id (id INTEGER, m MAP(VARCHAR, INTEGER[]), ll INTEGER[][])
+WITH ('delta.enableIcebergCompatV3' = 'true', 'delta.columnMapping.mode' = 'id');
+
+statement ok
+INSERT INTO iceberg_id.iceberg_id VALUES (1, MAP {'k': [3, 4]}, [[1], [2, 3]]);
+
+query III
+SELECT * FROM iceberg_id.iceberg_id;
+----
+1	{k=[3, 4]}	[[1], [2, 3]]
+
+query II
+SELECT m['k'][2], ll[2][2] FROM iceberg_id.iceberg_id;
+----
+4	3

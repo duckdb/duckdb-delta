@@ -107,44 +107,6 @@ static vector<pair<string, string>> GetCreateTableProperties(ClientContext &cont
 	return properties;
 }
 
-//! The mode kernel will map with: the property when it names one, and `name` when
-//! `delta.enableIcebergCompatV3` requires mapping without naming a mode
-//! (`maybe_enable_iceberg_compat_v3_dependencies` in kernel's create-table builder). Kernel refuses every
-//! other combination itself, and says why, so nothing else is mirrored here. Values are matched exactly,
-//! as kernel matches them.
-static string EffectiveColumnMappingMode(const vector<pair<string, string>> &properties) {
-	string mode;
-	bool iceberg_compat_v3 = false;
-	for (auto &property : properties) {
-		if (property.first == "delta.columnMapping.mode") {
-			mode = property.second;
-		} else if (property.first == "delta.enableIcebergCompatV3") {
-			iceberg_compat_v3 = property.second == "true";
-		}
-	}
-	if (mode.empty() && iceberg_compat_v3) {
-		return "name";
-	}
-	return mode;
-}
-
-//! The writer maps top-level columns only and refuses nested mapped tables at INSERT, so refuse that shape here
-//! rather than create a table nothing can insert into.
-static void ThrowIfColumnMappingUnwritable(const CreateTableInfo &base,
-                                           const vector<pair<string, string>> &properties) {
-	auto mode = EffectiveColumnMappingMode(properties);
-	if (mode != "name" && mode != "id") {
-		return;
-	}
-	for (auto &col : base.columns.Logical()) {
-		auto type_id = col.Type().id();
-		if (type_id == LogicalTypeId::STRUCT || type_id == LogicalTypeId::LIST || type_id == LogicalTypeId::MAP) {
-			throw NotImplementedException(
-			    "Creating a Delta table that uses column mapping on a nested column is not supported");
-		}
-	}
-}
-
 //! Whether a Delta table has been created at `path` yet, judged the same way kernel judges it: by
 //! the presence of `_delta_log`. Deliberately a cheap existence probe rather than a snapshot build,
 //! because callers need "is there a table here" to be answerable before there is one.
@@ -251,7 +213,6 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	auto path = GetCreateTablePath(context, option_binder, base, delta_catalog);
 	auto partition_columns = GetCreateTablePartitionColumns(base);
 	auto table_properties = GetCreateTableProperties(context, option_binder, base);
-	ThrowIfColumnMappingUnwritable(base, table_properties);
 
 	// After the options are read, so that a bad option fails even where IF NOT EXISTS makes the
 	// statement a no-op: embedded SQL should not carry a typo until the day the table is gone.

@@ -518,12 +518,13 @@ private:
 	// A synthetic child (list element, map key/value) carries no column mapping id of its own. IcebergCompat
 	// writers record one in the parent's `delta.columnMapping.nested.ids` ({"<physical>.element": 3, ...});
 	// other writers record nothing, and FillContainerChildIds derives one.
-	// Only in `id` mode: `name`-mode tables carry `nested.ids` too (UniForm requires them), and the
+	// The id becomes the child's `field_id` in either mode, since a writer must put it in the file; it becomes the
+	// `identifier` only in `id` mode: `name`-mode tables carry `nested.ids` too (UniForm requires them), and the
 	// name mapper reads every identifier as a VARCHAR.
 	static void ApplyNestedFieldIds(KernelSchemaVisitor *state, const ffi::CMetadataMap *metadata,
 	                                const DeltaMultiFileColumnDefinition &parent, DeltaMultiFileColumnDefinition &child,
 	                                const string &suffix) {
-		if (state->mapping_mode != DeltaColumnMappingMode::ID) {
+		if (state->mapping_mode == DeltaColumnMappingMode::NONE) {
 			return;
 		}
 		auto nested_ids = KernelUtils::FetchFromMetadataMap(state->engine, metadata, "delta.columnMapping.nested.ids");
@@ -557,7 +558,30 @@ private:
 				                                      NumericLimits<int32_t>::Maximum()));
 				return;
 			}
-			child.identifier = *id;
+			child.field_id = optional_idx(NumericCast<idx_t>(id->GetValue<int32_t>()));
+			if (state->mapping_mode == DeltaColumnMappingMode::ID) {
+				child.identifier = *id;
+			}
+		}
+	}
+
+	//! A container below a struct field has no metadata of its own: the field's `nested.ids` holds the ids of every
+	//! list element and map key and value under it, down to the next struct, keyed by their path from the field
+	static void ApplyNestedFieldIdsBelow(KernelSchemaVisitor *state, const ffi::CMetadataMap *metadata,
+	                                     const DeltaMultiFileColumnDefinition &field,
+	                                     DeltaMultiFileColumnDefinition &container, const string &path) {
+		vector<pair<idx_t, string>> children;
+		if (container.type.id() == LogicalTypeId::LIST) {
+			children.emplace_back(0, ".element");
+		} else if (container.type.id() == LogicalTypeId::MAP) {
+			children.emplace_back(0, ".key");
+			children.emplace_back(1, ".value");
+		}
+		for (auto &child : children) {
+			auto &child_def = container.children[child.first];
+			auto child_path = path + child.second;
+			ApplyNestedFieldIds(state, metadata, field, child_def, child_path);
+			ApplyNestedFieldIdsBelow(state, metadata, field, child_def, child_path);
 		}
 	}
 

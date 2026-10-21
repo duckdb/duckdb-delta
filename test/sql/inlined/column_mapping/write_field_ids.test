@@ -165,32 +165,31 @@ statement ok
 DETACH p;
 
 # -----------------------------------------------------------------------------
-# A shape that cannot be mapped completely is refused
-#
-# Only top-level columns get a physical name and a field id here, so a nested mapped table would be
-# written mapped in part. In id mode that is worse than writing nothing mapped: a file
-# carrying some field ids no longer trips the reader's refusal rule, and the unmapped fields come back
-# as nulls with no error anywhere.
+# A struct column is mapped at every level
 #
 
-# nested_name_mode adds a struct column: the struct and its child each carry their own physical
-# name and id, so the fixture is well-formed and it is our writer that cannot map it completely.
+# nested_name_mode adds a struct column: the struct and its child each carry their own physical name and id
 statement ok
 FROM copy_dir('data/inlined/column_mapping/nested_name_mode', '{TEMP_DIR}/cm_nested');
 
 statement ok
 ATTACH '{TEMP_DIR}/cm_nested' AS nested (TYPE delta);
 
-statement error
+statement ok
 INSERT INTO nested VALUES (1, {'x': 9});
-----
-column mapping on a nested column is not supported
 
-# The refusal must land before anything is written, not after
-query I
-SELECT count(*) FROM glob('{TEMP_DIR}/cm_nested/**/*.parquet');
+query II
+SELECT * FROM nested;
 ----
-0
+1	{'x': 9}
+
+query II
+SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/cm_nested/duckdb-*.parquet')
+WHERE name <> 'duckdb_schema' ORDER BY field_id;
+----
+col-a	1
+col-s	2
+col-x	3
 
 statement ok
 DETACH nested;

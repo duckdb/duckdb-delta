@@ -1,7 +1,8 @@
 """Spark-written column-mapped Delta tables.
 
 The tables are committed under data/inlined/column_mapping; CI does not run this. To regenerate, run:
-python scripts/data_generator/generate_column_mapping_data.py [BASE_PATH]
+python scripts/data_generator/generate_column_mapping_data.py [BASE_PATH [TABLE...]]
+Naming tables regenerates only those, so the others keep their committed files.
 Needs pyspark >= 4.2 + delta-spark >= 4.4. In a container set JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport.
 Each table lands in <BASE_PATH>/column_mapping/spark_<name>_<mode>_mode.
 """
@@ -28,6 +29,16 @@ TABLES = {
         "INSERT INTO {t} VALUES (1, 'before')",
         "ALTER TABLE {t} RENAME COLUMN s TO who",
         "INSERT INTO {t} VALUES (2, 'after')",
+    ],
+    # Every nested shape, a NOT NULL struct field, and a struct field renamed between the two inserts
+    "nested": [
+        "CREATE TABLE {t} (id INT, s STRUCT<x: INT, y: STRING NOT NULL>, l ARRAY<INT>, ls ARRAY<STRUCT<a: INT>>, "
+        "m MAP<STRING, STRUCT<b: INT>>) USING delta TBLPROPERTIES ({props})",
+        "INSERT INTO {t} VALUES (1, named_struct('x', 10, 'y', 'one'), array(1, 2), array(named_struct('a', 1)), "
+        "map('k1', named_struct('b', 100)))",
+        "ALTER TABLE {t} RENAME COLUMN s.x TO x2",
+        "INSERT INTO {t} VALUES (2, named_struct('x2', 20, 'y', 'two'), array(3), array(named_struct('a', 2)), "
+        "map('k2', named_struct('b', 200)))",
     ],
 }
 
@@ -58,8 +69,11 @@ def remove_hadoop_checksums(path):
 
 def main():
     base = os.path.join(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BASE_PATH, "column_mapping")
+    only = set(sys.argv[2:])
     spark = spark_session()
     for name, statements in TABLES.items():
+        if only and name not in only:
+            continue
         for mode in MODES:
             path = os.path.join(base, f"spark_{name}_{mode}_mode")
             shutil.rmtree(path, ignore_errors=True)

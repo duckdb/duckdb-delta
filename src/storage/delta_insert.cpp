@@ -164,6 +164,116 @@ static DeltaColumnStats ParseColumnStats(const vector<Value> col_stats) {
 	return column_stats;
 }
 
+//! The parquet writer's key for a nested column's own id in `field_ids` (`FieldID::DUCKDB_FIELD_ID`)
+static constexpr const char *FIELD_ID_KEY = "__duckdb_field_id";
+
+//! The name a column, or a struct field, takes in the file of a column-mapped table
+static string WrittenName(const DeltaMultiFileColumnDefinition &col) {
+	return col.physical_name.empty() ? col.name.GetIdentifierName() : col.physical_name;
+}
+
+//! The type a column of a column-mapped table is written as: every struct field under its physical name
+static LogicalType WrittenType(const DeltaMultiFileColumnDefinition &col) {
+	switch (col.type.id()) {
+	case LogicalTypeId::STRUCT: {
+		child_list_t<LogicalType> children;
+		for (auto &child : col.children) {
+			children.emplace_back(Identifier(WrittenName(child)), WrittenType(child));
+		}
+		return LogicalType::STRUCT(std::move(children));
+	}
+	case LogicalTypeId::LIST:
+		return LogicalType::LIST(WrittenType(col.children[0]));
+	case LogicalTypeId::MAP:
+		return LogicalType::MAP(WrittenType(col.children[0]), WrittenType(col.children[1]));
+	default:
+		return col.type;
+	}
+}
+
+//! `type` with every struct unnamed: a cast to it and on to the written type matches fields by position, where a cast
+//! between two named structs matches them by name and the physical names match none of the logical ones
+static LogicalType UnnamedType(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::STRUCT: {
+		vector<LogicalType> children;
+		for (auto &child : StructType::GetChildTypes(type)) {
+			children.push_back(UnnamedType(child.second));
+		}
+		return LogicalType::TUPLE(std::move(children));
+	}
+	case LogicalTypeId::LIST:
+		return LogicalType::LIST(UnnamedType(ListType::GetChildType(type)));
+	case LogicalTypeId::MAP:
+		return LogicalType::MAP(UnnamedType(MapType::KeyType(type)), UnnamedType(MapType::ValueType(type)));
+	default:
+		return type;
+	}
+}
+
+//! The `field_ids` copy option entry for one column, as the parquet writer reads it: the id alone for a leaf, else
+//! `__duckdb_field_id` beside the entries of the fields below. A list's element and a map's key and value take an id
+//! only from the log's `delta.columnMapping.nested.ids`; without one they get none, as Spark writes them.
+static optional<Value> FieldIdTree(const DeltaMultiFileColumnDefinition &col) {
+	// Checked cast: the protocol's ids are 32-bit, so a wider one means a malformed log, not a value to truncate
+	// silently into a different column's id
+	optional<Value> id;
+	if (col.field_id.IsValid()) {
+		id = Value::INTEGER(NumericCast<int32_t>(col.field_id.GetIndex()));
+	}
+	child_list_t<Value> children;
+	auto add_child = [&](const string &name, const DeltaMultiFileColumnDefinition &child) {
+		auto tree = FieldIdTree(child);
+		if (tree) {
+			children.emplace_back(Identifier(name), std::move(*tree));
+		}
+	};
+	switch (col.type.id()) {
+	case LogicalTypeId::STRUCT:
+		for (auto &child : col.children) {
+			add_child(WrittenName(child), child);
+		}
+		break;
+	case LogicalTypeId::LIST:
+		add_child("element", col.children[0]);
+		break;
+	case LogicalTypeId::MAP:
+		add_child("key", col.children[0]);
+		add_child("value", col.children[1]);
+		break;
+	default:
+		break;
+	}
+	if (children.empty()) {
+		return id;
+	}
+	if (id) {
+		children.insert(children.begin(), make_pair(Identifier(FIELD_ID_KEY), std::move(*id)));
+	}
+	return Value::STRUCT(std::move(children));
+}
+
+//! The components of a struct field's path as the file names them, from its logical path below `col`
+static vector<string> WrittenPath(const DeltaMultiFileColumnDefinition &col, const vector<string> &logical_path) {
+	vector<string> result {WrittenName(col)};
+	reference<const DeltaMultiFileColumnDefinition> current(col);
+	for (idx_t i = 1; i < logical_path.size(); i++) {
+		optional_ptr<const DeltaMultiFileColumnDefinition> next;
+		for (auto &child : current.get().children) {
+			if (child.name.GetIdentifierName() == logical_path[i]) {
+				next = &child;
+				break;
+			}
+		}
+		if (!next) {
+			return logical_path;
+		}
+		result.push_back(WrittenName(*next));
+		current = *next;
+	}
+	return result;
+}
+
 //! The log's stats object nests struct fields and nothing else, so a path is recordable only if
 //! every step of it is a struct field and it ends on a scalar. A path via map or list fails;
 //! Parquet names those segments itself, `m.key_value.value`.
@@ -213,24 +323,22 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			// physical ones -- and that is also how the log wants them keyed, so they pass through untouched.
 			// Constraints and messages resolve on the logical name, which would otherwise miss silently and
 			// stop enforcing the constraint.
-			bool found = false;
-			LogicalType coltype;
-			string logical_name;
+			optional_ptr<const DeltaMultiFileColumnDefinition> column;
 			for (auto &col : global_state.columns) {
-				const auto &written_name = !global_state.column_mapped || col.physical_name.empty()
-				                               ? col.name.GetIdentifierName()
-				                               : col.physical_name;
+				const auto &written_name = global_state.column_mapped ? WrittenName(col) : col.name.GetIdentifierName();
 				if (written_name == column_names[0]) {
-					found = true;
-					coltype = col.type;
-					logical_name = col.name.GetIdentifierName();
+					column = &col;
 					break;
 				}
 			}
+			bool found = column != nullptr;
 			if (!found) {
 				throw InternalException("Column %s not found in table %s", StringUtil::Join(column_names, "."),
 				                        global_state.table_name);
 			}
+			// Stats paths arrive as written, so they are walked against the written type
+			auto coltype = global_state.column_mapped ? WrittenType(*column) : column->type;
+			auto logical_name = column->name.GetIdentifierName();
 
 			if (stats.has_null_count && stats.null_count > 0) {
 				auto constraint = global_state.not_null_constraints.find(logical_name);
@@ -241,11 +349,12 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 						                          logical_name);
 					}
 
-					// Check paths
+					// Check paths: constraints name the logical path, stats the written one
 					for (auto &constr : constraint->second) {
-						if (col_name == constr.path) {
-							auto logical_path = column_names;
-							logical_path[0] = logical_name;
+						auto logical_path = ParseQuotedList(constr.path, '.');
+						auto written_path =
+						    global_state.column_mapped ? WrittenPath(*column, logical_path) : logical_path;
+						if (column_names == written_path) {
 							throw ConstraintException("NOT NULL constraint failed: %s.%s", global_state.table_name,
 							                          StringUtil::Join(logical_path, "."));
 						}
@@ -430,19 +539,19 @@ static ScalarFunction GetPartitionDirectoryFunction(const vector<LogicalType> &p
 
 //! Adapts the insert child plan to what the parquet copy expects. Any further per-column rewrite on the write path
 //! belongs here, between the child and the copy: the sink only ever sees the copy's written-file summary, never data.
-static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, PhysicalOperator &child,
-                                              const ColumnList &columns,
-                                              const vector<DeltaStringWidthBound> &width_bounds) {
-	if (width_bounds.empty()) {
+static PhysicalOperator &PlanInsertProjection(ClientContext &context, PhysicalPlanGenerator &planner,
+                                              PhysicalOperator &child, const ColumnList &columns,
+                                              const vector<DeltaStringWidthBound> &width_bounds,
+                                              const vector<LogicalType> &written_types) {
+	auto types = child.GetTypes();
+	if (width_bounds.empty() && types == written_types) {
 		return child;
 	}
 
-	auto types = child.GetTypes();
 	if (types.size() != columns.PhysicalColumnCount()) {
 		// The binder resolves the child into table order and width, so this should not fire; refuse the write rather
 		// than check widths against columns we cannot line up.
-		throw BinderException("Cannot write to Delta table with declared CHAR/VARCHAR widths: the insert produces %llu "
-		                      "columns but the table has %llu",
+		throw BinderException("Cannot write to Delta table: the insert produces %llu columns but the table has %llu",
 		                      types.size(), columns.PhysicalColumnCount());
 	}
 
@@ -471,16 +580,25 @@ static PhysicalOperator &PlanInsertProjection(PhysicalPlanGenerator &planner, Ph
 		                                         width_bound.max_length.GetIndex()));
 	}
 
+	// A column-mapped struct is written under its physical field names
+	for (idx_t i = 0; i < types.size(); i++) {
+		if (types[i] == written_types[i]) {
+			continue;
+		}
+		auto unnamed = BoundCastExpression::AddCastToType(context, std::move(expressions[i]), UnnamedType(types[i]));
+		expressions[i] = BoundCastExpression::AddCastToType(context, std::move(unnamed), written_types[i]);
+	}
+
 	auto &projection =
-	    planner.Make<PhysicalProjection>(std::move(types), std::move(expressions), child.estimated_cardinality);
+	    planner.Make<PhysicalProjection>(written_types, std::move(expressions), child.estimated_cardinality);
 	projection.children.push_back(child);
 	return projection;
 }
 
-//! Rewrites the parquet column names to their physical names and attaches the field ids, for a table that uses
-//! column mapping. Nested mapped tables reach here too: they are only mapped in part, and
-//! DeltaTableEntry::ThrowOnUnsupportedFieldForInserting refuses them later, when the insert executes.
-static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyInfo &info, vector<string> &names) {
+//! Rewrites the parquet column names and struct fields to their physical names and attaches the field ids, for a
+//! table that uses column mapping.
+static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyInfo &info, vector<string> &names,
+                                            vector<LogicalType> &types) {
 	// Without the protocol feature, readers ignore the mapping annotations, so the file must not use them either
 	if (!table_entry.snapshot->UsesColumnMapping()) {
 		return;
@@ -501,24 +619,22 @@ static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyIn
 	}
 
 	child_list_t<Value> field_ids;
-	for (auto &name : names) {
+	for (idx_t i = 0; i < names.size(); i++) {
 		// Paired by name rather than by position: the two schemas are visited separately -- this one from the
 		// scan, `names` from the catalog entry's bind -- and pairing them positionally would silently write a
 		// column under its neighbour's identity if they ever diverged.
-		auto entry = by_logical_name.find(name);
+		auto entry = by_logical_name.find(names[i]);
 		if (entry == by_logical_name.end()) {
-			throw InternalException("Delta column \"%s\" is missing from the write schema of table %s", name,
+			throw InternalException("Delta column \"%s\" is missing from the write schema of table %s", names[i],
 			                        table_entry.name.GetIdentifierName());
 		}
 		auto &col = entry->second.get();
-		if (!col.physical_name.empty()) {
-			name = col.physical_name;
-		}
-		if (col.field_id.IsValid()) {
-			// Keyed by whatever this column is actually written as, so the two cannot drift. Checked cast: the
-			// protocol's ids are 32-bit, so a wider one means a malformed log, not a value to silently truncate
-			// into a different column's id.
-			field_ids.emplace_back(name, Value::INTEGER(NumericCast<int32_t>(col.field_id.GetIndex())));
+		names[i] = WrittenName(col);
+		types[i] = WrittenType(col);
+		auto tree = FieldIdTree(col);
+		if (tree) {
+			// Keyed by whatever this column is actually written as, so the two cannot drift
+			field_ids.emplace_back(names[i], std::move(*tree));
 		}
 	}
 
@@ -602,7 +718,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	auto names_to_write = columns.GetColumnNames();
 	auto types_to_write = columns.GetColumnTypes();
 
-	ApplyColumnMappingToWriteSchema(*table_entry, *info, names_to_write);
+	ApplyColumnMappingToWriteSchema(*table_entry, *info, names_to_write, types_to_write);
 
 	// Delta allows shredded VARIANT files only when delta.enableVariantShredding is true; otherwise write unshredded.
 	// A shredding type of 'NULL' tells the parquet writer to leave the column unshredded.
@@ -672,8 +788,8 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	physical_copy_ref.per_thread_output = false;
 	physical_copy_ref.return_type = CopyFunctionReturnType::WRITTEN_FILE_STATISTICS;
 	physical_copy_ref.write_partition_columns = true;
-	physical_copy_ref.children.push_back(
-	    PlanInsertProjection(planner, *plan, columns, table_entry->snapshot->GetStringWidthBounds()));
+	physical_copy_ref.children.push_back(PlanInsertProjection(
+	    context, planner, *plan, columns, table_entry->snapshot->GetStringWidthBounds(), types_to_write));
 	physical_copy_ref.names = StringsToIdentifiers(names_to_write);
 	physical_copy_ref.expected_types = types_to_write;
 	physical_copy_ref.hive_file_pattern = !physical_copy_ref.partition_path_expression;

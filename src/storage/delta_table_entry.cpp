@@ -117,20 +117,6 @@ void DeltaTableEntry::ThrowOnUnsupportedFieldForInserting() const {
 	if (snapshot->HasNullConstraintsInArrays()) {
 		throw NotImplementedException("Inserting into a table with null constraints in arrays is not supported");
 	}
-
-	if (!snapshot->UsesColumnMapping()) {
-		return;
-	}
-	// Column mapping addresses parquet columns by physical name and field id. We supply both for top-level
-	// columns only, so a nested column would produce a file that is mapped in part -- which reads back as nulls
-	// for whatever went unmapped, and in id mode is worse than writing nothing mapped at all: a file carrying
-	// some field ids no longer trips the reader's "no field ids, refuse it" rule, so partial loss passes silently.
-	for (auto &col : snapshot->GetLazyLoadedGlobalColumns()) {
-		if (col.IsColumnMapped() && !col.children.empty()) {
-			throw NotImplementedException(
-			    "Inserting into a Delta table that uses column mapping on a nested column is not supported");
-		}
-	}
 }
 
 TableFunction DeltaTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,

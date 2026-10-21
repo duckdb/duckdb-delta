@@ -141,9 +141,9 @@ CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER) WITH (location = NULL);
 NULL is not a valid value for Delta CREATE TABLE option 'location'
 
 statement error
-CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.columnMapping.mode' = 'name');
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER DEFAULT 7);
 ----
-column mapping on a nested column is not supported
+does not support DEFAULT values ('i')
 
 # IF NOT EXISTS on a fresh path still creates
 statement ok
@@ -299,9 +299,8 @@ SELECT i FROM dv.dv;
 # -----------------------------------------------------------------------------
 # Column mapping
 #
-# Kernel maps every column of a table created with column mapping, but the writer maps
-# top-level columns only and refuses nested mapped tables at INSERT. CREATE refuses the
-# same shape, so it cannot make a table nothing can insert into.
+# Kernel maps every column of a table created with column mapping; the writer writes every
+# shape of such a table, nested and partitioned ones included.
 #
 
 statement ok
@@ -317,24 +316,20 @@ WHERE metaData IS NOT NULL;
 ----
 name
 
+# Nested columns are mapped at every level, struct fields included
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_cm_nested' AS cm_nested (TYPE delta);
 
-statement error
-CREATE TABLE cm_nested.cm_nested (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.columnMapping.mode' = 'name');
-----
-column mapping on a nested column is not supported
+statement ok
+CREATE TABLE cm_nested.cm_nested (i INTEGER, s STRUCT(x INTEGER), l INTEGER[]) WITH ('delta.columnMapping.mode' = 'id');
 
-statement error
-CREATE TABLE cm_nested.cm_nested (i INTEGER, l INTEGER[]) WITH ('delta.columnMapping.mode' = 'id');
-----
-column mapping on a nested column is not supported
-
-# Neither refusal touches storage
 query I
-SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_cm_nested/_delta_log/*.json');
+SELECT json_extract_string(metaData.schemaString, '$.fields[1].type.fields[0].metadata."delta.columnMapping.physicalName"')
+    LIKE 'col-%'
+FROM read_json('{TEMP_DIR}/delta_create_cm_nested/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
 ----
-0
+true
 
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_cm_part' AS cm_part (TYPE delta);
@@ -374,16 +369,10 @@ CREATE TABLE cm_case.cm_case (i INTEGER, s VARCHAR) WITH ('delta.columnMapping.m
 Invalid column mapping mode
 
 # `delta.enableIcebergCompatV3` requires column mapping, and kernel maps with `name` when no mode is
-# named, so the nested refusal above has to cover it too
+# named
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_cm_iceberg' AS cm_iceberg (TYPE delta);
 
-statement error
-CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, s STRUCT(x INTEGER)) WITH ('delta.enableIcebergCompatV3' = 'true');
-----
-column mapping on a nested column is not supported
-
-# A table of top-level columns is writable, so it is created, with the mode kernel chose
 statement ok
 CREATE TABLE cm_iceberg.cm_iceberg (i INTEGER, s VARCHAR) WITH ('delta.enableIcebergCompatV3' = 'true');
 
