@@ -24,15 +24,17 @@ statement ok
 CREATE TABLE part.part (id INTEGER, p VARCHAR, v INTEGER) PARTITIONED BY (p)
 WITH ('delta.columnMapping.mode' = '${mode}');
 
+# The string 'NULL' is a partition of its own, apart from the NULL partition
 statement ok
-INSERT INTO part.part VALUES (1, 'a', 10), (2, 'b', 20), (3, NULL, 30);
+INSERT INTO part.part VALUES (1, 'a', 10), (2, 'b', 20), (3, NULL, 30), (4, 'NULL', 40);
 
 query III
-SELECT * FROM part.part ORDER BY id;
+SELECT id, p IS NULL, v FROM part.part ORDER BY id;
 ----
-1	a	10
-2	b	20
-3	NULL	30
+1	false	10
+2	false	20
+3	true	30
+4	false	40
 
 query I
 SELECT id FROM part.part WHERE p = 'b';
@@ -51,30 +53,31 @@ WITH log AS (
 SELECT count(*), bool_and(json_keys(json_extract(j, '$.add.partitionValues')) = [(SELECT name FROM physical)])
 FROM log WHERE json_extract(j, '$.add') IS NOT NULL;
 ----
-3	true
+4	true
 
 # The data files carry physical names and field ids, the partition column included
 query I
 SELECT count(*) FROM parquet_schema('{TEMP_DIR}/cm_part_${mode}/*/*.parquet')
 WHERE name LIKE 'col-%' AND field_id IS NOT NULL;
 ----
-9
+12
 
 # Each partition gets a directory of its own, named part- and 16 hex digits, never after the column
 query II
 SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/duckdb_[^/]*\.parquet$', 1))
 FROM glob('{TEMP_DIR}/cm_part_${mode}/**/*.parquet');
 ----
-3	3
+4	4
 
-# The string 'NULL' is a partition of its own, apart from the NULL partition
+# A later write puts a partition's files in the directory it already has
 statement ok
-INSERT INTO part.part VALUES (4, 'NULL', 40);
+INSERT INTO part.part VALUES (5, 'a', 50);
 
 query II
-SELECT count(*) FILTER (p IS NULL), count(*) FILTER (p = 'NULL') FROM part.part;
+SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/', 1))
+FROM glob('{TEMP_DIR}/cm_part_${mode}/**/*.parquet');
 ----
-1	1
+5	4
 
 statement ok
 DETACH part;
@@ -202,6 +205,48 @@ GROUP BY json_extract_string(j, '$.add.path') ORDER BY 1;
 ----
 p1=a,p2=10
 p1=b
+
+# -----------------------------------------------------------------------------
+# Many files of one partition in one write
+#
+
+# One open file at a time and a tiny flush threshold make the copy close and reopen each partition's file
+statement ok
+SET partitioned_write_max_open_files = 1;
+
+statement ok
+SET partitioned_write_flush_threshold = 100;
+
+statement ok
+ATTACH '{TEMP_DIR}/cm_part_many' AS many (TYPE delta);
+
+statement ok
+CREATE TABLE many.many (id INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'name');
+
+statement ok
+INSERT INTO many.many SELECT i, 'p' || (i % 3) FROM range(20000) t(i);
+
+# More files than partitions, and still one directory per partition
+query I
+SELECT count(*) > 3 FROM glob('{TEMP_DIR}/cm_part_many/**/*.parquet');
+----
+true
+
+query I
+SELECT count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/', 1)) FROM glob('{TEMP_DIR}/cm_part_many/**/*.parquet');
+----
+3
+
+query II
+SELECT count(*), count(DISTINCT p) FROM many.many;
+----
+20000	3
+
+statement ok
+RESET partitioned_write_max_open_files;
+
+statement ok
+RESET partitioned_write_flush_threshold;
 
 # -----------------------------------------------------------------------------
 # A partition column name that only column mapping allows

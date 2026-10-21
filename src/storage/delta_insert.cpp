@@ -407,28 +407,12 @@ ScalarFunction GetStringWidthCheckFunction() {
 	return function;
 }
 
-struct DeltaPartitionDirectoryData : public FunctionData {
-	explicit DeltaPartitionDirectoryData(string write_uuid_p) : write_uuid(std::move(write_uuid_p)) {
-	}
-
-	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<DeltaPartitionDirectoryData>(write_uuid);
-	}
-	bool Equals(const FunctionData &other_p) const override {
-		return write_uuid == other_p.Cast<DeltaPartitionDirectoryData>().write_uuid;
-	}
-
-	string write_uuid;
-};
-
-//! `part-` and 16 hex digits of a hash over the write and the partition values: random from one write to the next,
-//! and the same for every file of one partition within a write, as the copy requires of a partition's directory.
-//! ToSQLString keeps NULL and the string 'NULL' apart.
+//! `part-` and 16 hex digits of a hash over the partition values, so each partition keeps one directory across writes,
+//! as a hive directory would, without the column's physical name in it. ToSQLString keeps NULL and the string 'NULL'
+//! apart.
 static void DeltaPartitionDirectory(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &info = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<DeltaPartitionDirectoryData>();
 	for (idx_t row = 0; row < args.size(); row++) {
 		MD5Context md5;
-		md5.Add(info.write_uuid);
 		for (idx_t col = 0; col < args.ColumnCount(); col++) {
 			md5.Add("\x1f");
 			md5.Add(args.GetValue(col, row).ToSQLString());
@@ -663,8 +647,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		physical_copy_ref.partition_columns = partition_columns;
 		physical_copy_ref.write_empty_file = true;
 		// Hive directories would carry the physical names, long and meaningless to a reader of the path. The log holds
-		// the partition values either way; Spark and the kernel's own writer give a mapped table random directories
-		// too.
+		// the partition values either way, so the directory name is ours to choose.
 		if (table_entry->snapshot->UsesColumnMapping()) {
 			vector<LogicalType> partition_types;
 			vector<unique_ptr<Expression>> partition_refs;
@@ -673,9 +656,9 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 				partition_types.push_back(type);
 				partition_refs.push_back(make_uniq<BoundReferenceExpression>(type, i));
 			}
-			physical_copy_ref.partition_path_expression = make_uniq<BoundFunctionExpression>(
-			    BoundScalarFunction(GetPartitionDirectoryFunction(partition_types)), std::move(partition_refs),
-			    make_uniq<DeltaPartitionDirectoryData>(current_write_uuid));
+			physical_copy_ref.partition_path_expression =
+			    make_uniq<BoundFunctionExpression>(BoundScalarFunction(GetPartitionDirectoryFunction(partition_types)),
+			                                       std::move(partition_refs), nullptr);
 		}
 	} else {
 		physical_copy_ref.file_path =

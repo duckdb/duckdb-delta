@@ -186,5 +186,11 @@ INSERT INTO nested VALUES (1, {'x': 9});
 ----
 column mapping on a nested column is not supported
 
+# The refusal must land before anything is written, not after
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/cm_nested/**/*.parquet');
+----
+0
+
 statement ok
 DETACH nested;
