@@ -9,6 +9,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/function/table_macro_function.hpp"
@@ -26,26 +27,24 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 	auto res = make_uniq<DeltaCatalog>(db, info.path, options.access_mode);
 	res->internal_table_name = name;
 
-	for (const auto &option : info.options) {
-		if (StringUtil::Lower(option.first) == "pin_snapshot") {
+	// the core already took its own options (access mode, TYPE, DEFAULT_TABLE, ...) and lower-cased the names
+	for (const auto &option : options.options) {
+		auto &option_name = option.first;
+		if (option_name == "pin_snapshot") {
 			res->use_cache = option.second.GetValue<bool>();
-		}
-		if (StringUtil::Lower(option.first) == "pushdown_partition_info") {
+		} else if (option_name == "pushdown_partition_info") {
 			res->pushdown_partition_info = option.second.GetValue<bool>();
-		}
-		if (StringUtil::Lower(option.first) == "pushdown_filters") {
+		} else if (option_name == "pushdown_filters") {
 			auto str = option.second.GetValue<string>();
 			res->filter_pushdown_mode = DeltaEnumUtils::FromString(str);
-		}
-		if (StringUtil::Lower(option.first) == "version") {
+		} else if (option_name == "version") {
 			if (res->has_specific_timestamp) {
 				throw InvalidInputException("ATTACH: 'version' and 'timestamp' are mutually exclusive");
 			}
 			res->use_cache = true;
 			res->use_specific_version = UBigIntValue::Get(option.second.DefaultCastAs(LogicalType::UBIGINT));
 			res->access_mode = AccessMode::READ_ONLY;
-		}
-		if (StringUtil::Lower(option.first) == "timestamp") {
+		} else if (option_name == "timestamp") {
 			if (res->use_specific_version != DConstants::INVALID_INDEX) {
 				throw InvalidInputException("ATTACH: 'version' and 'timestamp' are mutually exclusive");
 			}
@@ -55,27 +54,24 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 			    option.second.CastAs(context, LogicalType::TIMESTAMP_TZ).GetValue<timestamp_tz_t>();
 			DeltaRejectFutureTimestamp(context, DeltaTimestampToEpochMs(res->specific_timestamp));
 			res->access_mode = AccessMode::READ_ONLY;
-		}
-		if (StringUtil::Lower(option.first) == "internal_table_name") {
+		} else if (option_name == "internal_table_name") {
 			res->internal_table_name = StringValue::Get(option.second);
-		}
-		if (StringUtil::Lower(option.first) == "child_catalog_mode") {
+		} else if (option_name == "child_catalog_mode") {
 			res->child_catalog_mode = option.second.GetValue<bool>();
-		}
-		if (StringUtil::Lower(option.first) == "parent_catalog") {
+		} else if (option_name == "parent_catalog") {
 			res->parent_catalog_name = StringValue::Get(option.second);
-		}
-		if (StringUtil::Lower(option.first) == "parent_commit") {
+		} else if (option_name == "parent_catalog_schema") {
+			// passed by parent catalogs, not used yet
+		} else if (option_name == "parent_commit") {
 			res->parent_commit = option.second.GetValue<bool>();
-		}
-		if (StringUtil::Lower(option.first) == "log_tail") {
+		} else if (option_name == "log_tail") {
 			res->catalog_log_tail = option.second;
-		}
-		if (StringUtil::Lower(option.first) == "max_catalog_version") {
+		} else if (option_name == "max_catalog_version") {
 			res->max_catalog_version = option.second.GetValue<int64_t>();
-		}
-		if (StringUtil::Lower(option.first) == "unity_table_id") {
+		} else if (option_name == "unity_table_id") {
 			res->unity_table_id = StringValue::Get(option.second);
+		} else {
+			throw BinderException("Unrecognized option for Delta attach: %s", option_name);
 		}
 	}
 
