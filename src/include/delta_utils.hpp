@@ -438,8 +438,6 @@ public:
 	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
 	                                                                  ffi::SharedScan *state, bool logical,
 	                                                                  DeltaColumnMappingMode mapping_mode);
-	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
-	                                                                  ffi::SharedWriteContext *write_context);
 
 private:
 	unordered_map<uintptr_t, vector<DeltaMultiFileColumnDefinition>> inflight_lists;

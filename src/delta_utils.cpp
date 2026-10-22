@@ -701,24 +701,6 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 	return visitor_state.TakeFieldList(result);
 }
 
-vector<DeltaMultiFileColumnDefinition>
-KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
-                                         ffi::SharedWriteContext *write_context) {
-	// A write takes `physical_name` and `field_id`, never `identifier`; any mapping mode fills both, nested ids
-	// included, and `name` keeps `identifier` a string
-	KernelSchemaVisitor visitor_state(engine, DeltaColumnMappingMode::NAME);
-	auto visitor = CreateSchemaVisitor(visitor_state);
-	auto schema = ffi::get_write_schema(write_context);
-	uintptr_t result = visit_schema(schema, &visitor);
-	free_schema(schema);
-
-	if (visitor_state.error.HasError()) {
-		visitor_state.error.Throw();
-	}
-
-	return visitor_state.TakeFieldList(result);
-}
-
 void KernelSchemaVisitor::VisitDecimal(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                        ffi::KernelStringSlice name, bool is_nullable, const ffi::CMetadataMap *metadata,
                                        uint8_t precision, uint8_t scale) {

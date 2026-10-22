@@ -321,19 +321,6 @@ private:
 	vector<Value> stats;
 };
 
-vector<DeltaMultiFileColumnDefinition> DeltaTransaction::GetWriteSchema(ClientContext &context) {
-	if (transaction_state == DeltaTransactionState::TRANSACTION_NOT_YET_STARTED) {
-		InitializeTransaction(context);
-	}
-
-	auto write_context = write_entry.get()->snapshot->TryUnpackKernelResult(ffi::get_unpartitioned_write_context(
-	    kernel_transaction.get(), write_entry.get()->snapshot->extern_engine.get()));
-	auto result =
-	    KernelSchemaVisitor::ToColumnDefinitions(write_entry.get()->snapshot->extern_engine.get(), write_context);
-	ffi::free_write_context(write_context);
-	return result;
-}
-
 void DeltaTransaction::CleanUpFiles() {
 	// Clean up the files created by this transaction
 	auto context_ptr = context.lock();

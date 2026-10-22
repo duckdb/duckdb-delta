@@ -49,7 +49,6 @@ public:
 
 	DeltaTableEntry &InitializeTableEntry(ClientContext &context, DeltaSchemaEntry &schema_entry, idx_t version,
 	                                      optional_ptr<const DeltaMultiFileList> old_snapshot);
-	vector<DeltaMultiFileColumnDefinition> GetWriteSchema(ClientContext &context);
 
 	//! Removes all outstanding appends and removes the files if possible
 	void CleanUpFiles();
