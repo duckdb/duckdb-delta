@@ -40,6 +40,11 @@ TABLES = {
         "INSERT INTO {t} VALUES (2, named_struct('x2', 20, 'y', 'two'), array(3), array(named_struct('a', 2)), "
         "map('k2', named_struct('b', 200)))",
     ],
+    # NOT NULL struct fields whose names hold a quote and a dot, which only column mapping allows
+    "quoted": [
+        "CREATE TABLE {t} (id INT, s STRUCT<`a\"b`: INT NOT NULL, `c.d`: INT NOT NULL>) USING delta TBLPROPERTIES ({props})",
+        "INSERT INTO {t} VALUES (1, named_struct('a\"b', 1, 'c.d', 2))",
+    ],
 }
 
 MODES = ["name", "id"]

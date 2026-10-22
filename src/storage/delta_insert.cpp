@@ -580,7 +580,6 @@ static PhysicalOperator &PlanInsertProjection(ClientContext &context, PhysicalPl
 		                                         width_bound.max_length.GetIndex()));
 	}
 
-	// A column-mapped struct is written under its physical field names
 	for (idx_t i = 0; i < types.size(); i++) {
 		if (types[i] == written_types[i]) {
 			continue;
@@ -593,6 +592,37 @@ static PhysicalOperator &PlanInsertProjection(ClientContext &context, PhysicalPl
 	    planner.Make<PhysicalProjection>(written_types, std::move(expressions), child.estimated_cardinality);
 	projection.children.push_back(child);
 	return projection;
+}
+
+//! The cast to the written type matches struct fields by position, so the catalog's fields and the scan schema's must
+//! come in the same order, as the top-level columns are matched by name for the same reason
+static void ThrowIfStructFieldsDiffer(const LogicalType &catalog_type, const DeltaMultiFileColumnDefinition &col) {
+	switch (catalog_type.id()) {
+	case LogicalTypeId::STRUCT: {
+		auto &fields = StructType::GetChildTypes(catalog_type);
+		bool same = fields.size() == col.children.size();
+		for (idx_t i = 0; same && i < fields.size(); i++) {
+			same = fields[i].first.GetIdentifierName() == col.children[i].name.GetIdentifierName();
+		}
+		if (!same) {
+			throw InternalException("Delta column \"%s\" has the fields %s in the catalog but not in the scan schema",
+			                        col.name.GetIdentifierName(), catalog_type.ToString());
+		}
+		for (idx_t i = 0; i < fields.size(); i++) {
+			ThrowIfStructFieldsDiffer(fields[i].second, col.children[i]);
+		}
+		break;
+	}
+	case LogicalTypeId::LIST:
+		ThrowIfStructFieldsDiffer(ListType::GetChildType(catalog_type), col.children[0]);
+		break;
+	case LogicalTypeId::MAP:
+		ThrowIfStructFieldsDiffer(MapType::KeyType(catalog_type), col.children[0]);
+		ThrowIfStructFieldsDiffer(MapType::ValueType(catalog_type), col.children[1]);
+		break;
+	default:
+		break;
+	}
 }
 
 //! Rewrites the parquet column names and struct fields to their physical names and attaches the field ids, for a
@@ -629,6 +659,7 @@ static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyIn
 			                        table_entry.name.GetIdentifierName());
 		}
 		auto &col = entry->second.get();
+		ThrowIfStructFieldsDiffer(types[i], col);
 		names[i] = WrittenName(col);
 		types[i] = WrittenType(col);
 		auto tree = FieldIdTree(col);

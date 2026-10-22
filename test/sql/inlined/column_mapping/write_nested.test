@@ -102,7 +102,8 @@ SELECT s.inner_s.z, s.sl[1], s.sm['q'] FROM created.created WHERE s.x = 1;
 ----
 a	5	6
 
-# No logical name reaches the file; field ids on the columns and every struct field, none on containers
+# No logical name reaches the file; field ids on the columns and every struct field, none on list elements or map
+# entries
 query II
 SELECT count(*) FILTER (name IN ('s', 'x', 'inner_s', 'z', 'sl', 'sm', 'l', 'm')),
        count(*) FILTER (field_id IS NOT NULL)
@@ -134,18 +135,22 @@ SELECT * FROM iceberg.iceberg;
 ----
 1	[1, 2]	{k=[3, 4]}
 
-# The ids the log's delta.columnMapping.nested.ids assigns, and the ids the file carries on its containers' children,
-# the list inside the map's value included: its id sits in the map column's nested.ids too
-query II
-SELECT
-    (SELECT list(id::INTEGER ORDER BY id::INTEGER) FROM (
-        SELECT unnest(json_extract(f, '$.metadata."delta.columnMapping.nested.ids".*')) AS id
-        FROM read_ndjson_objects('{TEMP_DIR}/nested_iceberg/_delta_log/00000000000000000000.json'),
-             unnest(json_extract(json_extract_string(json, '$.metaData.schemaString'), '$.fields[*]')) AS t(f))),
-    (SELECT list(field_id::INTEGER ORDER BY field_id) FROM parquet_schema('{TEMP_DIR}/nested_iceberg/duckdb-*.parquet')
-     WHERE name IN ('element', 'key', 'value'));
+# Each id the log's delta.columnMapping.nested.ids assigns, by its path below the column, sits on that node of the
+# file, the list inside the map's value included (parquet_schema keeps the file's schema order)
+query I
+SELECT list(regexp_replace(entry.key, '^[^.]*\.', '') || '=' || entry.value ORDER BY entry.value)
+FROM read_ndjson_objects('{TEMP_DIR}/nested_iceberg/_delta_log/00000000000000000000.json'),
+     unnest(json_extract(json_extract_string(json, '$.metaData.schemaString'), '$.fields[*]')) AS t(f),
+     unnest(map_entries(json_transform(json_extract(f, '$.metadata."delta.columnMapping.nested.ids"'),
+                                       '"MAP(VARCHAR, INTEGER)"'))) AS e(entry);
 ----
-[4, 5, 6, 7]	[4, 5, 6, 7]
+['element=4', 'key=5', 'value=6', 'value.element=7']
+
+query I
+SELECT list(name || '=' || field_id) FROM parquet_schema('{TEMP_DIR}/nested_iceberg/duckdb-*.parquet')
+WHERE name IN ('element', 'key', 'value');
+----
+['element=4', 'key=5', 'value=6', 'element=7']
 
 # -----------------------------------------------------------------------------
 # icebergCompatV3 in id mode: containers inside containers resolve by those ids on read too
@@ -170,3 +175,39 @@ query II
 SELECT m['k'][2], ll[2][2] FROM iceberg_id.iceberg_id;
 ----
 4	3
+
+# -----------------------------------------------------------------------------
+# NOT NULL struct fields whose names hold a quote and a dot
+#
+
+foreach mode name id
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/spark_quoted_{mode}_mode', '{TEMP_DIR}/quoted_{mode}');
+
+statement ok
+ATTACH '{TEMP_DIR}/quoted_{mode}' AS quoted (TYPE delta);
+
+statement ok
+INSERT INTO quoted VALUES (2, {'a"b': 3, 'c.d': 4});
+
+query II
+SELECT id, s FROM quoted ORDER BY id;
+----
+1	{'a"b': 1, 'c.d': 2}
+2	{'a"b': 3, 'c.d': 4}
+
+statement error
+INSERT INTO quoted VALUES (3, {'a"b': NULL, 'c.d': 5});
+----
+NOT NULL constraint failed: quoted.s.a"b
+
+statement error
+INSERT INTO quoted VALUES (3, {'a"b': 5, 'c.d': NULL});
+----
+NOT NULL constraint failed: quoted.s.c.d
+
+statement ok
+DETACH quoted;
+
+endloop
