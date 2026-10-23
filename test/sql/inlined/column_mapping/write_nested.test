@@ -223,21 +223,22 @@ endloop
 
 # The parquet writer's field_ids option reserves that name for a nested column's own id, case-insensitively. Spark
 # keeps an existing column's name as its physical name when it turns mapping on, so the name can reach a mapped log.
-foreach mode name id
+# The upper-case table spells it __DUCKDB_FIELD_ID.
+foreach table name_mode id_mode upper_name_mode
 
 statement ok
-FROM copy_dir('data/inlined/column_mapping/reserved_physical_name_{mode}_mode', '{TEMP_DIR}/reserved_{mode}');
+FROM copy_dir('data/inlined/column_mapping/reserved_physical_name_{table}', '{TEMP_DIR}/reserved_{table}');
 
 statement ok
-ATTACH '{TEMP_DIR}/reserved_{mode}' AS reserved (TYPE delta);
+ATTACH '{TEMP_DIR}/reserved_{table}' AS reserved (TYPE delta);
 
 statement error
 INSERT INTO reserved VALUES ({'x': 7});
 ----
-has a field written as "__duckdb_field_id"
+a name DuckDB's parquet writer reserves for field ids
 
 query I
-SELECT count(*) FROM glob('{TEMP_DIR}/reserved_{mode}/**/*.parquet');
+SELECT count(*) FROM glob('{TEMP_DIR}/reserved_{table}/**/*.parquet');
 ----
 0
 
