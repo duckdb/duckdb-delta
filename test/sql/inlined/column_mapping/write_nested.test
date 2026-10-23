@@ -39,15 +39,20 @@ SELECT s.x2, ls[1].a FROM nested WHERE m['k3'].b = 300;
 ----
 30	3
 
-# DuckDB's file has the same names and field ids at every level as Spark's
-query I
-SELECT count(*) FROM (
-    SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/nested_{mode}/duckdb-*.parquet') WHERE name <> 'duckdb_schema'
-    EXCEPT
-    SELECT name, field_id FROM parquet_schema('{TEMP_DIR}/nested_{mode}/*/part-*.parquet') WHERE name <> 'spark_schema'
-);
+# DuckDB's file has the same schema nodes as one of Spark's: name, field id and child count, each as often, both ways
+query II
+WITH duck AS (
+    SELECT name, field_id, num_children FROM parquet_schema('{TEMP_DIR}/nested_{mode}/duckdb-*.parquet')
+    WHERE name <> 'duckdb_schema'
+), spark_files AS (
+    SELECT * FROM parquet_schema('{TEMP_DIR}/nested_{mode}/*/part-*.parquet')
+), spark AS (
+    SELECT name, field_id, num_children FROM spark_files
+    WHERE name <> 'spark_schema' AND file_name = (SELECT min(file_name) FROM spark_files)
+)
+SELECT (SELECT count(*) FROM (FROM duck EXCEPT ALL FROM spark)), (SELECT count(*) FROM (FROM spark EXCEPT ALL FROM duck));
 ----
-0
+0	0
 
 query I
 SELECT count(*) FROM parquet_schema('{TEMP_DIR}/nested_{mode}/duckdb-*.parquet') WHERE field_id IS NOT NULL;
@@ -211,3 +216,50 @@ statement ok
 DETACH quoted;
 
 endloop
+
+# -----------------------------------------------------------------------------
+# A field written as __duckdb_field_id is refused
+#
+
+# The parquet writer's field_ids option reserves that name for a nested column's own id, case-insensitively. Spark
+# keeps an existing column's name as its physical name when it turns mapping on, so the name can reach a mapped log.
+foreach mode name id
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/reserved_physical_name_{mode}_mode', '{TEMP_DIR}/reserved_{mode}');
+
+statement ok
+ATTACH '{TEMP_DIR}/reserved_{mode}' AS reserved (TYPE delta);
+
+statement error
+INSERT INTO reserved VALUES ({'x': 7});
+----
+has a field written as "__duckdb_field_id"
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/reserved_{mode}/**/*.parquet');
+----
+0
+
+statement ok
+DETACH reserved;
+
+endloop
+
+# -----------------------------------------------------------------------------
+# A NOT NULL struct field whose name holds a quote, without column mapping
+#
+
+statement ok
+FROM copy_dir('data/inlined/column_mapping/unmapped_quoted_not_null', '{TEMP_DIR}/unmapped_quoted');
+
+statement ok
+ATTACH '{TEMP_DIR}/unmapped_quoted' AS unmapped_quoted (TYPE delta);
+
+statement ok
+INSERT INTO unmapped_quoted VALUES (1, {'a"b': 1, 'c': NULL});
+
+statement error
+INSERT INTO unmapped_quoted VALUES (2, {'a"b': NULL, 'c': 1});
+----
+NOT NULL constraint failed: unmapped_quoted.s.a"b

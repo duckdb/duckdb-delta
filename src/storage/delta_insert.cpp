@@ -336,7 +336,6 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 				throw InternalException("Column %s not found in table %s", StringUtil::Join(column_names, "."),
 				                        global_state.table_name);
 			}
-			// Stats paths arrive as written, so they are walked against the written type
 			auto coltype = global_state.column_mapped ? WrittenType(*column) : column->type;
 			auto logical_name = column->name.GetIdentifierName();
 
@@ -594,8 +593,22 @@ static PhysicalOperator &PlanInsertProjection(ClientContext &context, PhysicalPl
 	return projection;
 }
 
-//! The cast to the written type matches struct fields by position, so the catalog's fields and the scan schema's must
-//! come in the same order, as the top-level columns are matched by name for the same reason
+//! The parquet writer reads a struct field named FIELD_ID_KEY in `field_ids` as its parent's id, matching
+//! case-insensitively, so a field written under that name would lose its id and give the parent the wrong one. Renaming
+//! it, or writing it without an id, would contradict the log, so the write is refused.
+static void ThrowIfFieldIdKeyIsWritten(const DeltaMultiFileColumnDefinition &col) {
+	for (auto &child : col.children) {
+		if (col.type.id() == LogicalTypeId::STRUCT && StringUtil::CIEquals(WrittenName(child), FIELD_ID_KEY)) {
+			throw NotImplementedException("Delta column \"%s\" has a field written as \"%s\", a name DuckDB's parquet "
+			                              "writer reserves for field ids; writing to this table is not supported",
+			                              col.name.GetIdentifierName(), WrittenName(child));
+		}
+		ThrowIfFieldIdKeyIsWritten(child);
+	}
+}
+
+//! The cast to the written type pairs struct fields by position, so the catalog and the scan schema must list them in
+//! the same order; top-level columns are paired by name instead
 static void ThrowIfStructFieldsDiffer(const LogicalType &catalog_type, const DeltaMultiFileColumnDefinition &col) {
 	switch (catalog_type.id()) {
 	case LogicalTypeId::STRUCT: {
@@ -660,6 +673,7 @@ static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyIn
 		}
 		auto &col = entry->second.get();
 		ThrowIfStructFieldsDiffer(types[i], col);
+		ThrowIfFieldIdKeyIsWritten(col);
 		names[i] = WrittenName(col);
 		types[i] = WrittenType(col);
 		auto tree = FieldIdTree(col);
