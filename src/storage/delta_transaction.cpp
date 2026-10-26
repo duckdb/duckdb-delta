@@ -429,9 +429,10 @@ void DeltaTransaction::Commit(ClientContext &context) {
 					                           app_id, expected_version.ToString(), error_version);
 				}
 
-				kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(ffi::update_table_txn_with_transaction_id(
-				    kernel_transaction.release(), KernelUtils::ToDeltaString(app_id), NumericCast<int64_t>(new_version),
-				    table_entry->snapshot->extern_engine.get()));
+				kernel_transaction =
+				    table_entry->snapshot->TryUnpackKernelResult(ffi::update_table_txn_with_transaction_id(
+				        kernel_transaction.release(), KernelUtils::ToDeltaString(app_id),
+				        NumericCast<int64_t>(new_version), table_entry->snapshot->extern_engine.get()));
 			}
 
 			// We have some special error handling here to ensure the error created by DuckDB is properly thrown here,
