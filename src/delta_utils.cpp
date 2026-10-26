@@ -1082,22 +1082,8 @@ bool KernelUtils::IsMissingMaxCatalogVersion(const ErrorData &error) {
 	                            "Max catalog version is required when loading a catalog-managed table");
 }
 
-static void IgnoreProtocolVersions(ffi::NullableCvoid, int32_t, int32_t) {
-}
-
-static void NoteCatalogManagedFeature(ffi::NullableCvoid context, bool, ffi::KernelStringSlice feature) {
-	auto name = KernelUtils::FromDeltaString(feature);
-	if (name == "catalogManaged" || name == "catalogOwned-preview") {
-		*static_cast<bool *>(context) = true;
-	}
-}
-
 bool KernelUtils::IsCatalogManaged(ffi::SharedSnapshot *snapshot) {
-	bool catalog_managed = false;
-	auto protocol = ffi::snapshot_get_protocol(snapshot);
-	ffi::visit_protocol(protocol, &catalog_managed, IgnoreProtocolVersions, NoteCatalogManagedFeature);
-	ffi::free_protocol(protocol);
-	return catalog_managed;
+	return HasWriterFeature(snapshot, "catalogManaged") || HasWriterFeature(snapshot, "catalogOwned-preview");
 }
 
 optional<Value> KernelUtils::FetchFromMetadataMap(ffi::Handle<ffi::SharedExternEngine> engine,
