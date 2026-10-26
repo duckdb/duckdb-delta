@@ -60,9 +60,9 @@ statement ok
 ATTACH '{TEMP_DIR}/error_names_existing_table' AS existing (TYPE delta);
 
 statement ok
-CREATE TABLE existing.t (i INTEGER);
+CREATE TABLE existing.existing (i INTEGER);
 
 statement error
-CREATE TABLE existing.t (i INTEGER);
+CREATE TABLE existing.existing (i INTEGER);
 ----
 DeltaKernel TableAlreadyExistsAtPath (54): Table already exists at path
