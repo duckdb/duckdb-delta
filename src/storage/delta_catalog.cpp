@@ -161,6 +161,12 @@ bool DeltaCatalog::UseCachedSnapshot() {
 }
 
 optional_idx DeltaCatalog::GetCatalogVersion(ClientContext &context) {
+	// Without a pinned snapshot each transaction owns its table entries, and a prepared plan holds a
+	// raw pointer to one: report no version so every EXECUTE rebinds instead of using a freed entry
+	if (!UseCachedSnapshot()) {
+		return optional_idx::Invalid();
+	}
+
 	auto &delta_transaction = DeltaTransaction::Get(context, *this);
 
 	// Option 1: snapshot is cached table-wide

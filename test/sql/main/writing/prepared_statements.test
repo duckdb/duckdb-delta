@@ -1,0 +1,194 @@
+# name: test/sql/main/writing/prepared_statements.test
+# description: Prepared INSERT and SELECT on an attached delta table run in a later transaction
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Prepared INSERT, executed in later transactions
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/prepared_statements/plain' AS plain (TYPE delta);
+
+statement ok
+CREATE TABLE plain.plain (id INTEGER, s VARCHAR);
+
+statement ok
+PREPARE ins AS INSERT INTO plain (id, s) VALUES (1, 'a');
+
+statement ok
+EXECUTE ins;
+
+statement ok
+EXECUTE ins;
+
+query II
+SELECT id, s FROM plain ORDER BY ALL;
+----
+1	a
+1	a
+
+# -----------------------------------------------------------------------------
+# Prepared INSERT with a parameter
+#
+
+statement ok
+PREPARE ins_param AS INSERT INTO plain VALUES ($1, 'b');
+
+statement ok
+EXECUTE ins_param(2);
+
+statement ok
+EXECUTE ins_param(3);
+
+query II
+SELECT id, s FROM plain ORDER BY ALL;
+----
+1	a
+1	a
+2	b
+3	b
+
+# -----------------------------------------------------------------------------
+# Prepared INSERT, prepared and executed in one explicit transaction
+#
+
+statement ok
+BEGIN;
+
+statement ok
+PREPARE ins_txn AS INSERT INTO plain VALUES (4, 'c');
+
+statement ok
+EXECUTE ins_txn;
+
+statement ok
+COMMIT;
+
+statement ok
+EXECUTE ins_txn;
+
+query I
+SELECT count(*) FROM plain WHERE id = 4;
+----
+2
+
+# -----------------------------------------------------------------------------
+# Prepared SELECT sees commits made after the PREPARE. A guard only: DuckDB
+# rebinds every plan that scans a Delta table on each EXECUTE by itself, so this
+# passes without the catalog-version fix too
+#
+
+statement ok
+PREPARE cnt AS SELECT count(*) FROM plain;
+
+query I
+EXECUTE cnt;
+----
+6
+
+statement ok
+INSERT INTO plain VALUES (5, 'd');
+
+query I
+EXECUTE cnt;
+----
+7
+
+# -----------------------------------------------------------------------------
+# Prepared INSERT into a partitioned, column-mapped table
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/prepared_statements/cm_part' AS cm_part (TYPE delta);
+
+statement ok
+CREATE TABLE cm_part.cm_part (id INTEGER, p VARCHAR) PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'name');
+
+statement ok
+PREPARE ins_part AS INSERT INTO cm_part VALUES ($1, $2);
+
+statement ok
+EXECUTE ins_part(1, 'x');
+
+statement ok
+EXECUTE ins_part(2, 'y');
+
+query II
+SELECT id, p FROM cm_part ORDER BY ALL;
+----
+1	x
+2	y
+
+
+# -----------------------------------------------------------------------------
+# Prepared INSERT executed twice in one explicit transaction, then after COMMIT
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/prepared_statements/txn' AS txn (TYPE delta);
+
+statement ok
+CREATE TABLE txn.txn (id INTEGER);
+
+statement ok
+PREPARE ins_twice AS INSERT INTO txn VALUES ($1);
+
+statement ok
+BEGIN;
+
+statement ok
+EXECUTE ins_twice(1);
+
+statement ok
+EXECUTE ins_twice(2);
+
+statement ok
+COMMIT;
+
+statement ok
+EXECUTE ins_twice(3);
+
+query I
+SELECT id FROM txn ORDER BY ALL;
+----
+1
+2
+3
+
+# -----------------------------------------------------------------------------
+# Prepared INSERT, prepared and executed in a transaction that is rolled back,
+# then executed again
+#
+
+statement ok
+BEGIN;
+
+statement ok
+PREPARE ins_rb AS INSERT INTO txn VALUES ($1);
+
+statement ok
+EXECUTE ins_rb(10);
+
+statement ok
+ROLLBACK;
+
+statement ok
+EXECUTE ins_rb(11);
+
+statement ok
+EXECUTE ins_rb(12);
+
+query I
+SELECT id FROM txn ORDER BY ALL;
+----
+1
+2
+3
+11
+12
