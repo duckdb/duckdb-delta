@@ -1,0 +1,25 @@
+# name: test/sql/inlined/attach_unknown_option.test
+# description: ATTACH rejects options the delta extension does not know
+# group: [inlined]
+
+require parquet
+
+require delta
+
+statement error
+ATTACH 'data/inlined/simple_table/delta_lake' AS dt (TYPE delta, foo_bar 1)
+----
+Unrecognized option for Delta attach: foo_bar
+
+# option names are case-insensitive
+statement error
+ATTACH 'data/inlined/simple_table/delta_lake' AS dt (TYPE delta, PIN_SNAPSHOTS true)
+----
+Unrecognized option for Delta attach: pin_snapshots
+
+# core options and known delta options still work together
+statement ok
+ATTACH 'data/inlined/simple_table/delta_lake' AS dt (TYPE delta, READ_ONLY, PIN_SNAPSHOT true, PUSHDOWN_FILTERS 'none')
+
+statement ok
+DETACH dt
