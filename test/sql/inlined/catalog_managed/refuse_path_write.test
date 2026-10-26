@@ -7,7 +7,8 @@ require parquet
 require delta
 
 # max_catalog_version admits a read, so the refusal has to say why it does not also admit a write.
-# The kernel's own message advises supplying a value the caller has already supplied.
+# DuckDB reads the catalogManaged feature off the snapshot's protocol and refuses before any data file
+# is written; kernel itself would only refuse at commit, with the files already on disk.
 #
 # The table is copied out of the fixture first: the write is expected to be refused before anything
 # is committed, and a regression that let it through would otherwise edit the fixture in place.
