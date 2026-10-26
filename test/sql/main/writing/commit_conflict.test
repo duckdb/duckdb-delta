@@ -1,0 +1,52 @@
+# name: test/sql/main/writing/commit_conflict.test
+# description: a write commits against the snapshot its transaction read, so a commit that lands in between conflicts
+# group: [writing]
+
+require parquet
+
+require delta
+
+statement ok
+ATTACH '{TEMP_DIR}/commit_conflict' AS t (TYPE delta);
+
+statement ok
+CREATE TABLE t.t (i INTEGER);
+
+# -----------------------------------------------------------------------------
+# Two writers, the first one reads before it writes
+#
+# con1's read pins version 0 as its transaction's snapshot. con2 commits version 1 in between, so
+# con1's write, planned against version 0, is refused at commit rather than appended on top of
+# version 1. This is today's expected result: duckdb/duckdb-delta#412 asks to retry blind appends,
+# which flips this case (tracked in delta/TODO.md "Retry blind appends on commit conflict (#412)").
+#
+
+statement ok con1
+BEGIN TRANSACTION
+
+query I con1
+SELECT count(*) FROM t.t;
+----
+0
+
+statement ok con2
+INSERT INTO t.t VALUES (2);
+
+statement ok con1
+INSERT INTO t.t VALUES (1);
+
+statement error con1
+COMMIT
+----
+commit conflict at version 1
+
+# Only con2's row is in the table, and con1's data file was cleaned up with its rollback
+query I
+SELECT i FROM t.t;
+----
+2
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/commit_conflict/**/*.parquet');
+----
+1
