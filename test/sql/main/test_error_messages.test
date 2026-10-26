@@ -49,3 +49,20 @@ statement error
 SHOW ALL TABLES;
 ----
 <REGEX>:.*Could not connect to server.*bucket.localhost:1337.*
+
+# -----------------------------------------------------------------------------
+# Kernel error codes added in v0.30 print their name
+#
+# The name table is positional; a code past its end would print as EnumOutOfRange. TableAlreadyExistsAtPath
+# is the last code kernel v0.30.1 defines, so it pins the whole table.
+
+statement ok
+ATTACH '{TEMP_DIR}/error_names_existing_table' AS existing (TYPE delta);
+
+statement ok
+CREATE TABLE existing.t (i INTEGER);
+
+statement error
+CREATE TABLE existing.t (i INTEGER);
+----
+DeltaKernel TableAlreadyExistsAtPath (54): Table already exists at path

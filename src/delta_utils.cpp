@@ -928,17 +928,28 @@ string DuckDBEngineError::KernelErrorEnumToString(ffi::FFIKernelError err) {
 	                                           "ChangeDataFeedUnsupported",
 	                                           "ChangeDataFeedIncompatibleSchema",
 	                                           "InvalidCheckpoint",
-	                                           "LiteralExpressionTransformError",
+	                                           // 40: kernel removed LiteralExpressionTransformError and left the
+	                                           // discriminant unused, so this slot keeps the ones after it aligned
+	                                           "UnusedError",
 	                                           "CheckpointWriteError",
 	                                           "SchemaError",
 	                                           "LogHistoryError",
 	                                           "RowTrackingChangeFeedUnsupported",
 	                                           "CancelledError",
-	                                           "InvalidTransactionStateError"};
+	                                           "InvalidTransactionStateError",
+	                                           "InvalidLogSegment",
+	                                           "UnpublishedVersionError",
+	                                           "EmptyLogError",
+	                                           "InvalidSnapshotHint",
+	                                           "StartVersionNotFound",
+	                                           "InvalidGeoParamsError",
+	                                           "MaxCatalogVersionError",
+	                                           "TableAlreadyExistsAtPath"};
 
 	static constexpr int KERNEL_ERROR_ENUM_COUNT = (int)(sizeof(KERNEL_ERROR_ENUM_STRINGS) / sizeof(char *));
 
-	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::FFIKernelError::InvalidTransactionStateError,
+	// Anchored on the last variant: a bump that appends variants fails here instead of printing EnumOutOfRange
+	static_assert(KERNEL_ERROR_ENUM_COUNT - 1 == (int)ffi::FFIKernelError::TableAlreadyExistsAtPath,
 	              "KernelErrorEnumStrings mismatched with kernel");
 
 	if ((int)err < KERNEL_ERROR_ENUM_COUNT) {
