@@ -626,6 +626,9 @@ private:
 	static void VisitGeography(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                           bool is_nullable, const ffi::CMetadataMap *metadata, ffi::KernelStringSlice crs,
 	                           ffi::KernelStringSlice algorithm);
+	static void VisitUserDefined(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	                             bool is_nullable, const ffi::CMetadataMap *metadata, uintptr_t child_list_id,
+	                             ffi::FfiNullableStringMap annotation);
 	//! Records the first error of a visit; it is raised once the visit is over
 	void RecordError(ExceptionType type, const string &message);
 	//! Records that a column has a type DuckDB cannot read yet

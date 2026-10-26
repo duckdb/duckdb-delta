@@ -657,6 +657,9 @@ ffi::EngineSchemaVisitor KernelSchemaVisitor::CreateSchemaVisitor(KernelSchemaVi
 	visitor.visit_geography = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *,
 	                                    ffi::KernelStringSlice, ffi::KernelStringSlice)) &
 	                          VisitGeography;
+	visitor.visit_user_defined = (void (*)(void *, uintptr_t, ffi::KernelStringSlice, bool, const ffi::CMetadataMap *,
+	                                       uintptr_t, ffi::FfiNullableStringMap)) &
+	                             VisitUserDefined;
 
 	return visitor;
 }
@@ -835,6 +838,15 @@ void KernelSchemaVisitor::VisitGeography(KernelSchemaVisitor *state, uintptr_t s
                                          const ffi::CMetadataMap *metadata, ffi::KernelStringSlice crs,
                                          ffi::KernelStringSlice algorithm) {
 	state->RefuseType(name, "geography");
+}
+
+// Kernel parses user-defined types only with its `udt-in-dev` cargo feature, which the build does not enable, so
+// today kernel refuses the schema before this runs.
+void KernelSchemaVisitor::VisitUserDefined(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
+                                           ffi::KernelStringSlice name, bool is_nullable,
+                                           const ffi::CMetadataMap *metadata, uintptr_t child_list_id,
+                                           ffi::FfiNullableStringMap annotation) {
+	state->RefuseType(name, "user-defined type");
 }
 
 uintptr_t KernelSchemaVisitor::MakeFieldListImpl(uintptr_t capacity_hint) {
