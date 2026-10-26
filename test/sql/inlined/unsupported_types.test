@@ -38,3 +38,16 @@ statement error
 SELECT * FROM delta_scan('data/inlined/unsupported_types/geography');
 ----
 Unsupported Delta table type: 'geography(EPSG:4326, spherical)'
+
+# -----------------------------------------------------------------------------
+# User-defined types
+#
+# Spark stores a UDT as `{"type":"udt", "sqlType":..., "class":...}`. Kernel parses it only when built
+# with its `udt-in-dev` feature, which this build leaves off, so the refusal is kernel's. With the
+# feature on, DuckDB's message names the column, as for the intervals above.
+#
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/user_defined');
+----
+Unsupported Delta table type: 'udt'
