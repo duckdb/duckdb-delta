@@ -42,51 +42,6 @@ void DeltaTransaction::Start() {
 	transaction_state = DeltaTransactionState::TRANSACTION_NOT_YET_STARTED;
 }
 
-struct DeltaCommitInfo {
-public:
-	static vector<LogicalType> GetTypes() {
-		return {LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)};
-	};
-	static vector<string> GetNames() {
-		return {"engineCommitInfo"};
-	};
-
-public:
-	void Append(Value commit_info_map) {
-		values.push_back(std::move(commit_info_map));
-	}
-
-	void (*release)();
-	static void InstrumentedRelease(ArrowArray *arg1) {
-		LoggerCallback::TryLog("delta", LogLevel::LOG_TRACE, "Delta ToArrow debug: released CommitInfo");
-		return ArrowAppender::ReleaseArray(arg1);
-	}
-
-	ffi::ArrowFFIData ToArrow(optional_ptr<ClientContext> context) {
-		LoggerCallback::TryLog("delta", LogLevel::LOG_TRACE, "Delta ToArrow debug: created CommitInfo");
-
-		DataChunk buffer;
-		idx_t capacity = MaxValue<idx_t>(values.size(), STANDARD_VECTOR_SIZE);
-		buffer.Initialize(Allocator::DefaultAllocator(), GetTypes(), capacity);
-		for (idx_t i = 0; i < values.size(); i++) {
-			buffer.SetValue(0, i, values[i]);
-		}
-		buffer.SetCardinality(values.size());
-
-		ffi::ArrowFFIData ffi_data;
-		unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> extension_types;
-		ClientProperties props("UTC", ArrowOffsetSize::REGULAR, false, false, false, ArrowFormatVersion::V1_0, context);
-		ArrowConverter::ToArrowArray(buffer, (ArrowArray *)(&ffi_data.array), props, extension_types);
-		ArrowConverter::ToArrowSchema((ArrowSchema *)(&ffi_data.schema), GetTypes(), GetNames(), props);
-
-		ffi_data.array.release = reinterpret_cast<void (*)(ffi::FFI_ArrowArray *)>(InstrumentedRelease);
-		return ffi_data;
-	}
-
-private:
-	vector<Value> values;
-};
-
 struct StatNode {
 	// If leaf node contains value
 	DeltaColumnStats stats;
@@ -573,16 +528,6 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 			    table_entry->snapshot->TryUnpackKernelResult(ffi::update_table_txn_builder_build(builder, engine));
 		}
 	}
-
-	// Create commit info
-	DeltaCommitInfo commit_info;
-	commit_info.Append(
-	    Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, {Value("engineInfo")}, {Value("DuckDB")}));
-	auto commit_info_arrow = commit_info.ToArrow(context);
-
-	// Convert arrow to Engine Data
-	KernelEngineData commit_info_engine_data = table_entry->snapshot->TryUnpackKernelResult(
-	    ffi::get_engine_data(commit_info_arrow.array, &commit_info_arrow.schema, DuckDBEngineError::AllocateError));
 
 	kernel_transaction = new_kernel_transaction;
 	write_entry = table_entry.get();
