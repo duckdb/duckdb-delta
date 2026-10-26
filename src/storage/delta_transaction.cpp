@@ -497,7 +497,6 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 
 	// Start the kernel transaction
 	string path = table_entry->snapshot->GetPath();
-	ffi::ExclusiveUpdateTableTransaction *new_kernel_transaction;
 
 	{
 		auto snapshot_ref = table_entry->snapshot->snapshot->GetLockingRef();
@@ -521,15 +520,23 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 		    KernelUtils::ToDeltaString(engine_info), true, engine));
 
 		if (parent_commit) {
-			new_kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
-			    ffi::update_table_txn_builder_build_with_committer(builder, engine, CreateCatalogCommitter(path)));
+			// Kernel has no free for a committer handle, so the committer is built after the builder and the
+			// builder is freed if building it fails; build_with_committer then consumes both, on error too.
+			ffi::Handle<ffi::MutableCommitter> committer;
+			try {
+				committer = CreateCatalogCommitter(path);
+			} catch (...) {
+				ffi::free_update_table_txn_builder(builder);
+				throw;
+			}
+			kernel_transaction = table_entry->snapshot->TryUnpackKernelResult(
+			    ffi::update_table_txn_builder_build_with_committer(builder, engine, committer));
 		} else {
-			new_kernel_transaction =
+			kernel_transaction =
 			    table_entry->snapshot->TryUnpackKernelResult(ffi::update_table_txn_builder_build(builder, engine));
 		}
 	}
 
-	kernel_transaction = new_kernel_transaction;
 	write_entry = table_entry.get();
 }
 
