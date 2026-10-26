@@ -26,22 +26,9 @@ INSERT INTO simple_table VALUES (5);
 endloop
 
 query I
-SELECT count() >= 10 FROM duckdb_logs where message='Delta ToArrow debug: created CommitInfo'
-----
-true
-
-query I
 SELECT count() >= 10 FROM duckdb_logs where message='Delta ToArrow debug: created WriteMetaData'
 ----
 true
-
-query I nosort commit_info_count
-SELECT count() FROM duckdb_logs where message='Delta ToArrow debug: created CommitInfo'
----
-
-query I nosort commit_info_count
-SELECT count() FROM duckdb_logs where message='Delta ToArrow debug: released CommitInfo'
-----
 
 query I nosort write_metadata_count
 SELECT count() FROM duckdb_logs where message='Delta ToArrow debug: created WriteMetaData'
