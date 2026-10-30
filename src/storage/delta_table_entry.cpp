@@ -89,13 +89,14 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 		param_map.insert({"version", Value::UBIGINT(param_version)});
 	}
 
-	// the bind sees the function as a bound call would; nothing is read back off it afterwards
 	BoundTableFunction bound_scan_function(delta_scan_function);
 	TableFunctionBindInput bind_input(inputs, param_map, return_types, names, nullptr, nullptr, bound_scan_function,
 	                                  empty_ref);
 
 	auto result = delta_scan_function.bind(context, bind_input, return_types, names);
 	bind_data = std::move(result);
+	// the bind may replace the function's callbacks, so return the bound ones to match the bind data
+	static_cast<BaseTableFunction &>(delta_scan_function) = bound_scan_function;
 
 	return delta_scan_function;
 }
