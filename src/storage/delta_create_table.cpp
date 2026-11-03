@@ -1,6 +1,7 @@
 #include "storage/delta_create_table.hpp"
 
 #include "delta_schema_builder.hpp"
+#include "delta_table_properties.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "storage/delta_catalog.hpp"
 #include "storage/delta_insert.hpp"
@@ -74,6 +75,9 @@ static vector<pair<string, string>> GetCreateTableProperties(ClientContext &cont
 		if (StringUtil::CIEquals(option.first, "location")) {
 			continue;
 		}
+		// A `delta.*` key must be one Delta has, spelled exactly; any other key is the user's own property and is kept
+		// as given, as COPY TO's WITH_PROPERTIES keeps it
+		DeltaTableProperties::ThrowIfUnknownDeltaKey(option.first, "Delta CREATE TABLE");
 		auto value = ParseCreateTableOption(context, binder, *option.second, option.first, LogicalType::VARCHAR);
 		properties.emplace_back(option.first, value.GetValue<string>());
 	}

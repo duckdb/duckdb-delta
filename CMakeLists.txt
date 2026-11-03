@@ -17,6 +17,7 @@ set(EXTENSION_SOURCES
     src/delta_log_types.cpp
     src/delta_macros.cpp
     src/delta_schema_builder.cpp
+    src/delta_table_properties.cpp
     src/delta_utils.cpp
     src/functions/delta_scan/delta_scan.cpp
     src/functions/delta_scan/delta_multi_file_list.cpp

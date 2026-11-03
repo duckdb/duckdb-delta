@@ -146,7 +146,7 @@ DETACH created;
 
 statement ok
 COPY (SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, {'x': range::INTEGER} AS s FROM range(4))
-TO '{TEMP_DIR}/copy_cm_${mode}' (FORMAT delta, PARTITION_BY (p), TABLE_PROPERTIES {'delta.columnMapping.mode': '${mode}'});
+TO '{TEMP_DIR}/copy_cm_${mode}' (FORMAT delta, PARTITION_BY (p), WITH_PROPERTIES {'delta.columnMapping.mode': '${mode}'});
 
 query III
 SELECT id, p, s.x FROM delta_scan('{TEMP_DIR}/copy_cm_${mode}') ORDER BY id;

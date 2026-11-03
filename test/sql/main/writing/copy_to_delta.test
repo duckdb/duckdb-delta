@@ -134,13 +134,13 @@ PARTITION_BY names column 'nope', which the query does not return
 # -----------------------------------------------------------------------------
 # Table properties, column mapping
 #
-# COPY lowercases its option names and does not parse dotted ones, so the case-sensitive Delta keys come in one
-# option, as a STRUCT or a MAP
+# WITH_PROPERTIES takes every property, as CREATE's WITH (...) does: delta.* keys spelled exactly, and keys of the
+# user's own, kept as given. A known delta.* property may also be a COPY option of its own.
 #
 
 statement ok
 COPY (SELECT range::INTEGER AS i, (range % 2)::VARCHAR AS p FROM range(4)) TO '{TEMP_DIR}/copy_cm'
-(FORMAT delta, PARTITION_BY (p), TABLE_PROPERTIES {'delta.columnMapping.mode': 'name'});
+(FORMAT delta, PARTITION_BY (p), WITH_PROPERTIES {'delta.columnMapping.mode': 'name'});
 
 query II
 SELECT i, p FROM delta_scan('{TEMP_DIR}/copy_cm') ORDER BY i;
@@ -178,7 +178,7 @@ SELECT count(*) FROM glob('{TEMP_DIR}/copy_cm/part-*/*.parquet');
 
 statement ok
 COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_props' (FORMAT delta,
-    TABLE_PROPERTIES MAP {'delta.appendOnly': 'true', 'myApp.Mixed.Key': 'Kept'});
+    WITH_PROPERTIES MAP {'delta.appendOnly': 'true', 'myApp.Mixed.Key': 'Kept'});
 
 query II
 SELECT json_extract_string(metaData.configuration, '$."delta.appendOnly"'),
@@ -189,9 +189,69 @@ WHERE metaData IS NOT NULL;
 true	Kept
 
 statement error
-COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, TABLE_PROPERTIES 'delta.appendOnly');
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES 'delta.appendOnly');
 ----
-TABLE_PROPERTIES takes a MAP or a STRUCT
+WITH_PROPERTIES takes a MAP or a STRUCT
+
+# The complete form: delta.* and the user's own keys together
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_with_owner' (FORMAT delta,
+    WITH_PROPERTIES {'delta.columnMapping.mode': 'name', 'owner': 'x'});
+
+query II
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"'),
+       json_extract_string(metaData.configuration, '$.owner')
+FROM read_json('{TEMP_DIR}/copy_with_owner/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+name	x
+
+# In WITH_PROPERTIES, a delta.* key is checked as CREATE checks it: spelled exactly, and known
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'delta.columnmapping.mode': 'name'});
+----
+Delta table property keys are case-sensitive: 'delta.columnmapping.mode' is spelled 'delta.columnMapping.mode'
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'delta.columnMapping.mod': 'name'});
+----
+unknown Delta table property 'delta.columnMapping.mod'
+
+# A known delta.* property as an option of its own: COPY lowercases the name, and it is set under its own spelling
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bare_props' (FORMAT delta, "delta.columnMapping.mode" 'id', "DELTA.APPENDONLY" true);
+
+query II
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"'),
+       json_extract_string(metaData.configuration, '$."delta.appendOnly"')
+FROM read_json('{TEMP_DIR}/copy_bare_props/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+id	true
+
+# An unknown delta.* option: DuckDB refuses it, suggesting the known ones
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, "delta.columnMapping.mod" 'id');
+----
+Candidate options: "delta.columnMapping.mode"
+
+# A key of the user's own goes in WITH_PROPERTIES; as an option it is refused
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, owner 'x');
+----
+Unrecognized option "owner" for delta
+
+# One property, given both ways, is refused
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, "delta.appendOnly" 'true',
+    WITH_PROPERTIES {'delta.appendOnly': 'true'});
+----
+is given both as an option and in WITH_PROPERTIES
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_bad_props/**');
+----
+0
 
 # COPY's own file options say nothing about a table
 statement error
@@ -249,7 +309,7 @@ SELECT count(*) FROM glob('{TEMP_DIR}/copy_fails/**');
 statement error
 COPY (SELECT range % 3 AS p, CASE WHEN range < 300000 THEN range ELSE error('fails mid-write') END AS i
       FROM range(400000))
-TO '{TEMP_DIR}/copy_fails_partitioned' (FORMAT delta, PARTITION_BY (p), TABLE_PROPERTIES {'delta.columnMapping.mode': 'id'});
+TO '{TEMP_DIR}/copy_fails_partitioned' (FORMAT delta, PARTITION_BY (p), WITH_PROPERTIES {'delta.columnMapping.mode': 'id'});
 ----
 fails mid-write
 

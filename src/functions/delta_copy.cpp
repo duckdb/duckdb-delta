@@ -1,5 +1,6 @@
 #include "functions/delta_copy.hpp"
 
+#include "delta_table_properties.hpp"
 #include "storage/delta_create_table.hpp"
 #include "storage/delta_insert.hpp"
 
@@ -36,11 +37,12 @@ protected:
 };
 
 //! COPY lowercases option names and does not parse a dotted one, while Delta property keys are dotted and
-//! case-sensitive (`delta.columnMapping.mode`), so the table properties come as one option: a MAP or a STRUCT
-static vector<pair<string, string>> GetTableProperties(const vector<Value> &values) {
+//! case-sensitive (`delta.columnMapping.mode`), so the table properties come as one option, a MAP or a STRUCT, keys
+//! as given: `WITH_PROPERTIES {...}`, after CREATE's `WITH (...)`
+static vector<pair<string, string>> GetWithProperties(const vector<Value> &values) {
 	if (values.size() != 1 || values[0].IsNull()) {
-		throw BinderException("Delta COPY TO: TABLE_PROPERTIES takes one MAP or STRUCT, e.g. "
-		                      "TABLE_PROPERTIES {'delta.appendOnly': 'true'}");
+		throw BinderException("Delta COPY TO: WITH_PROPERTIES takes one MAP or STRUCT, e.g. "
+		                      "WITH_PROPERTIES {'delta.appendOnly': 'true'}");
 	}
 	auto &value = values[0];
 	vector<pair<string, string>> result;
@@ -48,6 +50,7 @@ static vector<pair<string, string>> GetTableProperties(const vector<Value> &valu
 		if (property.IsNull()) {
 			throw BinderException("NULL is not a valid value for Delta table property '%s'", key);
 		}
+		DeltaTableProperties::ThrowIfUnknownDeltaKey(key, "Delta COPY TO");
 		result.emplace_back(key, property.ToString());
 	};
 	switch (value.type().id()) {
@@ -65,16 +68,22 @@ static vector<pair<string, string>> GetTableProperties(const vector<Value> &valu
 		}
 		break;
 	default:
-		throw BinderException("Delta COPY TO: TABLE_PROPERTIES takes a MAP or a STRUCT, not %s",
+		throw BinderException("Delta COPY TO: WITH_PROPERTIES takes a MAP or a STRUCT, not %s",
 		                      value.type().ToString());
 	}
-	std::sort(result.begin(), result.end());
 	return result;
 }
 
+//! Besides PARTITION_BY and WITH_PROPERTIES, every known `delta.*` property is a COPY option of its own, as
+//! duckdb-iceberg takes its write properties: `"delta.columnMapping.mode" 'name'`. The option name arrives lowercased
+//! and is set as the property's canonical spelling. Registered under that spelling, so that DuckDB's refusal of an
+//! unknown option suggests the right key.
 static void DeltaCopyOptions(ClientContext &context, CopyOptionsInput &input) {
 	input.options["partition_by"] = CopyOption(LogicalType::LIST(LogicalType::VARCHAR), CopyOptionMode::WRITE_ONLY);
-	input.options["table_properties"] = CopyOption(LogicalType::ANY, CopyOptionMode::WRITE_ONLY);
+	input.options["with_properties"] = CopyOption(LogicalType::ANY, CopyOptionMode::WRITE_ONLY);
+	for (auto &key : DeltaTableProperties::KnownKeys()) {
+		input.options[Identifier(key)] = CopyOption(LogicalType::ANY, CopyOptionMode::WRITE_ONLY);
+	}
 }
 
 vector<string> GetPartitionColumns(const vector<Value> &values, const vector<Identifier> &names) {
@@ -117,21 +126,48 @@ BoundStatement DeltaCopyPlan(Binder &binder, CopyStatement &stmt) {
 		request.columns.AddColumn(ColumnDefinition(names[i], query.types[i]));
 	}
 
+	vector<pair<string, string>> bare_properties;
 	for (auto &option : info.options) {
 		auto key = option.first.GetIdentifierName();
 		if (StringUtil::CIEquals(key, "partition_by")) {
 			request.partition_columns = GetPartitionColumns(option.second, names);
 			continue;
 		}
-		if (StringUtil::CIEquals(key, "table_properties")) {
-			request.properties = GetTableProperties(option.second);
+		if (StringUtil::CIEquals(key, "with_properties")) {
+			auto properties = GetWithProperties(option.second);
+			request.properties.insert(request.properties.end(), properties.begin(), properties.end());
 			continue;
 		}
-		// COPY's generic options (OVERWRITE, FILENAME_PATTERN, ...) pass its own check, but say nothing about a table
-		throw NotImplementedException("Delta COPY TO does not take the option '%s': it takes PARTITION_BY and "
-		                              "TABLE_PROPERTIES. It always creates a new table, and writes the files as "
-		                              "the table needs them",
+		auto known = DeltaTableProperties::FindKnownKey(key);
+		if (known) {
+			if (option.second.size() != 1 || option.second[0].IsNull()) {
+				throw BinderException("Delta COPY TO: table property '%s' takes one value", *known);
+			}
+			bare_properties.emplace_back(*known, option.second[0].ToString());
+			continue;
+		}
+		// COPY's generic options (OVERWRITE, FILENAME_PATTERN, ...) pass its own check, but say nothing about a table.
+		// Any other unknown option DuckDB refuses before this runs.
+		throw NotImplementedException("Delta COPY TO does not take the option '%s': it takes PARTITION_BY, "
+		                              "WITH_PROPERTIES {...} and known delta.* table properties. It always creates a "
+		                              "new table, and writes the files as the table needs them",
 		                              key);
+	}
+	for (auto &property : bare_properties) {
+		for (auto &given : request.properties) {
+			if (given.first == property.first) {
+				throw BinderException("Delta COPY TO: table property '%s' is given both as an option and in "
+				                      "WITH_PROPERTIES; give it once",
+				                      property.first);
+			}
+		}
+		request.properties.push_back(property);
+	}
+	std::sort(request.properties.begin(), request.properties.end());
+	for (idx_t i = 1; i < request.properties.size(); i++) {
+		if (request.properties[i].first == request.properties[i - 1].first) {
+			throw BinderException("Delta COPY TO: table property '%s' is given twice", request.properties[i].first);
+		}
 	}
 
 	auto copy = make_uniq<DeltaLogicalCopy>(std::move(request));

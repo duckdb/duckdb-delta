@@ -445,6 +445,29 @@ SELECT i, p FROM cm_part.cm_part ORDER BY i;
 3	1
 
 # -----------------------------------------------------------------------------
+# Table properties, checked as CREATE checks them
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_props' AS props (TYPE delta);
+
+statement error
+CREATE TABLE props.props WITH ('Delta.AppendOnly' = 'true') AS SELECT 1 AS i;
+----
+'Delta.AppendOnly' is spelled 'delta.appendOnly'
+
+statement ok
+CREATE TABLE props.props WITH ('delta.appendOnly' = 'true', 'owner' = 'me') AS SELECT 1 AS i;
+
+query II
+SELECT json_extract_string(metaData.configuration, '$."delta.appendOnly"'),
+       json_extract_string(metaData.configuration, '$.owner')
+FROM read_json('{TEMP_DIR}/ctas_props/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+true	me
+
+# -----------------------------------------------------------------------------
 # Refused
 #
 
