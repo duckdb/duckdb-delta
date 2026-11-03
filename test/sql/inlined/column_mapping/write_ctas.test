@@ -1,0 +1,164 @@
+# name: test/sql/inlined/column_mapping/write_ctas.test
+# description: CREATE TABLE AS and COPY TO into column-mapped tables, partitioned and nested, in both modes
+# group: [column_mapping]
+
+require parquet
+
+require delta
+
+require json
+
+# The CTAS variants of write_partitioned.test and write_nested.test: the create transaction assigns the physical names
+# and field ids, and the write uses them in the same statement.
+
+foreach mode name id
+
+# -----------------------------------------------------------------------------
+# ${mode} mode, partitioned
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_part_${mode}' AS part (TYPE delta);
+
+# The string 'NULL' is a partition of its own, apart from the NULL partition
+statement ok
+CREATE TABLE part.part PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = '${mode}') AS
+SELECT * FROM (VALUES (1, 'a', 10), (2, 'b', 20), (3, NULL, 30), (4, 'NULL', 40)) t(id, p, v);
+
+query III
+SELECT id, p IS NULL, v FROM part.part ORDER BY id;
+----
+1	false	10
+2	false	20
+3	true	30
+4	false	40
+
+query I
+SELECT id FROM part.part WHERE p = 'b';
+----
+2
+
+# Every add action is keyed by p's physical name, and only by it
+query II
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/ctas_part_${mode}/_delta_log/*.json')
+), physical AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract_string(f, '$.name') = 'p'
+)
+SELECT count(*), bool_and(json_keys(json_extract(j, '$.add.partitionValues')) = [(SELECT name FROM physical)])
+FROM log WHERE json_extract(j, '$.add') IS NOT NULL;
+----
+4	true
+
+# The data files carry physical names and field ids. The create transaction has no field id for a partition column,
+# so these files leave it out, as Spark writes them: 4 files of id and v.
+query II
+SELECT count(*) FILTER (name LIKE 'col-%' AND field_id IS NOT NULL), count(*) FILTER (name IN ('id', 'p', 'v'))
+FROM parquet_schema('{TEMP_DIR}/ctas_part_${mode}/*/*.parquet');
+----
+8	0
+
+# Each partition gets a directory of its own, named part- and 16 hex digits, never after the column
+query II
+SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/duckdb_[^/]*\.parquet$', 1))
+FROM glob('{TEMP_DIR}/ctas_part_${mode}/**/*.parquet');
+----
+4	4
+
+# A later INSERT puts a partition's files in the directory the CTAS made for it, and reads beside them
+statement ok
+INSERT INTO part.part VALUES (5, 'a', 50);
+
+query II
+SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/', 1))
+FROM glob('{TEMP_DIR}/ctas_part_${mode}/**/*.parquet');
+----
+5	4
+
+query II
+SELECT p, sum(v) FROM part.part GROUP BY p ORDER BY p;
+----
+NULL	40
+a	60
+b	20
+NULL	30
+
+statement ok
+DETACH part;
+
+# -----------------------------------------------------------------------------
+# ${mode} mode, nested
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_nested_${mode}' AS created (TYPE delta);
+
+statement ok
+CREATE TABLE created.created WITH ('delta.columnMapping.mode' = '${mode}') AS
+SELECT * FROM (VALUES
+    (1, {'x': 1, 'inner_s': {'z': 'a'}, 'sl': [5], 'sm': MAP {'q': 6}}, [1], MAP {'k': [1, 2]}),
+    (2, NULL, NULL, NULL)) t(id, s, l, m);
+
+query IIII
+SELECT * FROM created.created ORDER BY id;
+----
+1	{'x': 1, 'inner_s': {'z': a}, 'sl': [5], 'sm': {q=6}}	[1]	{k=[1, 2]}
+2	NULL	NULL	NULL
+
+query III
+SELECT s.inner_s.z, s.sl[1], s.sm['q'] FROM created.created WHERE s.x = 1;
+----
+a	5	6
+
+# No logical name reaches the file; field ids on the columns and every struct field, none on list elements or map
+# entries
+query II
+SELECT count(*) FILTER (name IN ('s', 'x', 'inner_s', 'z', 'sl', 'sm', 'l', 'm')),
+       count(*) FILTER (field_id IS NOT NULL)
+FROM parquet_schema('{TEMP_DIR}/ctas_nested_${mode}/duckdb-*.parquet');
+----
+0	9
+
+# Statistics are keyed by physical name at every level of a struct
+query I
+SELECT json_extract_string(json, '$.add.stats') LIKE '%"col-%":{"col-%":1%'
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_nested_${mode}/_delta_log/00000000000000000000.json')
+WHERE json_extract(json, '$.add') IS NOT NULL;
+----
+true
+
+statement ok
+INSERT INTO created.created VALUES (3, {'x': 3, 'inner_s': {'z': 'c'}, 'sl': [], 'sm': MAP {}}, [3], MAP {});
+
+query I
+SELECT list(s.inner_s.z ORDER BY id) FROM created.created;
+----
+[a, NULL, c]
+
+statement ok
+DETACH created;
+
+# -----------------------------------------------------------------------------
+# ${mode} mode, COPY TO
+#
+
+statement ok
+COPY (SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, {'x': range::INTEGER} AS s FROM range(4))
+TO '{TEMP_DIR}/copy_cm_${mode}' (FORMAT delta, PARTITION_BY (p), TABLE_PROPERTIES {'delta.columnMapping.mode': '${mode}'});
+
+query III
+SELECT id, p, s.x FROM delta_scan('{TEMP_DIR}/copy_cm_${mode}') ORDER BY id;
+----
+0	0	0
+1	1	1
+2	0	2
+3	1	3
+
+query I
+SELECT count(*) FILTER (field_id IS NOT NULL) FROM parquet_schema('{TEMP_DIR}/copy_cm_${mode}/*/*.parquet');
+----
+6
+
+endloop
