@@ -21,6 +21,7 @@ set(EXTENSION_SOURCES
     src/functions/delta_scan/delta_scan.cpp
     src/functions/delta_scan/delta_multi_file_list.cpp
     src/functions/delta_scan/delta_multi_file_reader.cpp
+    src/functions/delta_copy.cpp
     src/functions/delta_domain_metadata.cpp
     src/functions/delta_metadata_scan.cpp
     src/functions/metadata_functions.cpp

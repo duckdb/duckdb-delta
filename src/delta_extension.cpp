@@ -14,6 +14,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/function/table_macro_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "functions/delta_copy.hpp"
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/main/config.hpp"
@@ -120,6 +121,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	for (const auto &function : DeltaFunctions::GetScalarFunctions(loader)) {
 		loader.RegisterFunction(function);
 	}
+
+	// COPY ... TO ... (FORMAT delta)
+	loader.RegisterFunction(DeltaCopyFunction::Create());
 
 	// Register the "single table" delta catalog (to ATTACH a single delta table)
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
