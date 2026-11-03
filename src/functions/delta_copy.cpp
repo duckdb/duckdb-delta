@@ -4,6 +4,7 @@
 #include "storage/delta_insert.hpp"
 
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/query_result.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/parser/statement/copy_statement.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -105,17 +106,21 @@ BoundStatement DeltaCopyPlan(Binder &binder, CopyStatement &stmt) {
 	auto node = info.select_statement->Copy();
 	auto query = binder.Bind(*node);
 
+	// Duplicate names get a suffix, as COPY to a file and CREATE TABLE AS give them
+	auto names = query.names;
+	QueryResult::DeduplicateColumns(names);
+
 	DeltaCreateTableRequest request;
 	request.path = info.file_path;
 	request.data_change = true;
-	for (idx_t i = 0; i < query.names.size(); i++) {
-		request.columns.AddColumn(ColumnDefinition(query.names[i], query.types[i]));
+	for (idx_t i = 0; i < names.size(); i++) {
+		request.columns.AddColumn(ColumnDefinition(names[i], query.types[i]));
 	}
 
 	for (auto &option : info.options) {
 		auto key = option.first.GetIdentifierName();
 		if (StringUtil::CIEquals(key, "partition_by")) {
-			request.partition_columns = GetPartitionColumns(option.second, query.names);
+			request.partition_columns = GetPartitionColumns(option.second, names);
 			continue;
 		}
 		if (StringUtil::CIEquals(key, "table_properties")) {

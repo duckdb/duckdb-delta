@@ -71,6 +71,15 @@ SELECT sum(id) FROM delta_scan('{TEMP_DIR}/copy_from_table');
 ----
 3
 
+# Duplicate names get a suffix, as in COPY to a file and in CREATE TABLE AS
+statement ok
+COPY (SELECT 1 AS a, 2 AS a) TO '{TEMP_DIR}/copy_duplicate_names' (FORMAT delta);
+
+query II
+SELECT a, a_1 FROM delta_scan('{TEMP_DIR}/copy_duplicate_names');
+----
+1	2
+
 # An empty result creates an empty table
 query I
 COPY (SELECT range AS i FROM range(0)) TO '{TEMP_DIR}/copy_empty' (FORMAT delta);
@@ -257,3 +266,31 @@ query I
 SELECT i FROM delta_scan('{TEMP_DIR}/copy_fails');
 ----
 1
+
+# -----------------------------------------------------------------------------
+# A prepared COPY plans its create transaction once: the first EXECUTE creates the table, a second finds it there
+#
+
+statement ok
+PREPARE copy_prepared AS COPY (SELECT range AS i FROM range(3)) TO '{TEMP_DIR}/copy_prepared' (FORMAT delta);
+
+# Preparing leaves nothing on disk
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_prepared/**');
+----
+0
+
+query I
+EXECUTE copy_prepared;
+----
+3
+
+statement error
+EXECUTE copy_prepared;
+----
+already holds one: choose another path
+
+query I
+SELECT count(*) FROM delta_scan('{TEMP_DIR}/copy_prepared');
+----
+3

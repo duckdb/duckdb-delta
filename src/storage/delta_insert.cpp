@@ -220,7 +220,12 @@ unique_ptr<GlobalSinkState> DeltaInsert::GetGlobalSinkState(ClientContext &conte
 	}
 	auto &state = *create_state;
 	if (!state.transaction || !state.transaction->IsOpen()) {
-		throw InvalidInputException("%s at '%s' was already executed once, and its plan cannot run again: prepare the "
+		// A prepared statement run again: its create transaction is spent
+		if (DeltaTableExistsAt(context, state.path)) {
+			throw CatalogException("%s creates a new Delta table, but '%s' already holds one: choose another path",
+			                       state.statement, state.path);
+		}
+		throw InvalidInputException("%s at '%s' ran once already, and its plan cannot run again: prepare the "
 		                            "statement again",
 		                            state.statement, state.path);
 	}
