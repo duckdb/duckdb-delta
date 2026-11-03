@@ -441,3 +441,27 @@ statement error
 CREATE TABLE unsupported.unsupported (i INTEGER) SORTED BY (i);
 ----
 SORTED BY is not supported for tables in a delta catalog
+
+# -----------------------------------------------------------------------------
+# data_change
+#
+# A schema-only version 0 adds no rows, so its commit passes data_change false. Kernel stamps the
+# flag on add actions only, and this commit has none, so the create's log line is where it shows.
+#
+
+statement ok
+CALL enable_logging(level = 'debug');
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_data_change' AS data_change (TYPE delta);
+
+statement ok
+CREATE TABLE data_change.data_change (i INTEGER);
+
+query I
+SELECT message FROM duckdb_logs WHERE type = 'delta.CreateTable' AND message LIKE '%delta_create_data_change%';
+----
+<REGEX>:Created .*delta_create_data_change at version 0, adding 0 files with data_change false
+
+statement ok
+CALL disable_logging();

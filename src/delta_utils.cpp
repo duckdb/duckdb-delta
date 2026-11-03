@@ -704,6 +704,18 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 	return visitor_state.TakeFieldList(result);
 }
 
+vector<DeltaMultiFileColumnDefinition>
+KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
+                                         ffi::Handle<ffi::SharedSchema> schema, DeltaColumnMappingMode mapping_mode) {
+	KernelSchemaVisitor visitor_state(engine, mapping_mode);
+	auto visitor = CreateSchemaVisitor(visitor_state);
+	uintptr_t result = visit_schema(schema, &visitor);
+	if (visitor_state.error.HasError()) {
+		visitor_state.error.Throw();
+	}
+	return visitor_state.TakeFieldList(result);
+}
+
 void KernelSchemaVisitor::VisitDecimal(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                        ffi::KernelStringSlice name, bool is_nullable, const ffi::CMetadataMap *metadata,
                                        uint8_t precision, uint8_t scale) {

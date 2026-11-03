@@ -440,6 +440,10 @@ public:
 	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
 	                                                                  ffi::SharedScan *state, bool logical,
 	                                                                  DeltaColumnMappingMode mapping_mode);
+	//! Visits `schema`, which stays the caller's to free
+	static vector<DeltaMultiFileColumnDefinition> ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> engine,
+	                                                                  ffi::Handle<ffi::SharedSchema> schema,
+	                                                                  DeltaColumnMappingMode mapping_mode);
 
 private:
 	unordered_map<uintptr_t, vector<DeltaMultiFileColumnDefinition>> inflight_lists;

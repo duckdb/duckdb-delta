@@ -15,6 +15,7 @@
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/common/optional.hpp"
+#include "delta_utils.hpp"
 
 namespace duckdb {
 
@@ -111,5 +112,10 @@ struct DeltaDataFile {
 	// Stats per column, where column name is vector of path
 	vector<pair<vector<string>, DeltaColumnStats>> column_stats;
 };
+
+//! The add actions of `files`, as kernel's add_files takes them. `table_path` is the prefix the copy wrote the files
+//! under, which the add paths are relative to.
+KernelEngineData CreateAddFilesEngineData(ClientContext &context, const string &table_path,
+                                          const vector<DeltaDataFile> &files);
 
 } // namespace duckdb
