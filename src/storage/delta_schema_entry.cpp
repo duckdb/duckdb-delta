@@ -84,8 +84,21 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 			return delta_transaction.CreateCatalogCommitter(request.path);
 		};
 	}
-	DeltaCreateTableTransaction create_transaction(context, request, committer);
-	create_transaction.Commit(context);
+	unique_ptr<DeltaCreateTableTransaction> create_transaction;
+	try {
+		create_transaction = make_uniq<DeltaCreateTableTransaction>(context, request, committer);
+	} catch (std::exception &ex) {
+		// Kernel's refusal says what is wrong; add what to do about it
+		ErrorData error(ex);
+		if (DeltaTableExistsAt(context, request.path)) {
+			throw Exception(error.Type(),
+			                error.RawMessage() +
+			                    ". Delta tables cannot be replaced or dropped yet: use CREATE TABLE IF NOT "
+			                    "EXISTS, or attach another path");
+		}
+		throw;
+	}
+	create_transaction->Commit(context);
 
 	if (delta_catalog.parent_commit) {
 		// A CMT cannot be read from storage until the catalog knows its commits, and the catalog learns about this once

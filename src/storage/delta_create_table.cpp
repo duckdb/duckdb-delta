@@ -124,7 +124,11 @@ DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalo
 			                              column.GetName().GetIdentifierName());
 		}
 	}
-	// SORTED BY is rejected by DeltaCatalog::SupportsCreateTable, which the binder consults first.
+	// DeltaCatalog::SupportsCreateTable refuses SORTED BY too, but the binder consults it for CREATE only, not for
+	// CREATE TABLE AS. Delta has partition columns, but nothing that SORTED BY maps onto.
+	if (!base.sort_keys.empty()) {
+		throw CatalogException("SORTED BY is not supported for tables in a delta catalog");
+	}
 	for (auto &constraint : base.constraints) {
 		// Delta requires columns to be nullable unless the `invariants` writer feature is enabled,
 		// which we do not request yet.

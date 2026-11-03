@@ -27,20 +27,150 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "functions/delta_scan/delta_multi_file_list.hpp"
+#include "storage/delta_create_table.hpp"
+#include "duckdb/common/types/uuid.hpp"
+#include "duckdb/common/unordered_set.hpp"
+#include "duckdb/main/client_context_state.hpp"
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/common/to_string.hpp"
 
 namespace duckdb {
 
 DeltaInsert::DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, TableCatalogEntry &table,
                          physical_index_vector_t<idx_t> column_index_map_p)
-    : PhysicalOperator(plan, PhysicalOperatorType::EXTENSION, op.types, 1), table(&table), schema(nullptr),
+    : PhysicalOperator(plan, PhysicalOperatorType::EXTENSION, op.types, 1), table(&table),
       column_index_map(std::move(column_index_map_p)) {
 }
 
-DeltaInsert::DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, SchemaCatalogEntry &schema,
-                         unique_ptr<BoundCreateTableInfo> info)
-    : PhysicalOperator(plan, PhysicalOperatorType::EXTENSION, op.types, 1), table(nullptr), schema(&schema),
-      info(std::move(info)) {
+DeltaInsert::DeltaInsert(PhysicalPlan &plan, vector<LogicalType> types, idx_t estimated_cardinality,
+                         shared_ptr<DeltaCreateTableAsState> create_state_p)
+    : PhysicalOperator(plan, PhysicalOperatorType::EXTENSION, std::move(types), estimated_cardinality), table(nullptr),
+      create_state(std::move(create_state_p)) {
 }
+
+DeltaInsert::~DeltaInsert() = default;
+
+//===--------------------------------------------------------------------===//
+// CREATE TABLE AS state
+//===--------------------------------------------------------------------===//
+//! What a CREATE TABLE AS or COPY TO holds from planning to its commit, and what it removes if it never commits.
+//! Shared by the operator and the cleanup that runs when the query ends.
+struct DeltaCreateTableAsState {
+	DeltaCreateTableAsState(string path_p, string statement_p)
+	    : path(std::move(path_p)), statement(std::move(statement_p)),
+	      write_uuid(UUID::ToString(UUID::GenerateRandomUUID())) {
+	}
+
+	string path;
+	string statement;
+	//! Every data file this write makes carries it in its name, so a failed write can find what it wrote even when the
+	//! copy failed before reporting a file
+	string write_uuid;
+	unique_ptr<DeltaCreateTableTransaction> transaction;
+	//! The new table's columns as the files name them, from the create transaction
+	vector<DeltaMultiFileColumnDefinition> write_columns;
+	//! Whether this statement made the table directory, and so may remove it again
+	bool created_directory = false;
+	bool commit_attempted = false;
+	bool committed = false;
+
+	//! Removes what an uncommitted write left: its data files, the directories they emptied, an empty
+	//! `_delta_log`, and the table directory if this statement made it. Best effort: a failure is logged, never thrown.
+	void CleanUp(ClientContext &context);
+};
+
+static void TryRemoveEmptyDirectory(FileSystem &fs, const string &directory) {
+	if (!fs.DirectoryExists(directory)) {
+		return;
+	}
+	bool empty = true;
+	fs.ListFiles(directory, [&](const string &, bool) { empty = false; });
+	if (empty) {
+		fs.RemoveDirectory(directory);
+	}
+}
+
+void DeltaCreateTableAsState::CleanUp(ClientContext &context) {
+	auto &fs = FileSystem::GetFileSystem(context);
+	auto table_path = Path::FromString(Path::Normalize(path));
+	try {
+		// A commit that reported an error may still have written version 0, and then its files are the table's. The
+		// files are named for this write, so version 0 names them exactly when it is ours; a table another writer
+		// created first does not.
+		if (commit_attempted && DeltaTableExistsAt(context, path)) {
+			auto version_zero = table_path.Join("_delta_log").Join("00000000000000000000.json").ToString();
+			if (fs.FileExists(version_zero)) {
+				auto handle = fs.OpenFile(version_zero, FileOpenFlags::FILE_FLAGS_READ);
+				string content(NumericCast<size_t>(handle->GetFileSize()), '\0');
+				handle->Read(&content[0], content.size());
+				if (content.find(write_uuid) != string::npos) {
+					DUCKDB_LOG_INTERNAL(context, "delta.CreateTable", LogLevel::LOG_WARNING,
+					                    "%s at '%s' reported an error, but its version 0 was written: the table "
+					                    "exists, with its files",
+					                    statement, path);
+					return;
+				}
+			}
+		}
+		auto canonical = [](const Path &p) {
+			return p.GetBase() + p.GetPath();
+		};
+		unordered_set<string> directories;
+		idx_t removed = 0;
+		for (auto &file : fs.Glob(table_path.Join("**").Join("*" + write_uuid + "*").ToString())) {
+			removed += fs.TryRemoveFile(file.path);
+			auto parent = Path::FromString(file.path).Parent();
+			if (canonical(parent) != canonical(table_path)) {
+				directories.insert(parent.ToString());
+			}
+		}
+		if (table_path.IsLocal()) {
+			for (auto &directory : directories) {
+				TryRemoveEmptyDirectory(fs, directory);
+			}
+			TryRemoveEmptyDirectory(fs, table_path.Join("_delta_log").ToString());
+			if (created_directory) {
+				TryRemoveEmptyDirectory(fs, table_path.ToString());
+			}
+		}
+		DUCKDB_LOG_INTERNAL(context, "delta.CreateTable", LogLevel::LOG_DEBUG,
+		                    "%s at '%s' did not commit: removed the %s data files it wrote", statement, path,
+		                    to_string(removed));
+	} catch (std::exception &ex) {
+		DUCKDB_LOG_INTERNAL(context, "delta.CreateTable", LogLevel::LOG_WARNING,
+		                    "%s at '%s' failed, and removing the files it wrote failed too: %s", statement, path,
+		                    ErrorData(ex).Message());
+	}
+}
+
+//! Runs the cleanup when the query that planned or ran the write ends without its commit
+class DeltaCreateTableAsCleanup : public ClientContextState {
+public:
+	explicit DeltaCreateTableAsCleanup(shared_ptr<DeltaCreateTableAsState> state_p) : state(std::move(state_p)) {
+	}
+
+	static string Key(const DeltaCreateTableAsState &state) {
+		return "delta_create_table_as_" + state.write_uuid;
+	}
+
+	static void Register(ClientContext &context, const shared_ptr<DeltaCreateTableAsState> &state) {
+		context.registered_state->Insert(Key(*state), make_shared_ptr<DeltaCreateTableAsCleanup>(state));
+	}
+
+	void QueryEnd(ClientContext &context, optional_ptr<ErrorData> error) override {
+		if (!state->committed) {
+			// A failed query leaves the context interrupted, which would stop the cleanup's first file listing
+			auto interrupt_state = context.interrupt_state.load();
+			context.SuppressInterrupts();
+			state->CleanUp(context);
+			context.interrupt_state = interrupt_state;
+		}
+		context.registered_state->Remove(Key(*state));
+	}
+
+private:
+	shared_ptr<DeltaCreateTableAsState> state;
+};
 
 //===--------------------------------------------------------------------===//
 // States
@@ -54,6 +184,10 @@ public:
 		columns = table.snapshot->GetLazyLoadedGlobalColumns();
 		column_mapped = table.snapshot->UsesColumnMapping();
 	};
+	//! A new table: its columns from the create transaction, and no constraints
+	DeltaInsertGlobalState(string table_name_p, vector<DeltaMultiFileColumnDefinition> columns_p, bool column_mapped_p)
+	    : table_name(std::move(table_name_p)), columns(std::move(columns_p)), column_mapped(column_mapped_p) {
+	}
 
 	string table_name;
 
@@ -69,10 +203,31 @@ public:
 	case_insensitive_map_t<vector<NestedNotNullConstraint>> not_null_constraints;
 };
 
+//! Whether the column definitions name any column by a physical name, so that the files must too
+static bool AnyColumnMapped(const vector<DeltaMultiFileColumnDefinition> &columns) {
+	for (auto &col : columns) {
+		if (col.IsColumnMapped()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 unique_ptr<GlobalSinkState> DeltaInsert::GetGlobalSinkState(ClientContext &context) const {
-	// TODO: handle null table once CREATE TABLE (AS SELECT) is supported; columns/constraints come from info->Base()
-	const auto &delta_table = table->Cast<DeltaTableEntry>();
-	return make_uniq<DeltaInsertGlobalState>(delta_table);
+	if (!create_state) {
+		const auto &delta_table = table->Cast<DeltaTableEntry>();
+		return make_uniq<DeltaInsertGlobalState>(delta_table);
+	}
+	auto &state = *create_state;
+	if (!state.transaction || !state.transaction->IsOpen()) {
+		throw InvalidInputException("%s at '%s' was already executed once, and its plan cannot run again: prepare the "
+		                            "statement again",
+		                            state.statement, state.path);
+	}
+	// Planning may have been a query of its own (PREPARE), whose end removed the directory again
+	state.created_directory |= EnsureTableDirectory(context, state.path);
+	DeltaCreateTableAsCleanup::Register(context, create_state);
+	return make_uniq<DeltaInsertGlobalState>(state.path, state.write_columns, AnyColumnMapped(state.write_columns));
 }
 
 //===--------------------------------------------------------------------===//
@@ -422,8 +577,22 @@ SinkFinalizeType DeltaInsert::Finalize(Pipeline &pipeline, Event &event, ClientC
                                        OperatorSinkFinalizeInput &input) const {
 	auto &global_state = input.global_state.Cast<DeltaInsertGlobalState>();
 
-	// TODO: handle null table once CREATE TABLE (AS SELECT) is supported; create the table first, then use
-	// schema->catalog
+	if (create_state) {
+		// Version 0 commits here, at the end of the statement, with every file the copy wrote: the table appears with
+		// its rows or not at all
+		auto &state = *create_state;
+		auto &fs = FileSystem::GetFileSystem(context);
+		for (auto &file : global_state.written_files) {
+			auto handle = fs.OpenFile(file.file_name, FileOpenFlags::FILE_FLAGS_READ);
+			file.last_modified_time = handle->file_system.GetLastModifiedTime(*handle);
+		}
+		state.transaction->AddFiles(context, global_state.written_files);
+		state.commit_attempted = true;
+		state.transaction->Commit(context);
+		state.committed = true;
+		return SinkFinalizeType::READY;
+	}
+
 	auto &transaction = DeltaTransaction::Get(context, table->catalog);
 	vector<string> filenames;
 	transaction.Append(context, global_state.written_files);
@@ -444,7 +613,11 @@ string DeltaInsert::GetName() const {
 
 InsertionOrderPreservingMap<string> DeltaInsert::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
-	result["Table Name"] = table ? table->name.GetIdentifierName() : info->Base().GetTableName().GetIdentifierName();
+	if (table) {
+		result["Table Name"] = table->name.GetIdentifierName();
+	} else {
+		result["Table Path"] = create_state->path;
+	}
 	return result;
 }
 
@@ -639,18 +812,10 @@ static void ThrowIfStructFieldsDiffer(const LogicalType &catalog_type, const Del
 }
 
 //! Rewrites the parquet column names and struct fields to their physical names and attaches the field ids, for a
-//! table that uses column mapping.
-static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyInfo &info, vector<string> &names,
+//! table that uses column mapping. `schema` is the table's columns as the write must name them.
+static void ApplyColumnMappingToWriteSchema(const vector<DeltaMultiFileColumnDefinition> &schema,
+                                            const string &table_name, CopyInfo &info, vector<string> &names,
                                             vector<LogicalType> &types) {
-	// Without the protocol feature, readers ignore the mapping annotations, so the file must not use them either
-	if (!table_entry.snapshot->UsesColumnMapping()) {
-		return;
-	}
-	// The snapshot schema, which the sink resolves its stats against too -- one source of truth for physical
-	// names at both ends of the write. The kernel's write context is the more direct answer but is not usable
-	// here: for a partitioned table it takes the partition values, which are not known until the copy runs.
-	auto &schema = table_entry.snapshot->GetLazyLoadedGlobalColumns();
-
 	unordered_map<string, const_reference<DeltaMultiFileColumnDefinition>> by_logical_name;
 	bool mapped = false;
 	for (auto &col : schema) {
@@ -669,7 +834,7 @@ static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyIn
 		auto entry = by_logical_name.find(names[i]);
 		if (entry == by_logical_name.end()) {
 			throw InternalException("Delta column \"%s\" is missing from the write schema of table %s", names[i],
-			                        table_entry.name.GetIdentifierName());
+			                        table_name);
 		}
 		auto &col = entry->second.get();
 		ThrowIfStructFieldsDiffer(types[i], col);
@@ -686,6 +851,137 @@ static void ApplyColumnMappingToWriteSchema(DeltaTableEntry &table_entry, CopyIn
 	if (!field_ids.empty()) {
 		info.options["field_ids"] = {Value::STRUCT(std::move(field_ids))};
 	}
+}
+
+//! The parquet writer writes VARIANT only as a top-level column; name the column instead of passing its error on
+static void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement) {
+	for (auto &col : columns.Logical()) {
+		auto &type = col.Type();
+		if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
+			throw NotImplementedException("%s does not support column '%s' with a VARIANT nested in a %s "
+			                              "yet; only top-level VARIANT columns can be written",
+			                              statement, col.Name().GetIdentifierName(), LogicalTypeIdToString(type.id()));
+		}
+	}
+}
+
+namespace {
+
+//! Where and how a write lays out the table's files, from a snapshot (INSERT) or a create transaction (CTAS, COPY)
+struct DeltaWriteTarget {
+	//! Where the copy writes, normalized
+	string path;
+	string table_name;
+	//! The table's columns as the write must name them: physical names and field ids when column mapped
+	vector<DeltaMultiFileColumnDefinition> write_columns;
+	bool column_mapped = false;
+	//! Indexes of the partition columns among the table's columns
+	vector<idx_t> partition_columns;
+	//! Whether the data files carry the partition columns too
+	bool write_partition_columns = true;
+	//! Name partition directories `part-<hash>` rather than `<column>=<value>`: a column-mapped table
+	bool hash_partition_directories = false;
+	vector<DeltaStringWidthBound> width_bounds;
+	bool variant_shredding = false;
+	//! Goes into every file name; random when empty
+	string write_uuid;
+};
+
+} // namespace
+
+//! Plans the parquet copy of `child` into the files of a Delta table; the operator above it records them in the log
+static PhysicalOperator &PlanDeltaCopy(ClientContext &context, PhysicalPlanGenerator &planner, PhysicalOperator &child,
+                                       const ColumnList &columns, const DeltaWriteTarget &target,
+                                       idx_t estimated_cardinality) {
+	// Create Copy Info
+	auto info = make_uniq<CopyInfo>();
+	info->file_path = target.path;
+	info->format = "parquet";
+	info->is_from = false;
+
+	// Get Parquet Copy function
+	auto copy_fun = TryGetCopyFunction(*context.db, "parquet");
+	if (!copy_fun) {
+		throw MissingExtensionException("Did not find parquet copy function required to write to delta table");
+	}
+
+	auto names_to_write = columns.GetColumnNames();
+	auto types_to_write = columns.GetColumnTypes();
+
+	if (target.column_mapped) {
+		ApplyColumnMappingToWriteSchema(target.write_columns, target.table_name, *info, names_to_write, types_to_write);
+	}
+
+	// Delta allows shredded VARIANT files only when delta.enableVariantShredding is true; otherwise write unshredded.
+	// A shredding type of 'NULL' tells the parquet writer to leave the column unshredded.
+	if (!target.variant_shredding) {
+		child_list_t<Value> shredding;
+		for (idx_t i = 0; i < types_to_write.size(); i++) {
+			if (types_to_write[i].id() == LogicalTypeId::VARIANT) {
+				shredding.emplace_back(names_to_write[i], Value("NULL"));
+			}
+		}
+		if (!shredding.empty()) {
+			info->options["shredding"] = {Value::STRUCT(std::move(shredding))};
+		}
+	}
+
+	CopyFunctionBindInput bind_input(*info);
+
+	// The copy function sees only the columns that reach the files
+	auto bound_names = LogicalCopyToFile::GetNamesWithoutPartitions(
+	    StringsToIdentifiers(names_to_write), target.partition_columns, target.write_partition_columns);
+	auto bound_types = LogicalCopyToFile::GetTypesWithoutPartitions(types_to_write, target.partition_columns,
+	                                                                target.write_partition_columns);
+	auto function_data = copy_fun->function.copy_to_bind(context, bind_input, bound_names, bound_types);
+
+	auto &physical_copy = planner.Make<PhysicalCopyToFile>(
+	    GetCopyFunctionReturnLogicalTypes(CopyFunctionReturnType::WRITTEN_FILE_STATISTICS), copy_fun->function,
+	    std::move(function_data), estimated_cardinality);
+	auto &physical_copy_ref = physical_copy.Cast<PhysicalCopyToFile>();
+
+	auto current_write_uuid =
+	    target.write_uuid.empty() ? UUID::ToString(UUID::GenerateRandomUUID()) : target.write_uuid;
+
+	physical_copy_ref.use_tmp_file = false;
+	if (!target.partition_columns.empty()) {
+		physical_copy_ref.filename_pattern.SetFilenamePattern("duckdb_" + current_write_uuid + "_{i}");
+		physical_copy_ref.file_path = target.path;
+		physical_copy_ref.partition_output = true;
+		physical_copy_ref.partition_columns = target.partition_columns;
+		physical_copy_ref.write_empty_file = true;
+		// Hive directories would carry the physical names, long and meaningless to a reader of the path. The log holds
+		// the partition values either way, so the directory name is ours to choose.
+		if (target.hash_partition_directories) {
+			vector<LogicalType> partition_types;
+			vector<unique_ptr<Expression>> partition_refs;
+			for (idx_t i = 0; i < target.partition_columns.size(); i++) {
+				auto &type = types_to_write[target.partition_columns[i]];
+				partition_types.push_back(type);
+				partition_refs.push_back(make_uniq<BoundReferenceExpression>(type, i));
+			}
+			physical_copy_ref.partition_path_expression =
+			    make_uniq<BoundFunctionExpression>(BoundScalarFunction(GetPartitionDirectoryFunction(partition_types)),
+			                                       std::move(partition_refs), nullptr);
+		}
+	} else {
+		physical_copy_ref.file_path =
+		    Path::FromString(target.path).Join("duckdb-" + current_write_uuid + ".parquet").ToString();
+		physical_copy_ref.partition_output = false;
+		physical_copy_ref.write_empty_file = false;
+	}
+
+	physical_copy_ref.file_extension = "parquet";
+	physical_copy_ref.overwrite_mode = CopyOverwriteMode::COPY_OVERWRITE_OR_IGNORE;
+	physical_copy_ref.per_thread_output = false;
+	physical_copy_ref.return_type = CopyFunctionReturnType::WRITTEN_FILE_STATISTICS;
+	physical_copy_ref.write_partition_columns = target.write_partition_columns;
+	physical_copy_ref.children.push_back(
+	    PlanInsertProjection(context, planner, child, columns, target.width_bounds, types_to_write));
+	physical_copy_ref.names = StringsToIdentifiers(names_to_write);
+	physical_copy_ref.expected_types = types_to_write;
+	physical_copy_ref.hive_file_pattern = !physical_copy_ref.partition_path_expression;
+	return physical_copy;
 }
 
 PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
@@ -720,69 +1016,39 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		                              table_entry->name.GetIdentifierName());
 	}
 
-	string delta_path = Path::Normalize(table_entry->snapshot->GetPath());
+	auto &columns = table_entry->GetColumns();
+	ThrowIfVariantIsNested(columns, "Delta INSERT");
 
-	// Create Copy Info
-	auto info = make_uniq<CopyInfo>();
-	info->file_path = delta_path;
-	info->format = "parquet";
-	info->is_from = false;
-
-	// Get Parquet Copy function
-	auto copy_fun = TryGetCopyFunction(*context.db, "parquet");
-	if (!copy_fun) {
-		throw MissingExtensionException("Did not find parquet copy function required to write to delta table");
-	}
+	DeltaWriteTarget target;
+	target.path = Path::Normalize(table_entry->snapshot->GetPath());
+	target.table_name = table_entry->name.GetIdentifierName();
 
 	auto partitions = table_entry->snapshot->GetPartitionColumns();
-	vector<idx_t> partition_columns;
 	if (!partitions.empty()) {
-		auto column_names = table_entry->GetColumns().GetColumnNames();
+		auto column_names = columns.GetColumnNames();
 		for (int64_t i = 0; i < partitions.size(); i++) {
 			for (int64_t j = 0; j < column_names.size(); j++) {
 				if (column_names[j] == partitions[i]) {
-					partition_columns.push_back(j);
+					target.partition_columns.push_back(j);
 					break;
 				}
 			}
 		}
 	}
 
-	// Bind Copy Function
-	auto &columns = table_entry->GetColumns();
-	// The parquet writer writes VARIANT only as a top-level column; name the column instead of passing its error on
-	for (auto &col : columns.Logical()) {
-		auto &type = col.Type();
-		if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
-			throw NotImplementedException("Delta INSERT does not support column '%s' with a VARIANT nested in a %s "
-			                              "yet; only top-level VARIANT columns can be written",
-			                              col.Name().GetIdentifierName(), LogicalTypeIdToString(type.id()));
-		}
+	// Without the protocol feature, readers ignore the mapping annotations, so the file must not use them either.
+	// The snapshot schema is the one the sink resolves its stats against too -- one source of truth for physical
+	// names at both ends of the write. The kernel's write context is the more direct answer but is not usable
+	// here: for a partitioned table it takes the partition values, which are not known until the copy runs.
+	if (table_entry->snapshot->UsesColumnMapping()) {
+		target.write_columns = table_entry->snapshot->GetLazyLoadedGlobalColumns();
+		target.column_mapped = AnyColumnMapped(target.write_columns);
+		target.hash_partition_directories = true;
 	}
+	target.width_bounds = table_entry->snapshot->GetStringWidthBounds();
+	target.variant_shredding = table_entry->snapshot->VariantShreddingEnabled();
 
-	auto names_to_write = columns.GetColumnNames();
-	auto types_to_write = columns.GetColumnTypes();
-
-	ApplyColumnMappingToWriteSchema(*table_entry, *info, names_to_write, types_to_write);
-
-	// Delta allows shredded VARIANT files only when delta.enableVariantShredding is true; otherwise write unshredded.
-	// A shredding type of 'NULL' tells the parquet writer to leave the column unshredded.
-	if (!table_entry->snapshot->VariantShreddingEnabled()) {
-		child_list_t<Value> shredding;
-		for (idx_t i = 0; i < types_to_write.size(); i++) {
-			if (types_to_write[i].id() == LogicalTypeId::VARIANT) {
-				shredding.emplace_back(names_to_write[i], Value("NULL"));
-			}
-		}
-		if (!shredding.empty()) {
-			info->options["shredding"] = {Value::STRUCT(std::move(shredding))};
-		}
-	}
-
-	CopyFunctionBindInput bind_input(*info);
-
-	auto function_data =
-	    copy_fun->function.copy_to_bind(context, bind_input, StringsToIdentifiers(names_to_write), types_to_write);
+	auto &physical_copy = PlanDeltaCopy(context, planner, *plan, columns, target, op.estimated_cardinality);
 
 	auto &insert = planner.Make<DeltaInsert>(op, *table_entry, op.column_index_map);
 
@@ -793,54 +1059,58 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		delta_transaction.SetParentTableEntry(op.table);
 	}
 
-	auto &physical_copy = planner.Make<PhysicalCopyToFile>(
-	    GetCopyFunctionReturnLogicalTypes(CopyFunctionReturnType::WRITTEN_FILE_STATISTICS), copy_fun->function,
-	    std::move(function_data), op.estimated_cardinality);
-	auto &physical_copy_ref = physical_copy.Cast<PhysicalCopyToFile>();
+	insert.children.push_back(physical_copy);
+	return insert;
+}
 
-	auto current_write_uuid = UUID::ToString(UUID::GenerateRandomUUID());
-
-	physical_copy_ref.use_tmp_file = false;
-	if (!partition_columns.empty()) {
-		physical_copy_ref.filename_pattern.SetFilenamePattern("duckdb_" + current_write_uuid + "_{i}");
-		physical_copy_ref.file_path = delta_path;
-		physical_copy_ref.partition_output = true;
-		physical_copy_ref.partition_columns = partition_columns;
-		physical_copy_ref.write_empty_file = true;
-		// Hive directories would carry the physical names, long and meaningless to a reader of the path. The log holds
-		// the partition values either way, so the directory name is ours to choose.
-		if (table_entry->snapshot->UsesColumnMapping()) {
-			vector<LogicalType> partition_types;
-			vector<unique_ptr<Expression>> partition_refs;
-			for (idx_t i = 0; i < partition_columns.size(); i++) {
-				auto &type = types_to_write[partition_columns[i]];
-				partition_types.push_back(type);
-				partition_refs.push_back(make_uniq<BoundReferenceExpression>(type, i));
-			}
-			physical_copy_ref.partition_path_expression =
-			    make_uniq<BoundFunctionExpression>(BoundScalarFunction(GetPartitionDirectoryFunction(partition_types)),
-			                                       std::move(partition_refs), nullptr);
-		}
-	} else {
-		physical_copy_ref.file_path =
-		    Path::FromString(delta_path).Join("duckdb-" + current_write_uuid + ".parquet").ToString();
-		physical_copy_ref.partition_output = false;
-		physical_copy_ref.write_empty_file = false;
+PhysicalOperator &DeltaInsert::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
+                                                 PhysicalOperator &child, DeltaCreateTableRequest request,
+                                                 const string &statement, idx_t estimated_cardinality) {
+	// Everything that can be refused is refused here, before a directory or a file exists
+	ThrowIfDeltaCannotStore(request.columns, statement,
+	                        "Cast the column in the query to a type Delta can store, e.g. ::BIGINT or ::VARCHAR.");
+	ThrowIfVariantIsNested(request.columns, statement);
+	if (DeltaTableExistsAt(context, request.path)) {
+		throw CatalogException("%s creates a new Delta table, but '%s' already holds one: choose another path",
+		                       statement, request.path);
+	}
+	auto child_types = child.GetTypes();
+	auto column_types = request.columns.GetColumnTypes();
+	if (child_types != column_types) {
+		throw InternalException("%s: the query's types differ from the new table's columns", statement);
 	}
 
-	physical_copy_ref.file_extension = "parquet";
-	physical_copy_ref.overwrite_mode = CopyOverwriteMode::COPY_OVERWRITE_OR_IGNORE;
-	physical_copy_ref.per_thread_output = false;
-	physical_copy_ref.return_type = CopyFunctionReturnType::WRITTEN_FILE_STATISTICS;
-	physical_copy_ref.write_partition_columns = true;
-	physical_copy_ref.children.push_back(PlanInsertProjection(
-	    context, planner, *plan, columns, table_entry->snapshot->GetStringWidthBounds(), types_to_write));
-	physical_copy_ref.names = StringsToIdentifiers(names_to_write);
-	physical_copy_ref.expected_types = types_to_write;
-	physical_copy_ref.hive_file_pattern = !physical_copy_ref.partition_path_expression;
+	auto state = make_shared_ptr<DeltaCreateTableAsState>(request.path, statement);
+	// From here on, the end of the query undoes what the statement did, unless it committed
+	DeltaCreateTableAsCleanup::Register(context, state);
+	state->created_directory = EnsureTableDirectory(context, request.path);
+	request.data_change = true;
+	state->transaction = make_uniq<DeltaCreateTableTransaction>(context, request);
 
+	DeltaWriteTarget target;
+	target.path = Path::Normalize(request.path);
+	target.table_name = request.path;
+	target.write_uuid = state->write_uuid;
+	state->write_columns = state->transaction->GetWriteColumns(context);
+	target.write_columns = state->write_columns;
+	target.column_mapped = AnyColumnMapped(target.write_columns);
+	target.hash_partition_directories = target.column_mapped;
+	auto column_names = request.columns.GetColumnNames();
+	for (auto &partition_column : request.partition_columns) {
+		auto entry = std::find(column_names.begin(), column_names.end(), partition_column);
+		if (entry == column_names.end()) {
+			throw InternalException("%s: partition column '%s' is not a column of the new table", statement,
+			                        partition_column);
+		}
+		target.partition_columns.push_back(NumericCast<idx_t>(entry - column_names.begin()));
+	}
+	// The create transaction gives a partition column of a mapped table its physical name but no field id, so the
+	// files leave it out, as Spark writes them; readers take its values from the log
+	target.write_partition_columns = !target.column_mapped;
+
+	auto &physical_copy = PlanDeltaCopy(context, planner, child, request.columns, target, estimated_cardinality);
+	auto &insert = planner.Make<DeltaInsert>(vector<LogicalType> {LogicalType::BIGINT}, estimated_cardinality, state);
 	insert.children.push_back(physical_copy);
-
 	return insert;
 }
 

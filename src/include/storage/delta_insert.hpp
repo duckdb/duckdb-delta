@@ -16,28 +16,35 @@
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/common/optional.hpp"
 #include "delta_utils.hpp"
+#include "duckdb/execution/physical_plan_generator.hpp"
 
 namespace duckdb {
+
+struct DeltaCreateTableAsState;
+struct DeltaCreateTableRequest;
 
 class DeltaInsert : public PhysicalOperator {
 public:
 	//! INSERT INTO
 	DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, TableCatalogEntry &table,
 	            physical_index_vector_t<idx_t> column_index_map);
-	//! CREATE TABLE AS
-	DeltaInsert(PhysicalPlan &plan, LogicalOperator &op, SchemaCatalogEntry &schema,
-	            unique_ptr<BoundCreateTableInfo> info);
+	//! CREATE TABLE AS and COPY TO: writes a new table, whose version 0 commits with the files
+	DeltaInsert(PhysicalPlan &plan, vector<LogicalType> types, idx_t estimated_cardinality,
+	            shared_ptr<DeltaCreateTableAsState> create_state);
+	~DeltaInsert() override;
 
 	//! The table to insert into
 	optional_ptr<TableCatalogEntry> table;
-	//! Table schema, in case of CREATE TABLE AS
-	optional_ptr<SchemaCatalogEntry> schema;
-	//! Create table info, in case of CREATE TABLE AS
-	unique_ptr<BoundCreateTableInfo> info;
+	//! The create transaction and everything the write must undo should it fail, for CREATE TABLE AS and COPY TO
+	shared_ptr<DeltaCreateTableAsState> create_state;
 	//! column_index_map
 	physical_index_vector_t<idx_t> column_index_map;
-	//! The physical copy used internally by this insert
-	unique_ptr<PhysicalOperator> physical_copy_to_file;
+
+	//! Plans a write of `child`'s rows as version 0 of a new table: CREATE TABLE AS and COPY TO. `statement` names the
+	//! statement in errors.
+	static PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
+	                                           PhysicalOperator &child, DeltaCreateTableRequest request,
+	                                           const string &statement, idx_t estimated_cardinality);
 
 public:
 	// // Source interface
