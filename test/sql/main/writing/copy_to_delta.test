@@ -129,7 +129,18 @@ SELECT count(*) FROM glob('{TEMP_DIR}/copy_partitioned/part_col=*/*.parquet');
 statement error
 COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_partition' (FORMAT delta, PARTITION_BY (nope));
 ----
-PARTITION_BY names column 'nope', which the query does not return
+PARTITION_BY names column 'nope', which the table does not have
+
+# A partition key matches its column whatever its case, and takes the column's spelling
+statement ok
+COPY (SELECT 1 AS id, 'a' AS Part_Col) TO '{TEMP_DIR}/copy_partition_case' (FORMAT delta, PARTITION_BY (PART_COL));
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/copy_partition_case/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[Part_Col]
 
 # -----------------------------------------------------------------------------
 # Table properties, column mapping
@@ -253,6 +264,45 @@ SELECT count(*) FROM glob('{TEMP_DIR}/copy_bad_props/**');
 ----
 0
 
+# Duplicate names differing only in case: DuckDB renames the second to A_1, and the key resolves to the first column,
+# as Delta matches names case-insensitively
+statement ok
+COPY (SELECT 1 AS a, 2 AS "A", 3 AS b) TO '{TEMP_DIR}/copy_case_duplicates' (FORMAT delta, PARTITION_BY ("A"));
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/copy_case_duplicates/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[a]
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta,
+    WITH_PROPERTIES MAP {'location': '{TEMP_DIR}/copy_bad_props', 'LOCATION': '{TEMP_DIR}/copy_bad_props'});
+----
+'location' is given twice
+
+# `location` and `path` are taken as CREATE takes them: `location` must name the target, `path` is refused
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'location': 'elsewhere'});
+----
+can only create a table at its target path
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'path': 'elsewhere'});
+----
+names the destination with 'location', not 'path'
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_location' (FORMAT delta, WITH_PROPERTIES {'location': '{TEMP_DIR}/copy_location/'});
+
+query I
+SELECT json_keys(metaData.configuration)
+FROM read_json('{TEMP_DIR}/copy_location/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[]
+
 # COPY's own file options say nothing about a table
 statement error
 COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_option' (FORMAT delta, OVERWRITE);
@@ -354,3 +404,25 @@ query I
 SELECT count(*) FROM delta_scan('{TEMP_DIR}/copy_prepared');
 ----
 3
+
+# A table created at the path while the COPY ran: the COPY's commit loses, says what to do, and removes its files
+statement ok
+PREPARE copy_race AS COPY (SELECT 'loser' AS who) TO '{TEMP_DIR}/copy_race' (FORMAT delta);
+
+statement ok
+COPY (SELECT 'winner' AS who) TO '{TEMP_DIR}/copy_race' (FORMAT delta);
+
+statement error
+EXECUTE copy_race;
+----
+already holds one, created while this statement ran: choose another path
+
+query I
+SELECT who FROM delta_scan('{TEMP_DIR}/copy_race');
+----
+winner
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_race/*.parquet');
+----
+1

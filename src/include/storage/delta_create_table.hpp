@@ -32,6 +32,16 @@ struct DeltaCreateTableRequest {
 DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalog &catalog,
                                              const CreateTableInfo &base);
 
+//! Resolves partition keys to the columns they name, case-insensitively as kernel does, in the columns' spelling.
+//! Refuses a key that names no column, or a column twice. `clause` is PARTITIONED BY or PARTITION_BY.
+vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<string> &keys, const string &statement,
+                                       const string &clause);
+
+//! Removes the `location` entry from `properties`, which CREATE's WITH and COPY's WITH_PROPERTIES both take as the
+//! destination: it must name `target` (described in errors as `target_name`). Refuses `path`, and `location` twice.
+void TakeLocationProperty(vector<pair<string, string>> &properties, const string &target, const string &target_name,
+                          const string &statement);
+
 //! Refuses every column type that the Delta schema cannot store, naming the column. `hint` ends the message.
 void ThrowIfDeltaCannotStore(const ColumnList &columns, const string &statement, const string &hint);
 
@@ -68,9 +78,16 @@ public:
 	}
 
 	//! The table's columns in table order, as the data files must name them: with the physical names and field ids
-	//! kernel assigned, on a column-mapped table. A partition column carries its physical name but no field id: the
-	//! create transaction's write context leaves partition columns out of its schema.
+	//! kernel assigned, on a column-mapped table. A partition column carries its physical name; it carries its field
+	//! id only when the table's features require the partition columns in the files (PartitionColumnsMaterialized):
+	//! otherwise kernel's write schemas leave it out.
 	vector<DeltaMultiFileColumnDefinition> GetWriteColumns(ClientContext &context);
+
+	//! Whether the data files must hold the partition columns (materializePartitionColumns, icebergCompatV2/V3), as
+	//! GetWriteColumns found it
+	bool PartitionColumnsMaterialized() const {
+		return partition_columns_materialized;
+	}
 
 	//! Stages the add actions of written files in the transaction; nothing reaches the log until Commit
 	void AddFiles(ClientContext &context, const vector<DeltaDataFile> &files);
@@ -84,6 +101,7 @@ private:
 	idx_t added_files = 0;
 	vector<string> partition_columns;
 	vector<LogicalType> partition_types;
+	bool partition_columns_materialized = false;
 	ColumnList columns;
 	KernelExternEngine engine;
 	ffi::ExclusiveCreateTableTransaction *transaction = nullptr;

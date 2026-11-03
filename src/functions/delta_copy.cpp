@@ -86,22 +86,13 @@ static void DeltaCopyOptions(ClientContext &context, CopyOptionsInput &input) {
 	}
 }
 
-vector<string> GetPartitionColumns(const vector<Value> &values, const vector<Identifier> &names) {
+vector<string> GetPartitionKeys(const vector<Value> &values) {
 	vector<string> result;
 	for (auto &value : values) {
 		if (value.IsNull()) {
 			throw BinderException("Delta COPY TO: PARTITION_BY takes column names, not NULL");
 		}
-		auto name = value.ToString();
-		bool found = false;
-		for (auto &column : names) {
-			found |= column.GetIdentifierName() == name;
-		}
-		if (!found) {
-			throw BinderException("Delta COPY TO: PARTITION_BY names column '%s', which the query does not return",
-			                      name);
-		}
-		result.push_back(std::move(name));
+		result.push_back(value.ToString());
 	}
 	return result;
 }
@@ -130,7 +121,8 @@ BoundStatement DeltaCopyPlan(Binder &binder, CopyStatement &stmt) {
 	for (auto &option : info.options) {
 		auto key = option.first.GetIdentifierName();
 		if (StringUtil::CIEquals(key, "partition_by")) {
-			request.partition_columns = GetPartitionColumns(option.second, names);
+			request.partition_columns = ResolvePartitionColumns(request.columns, GetPartitionKeys(option.second),
+			                                                    "Delta COPY TO", "PARTITION_BY");
 			continue;
 		}
 		if (StringUtil::CIEquals(key, "with_properties")) {
@@ -163,6 +155,8 @@ BoundStatement DeltaCopyPlan(Binder &binder, CopyStatement &stmt) {
 		}
 		request.properties.push_back(property);
 	}
+	// As CREATE takes its `location` option: it names the path, which here is COPY's target
+	TakeLocationProperty(request.properties, request.path, "its target path", "Delta COPY TO");
 	std::sort(request.properties.begin(), request.properties.end());
 	for (idx_t i = 1; i < request.properties.size(); i++) {
 		if (request.properties[i].first == request.properties[i - 1].first) {

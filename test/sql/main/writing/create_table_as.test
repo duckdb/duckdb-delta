@@ -351,6 +351,25 @@ SELECT id FROM partitioned.partitioned WHERE part_col = 'b' ORDER BY id;
 1
 4
 
+# A partition key matches its column whatever its case, and takes the column's spelling
+statement ok
+ATTACH '{TEMP_DIR}/ctas_partition_case' AS partition_case (TYPE delta);
+
+statement ok
+CREATE TABLE partition_case.partition_case PARTITIONED BY (PART_COL) AS SELECT 1 AS id, 'a' AS Part_Col;
+
+query II
+SELECT id, Part_Col FROM partition_case.partition_case;
+----
+1	a
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/ctas_partition_case/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[Part_Col]
+
 # Kernel requires at least one non-partition column, and refuses before anything is written
 statement ok
 ATTACH '{TEMP_DIR}/ctas_all_partitioned' AS all_partitioned (TYPE delta);

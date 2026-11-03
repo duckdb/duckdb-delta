@@ -25,6 +25,10 @@ public:
 
 	ffi::EngineSchema CreateEngineSchema();
 
+	//! The first type at or below `type` that Delta cannot store, or nullptr: the one list of storable types, which
+	//! VisitField checks before it lowers a type and CTAS checks before it writes anything
+	static optional_ptr<const LogicalType> FindUnsupportedType(const LogicalType &type);
+
 	//! Errors are stashed rather than thrown, since Build() is invoked by kernel across the FFI
 	//! boundary. The caller must check this after the consuming FFI call returns.
 	const ErrorData &GetError() const {

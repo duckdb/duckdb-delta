@@ -184,6 +184,25 @@ SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_partitioned/part_col=*/*.parq
 ----
 2
 
+# A partition key matches its column whatever its case, and takes the column's spelling
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_partition_case' AS partition_case (TYPE delta);
+
+statement error
+CREATE TABLE partition_case.partition_case (id INTEGER, Part_Col VARCHAR) PARTITIONED BY (nope);
+----
+PARTITIONED BY names column 'nope', which the table does not have
+
+statement ok
+CREATE TABLE partition_case.partition_case (id INTEGER, Part_Col VARCHAR) PARTITIONED BY (PART_COL);
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/delta_create_partition_case/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[Part_Col]
+
 # Kernel requires at least one non-partition column
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_all_partitioned' AS all_partitioned (TYPE delta);

@@ -1,6 +1,8 @@
 #include "delta_schema_builder.hpp"
 
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/optional_ptr.hpp"
+#include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 
@@ -20,11 +22,57 @@ uintptr_t DeltaSchemaBuilder::Unpack(ffi::ExternResult<uintptr_t> result) {
 	return field_id;
 }
 
+optional_ptr<const LogicalType> DeltaSchemaBuilder::FindUnsupportedType(const LogicalType &type) {
+	// Every type VisitField has a case for, and nothing else
+	switch (type.id()) {
+	case LogicalTypeId::BOOLEAN:
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::BLOB:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::VARIANT:
+		return nullptr;
+	case LogicalTypeId::STRUCT:
+		for (auto &child : StructType::GetChildTypes(type)) {
+			auto result = FindUnsupportedType(child.second);
+			if (result) {
+				return result;
+			}
+		}
+		return nullptr;
+	case LogicalTypeId::LIST:
+		return FindUnsupportedType(ListType::GetChildType(type));
+	case LogicalTypeId::MAP: {
+		auto result = FindUnsupportedType(MapType::KeyType(type));
+		return result ? result : FindUnsupportedType(MapType::ValueType(type));
+	}
+	default:
+		return &type;
+	}
+}
+
 uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, const string &name,
                                          const LogicalType &type, bool nullable) {
 	auto name_slice = KernelUtils::ToDeltaString(name);
 	// Explicitly typed: AllocateError is overloaded, so `auto` cannot pick an overload here.
 	ffi::AllocateErrorFn allocate_error = DuckDBEngineError::AllocateError;
+
+	// FindUnsupportedType is the one list of the types Delta can store; every type it accepts has a case below
+	auto unsupported = FindUnsupportedType(type);
+	if (unsupported) {
+		auto nested =
+		    unsupported.get() == &type ? string() : StringUtil::Format(" (it holds a %s)", unsupported->ToString());
+		throw NotImplementedException("Delta CREATE TABLE does not support column '%s' of type %s%s", name,
+		                              type.ToString(), nested);
+	}
 
 	// Mirrors SchemaVisitor's kernel->DuckDB mapping, so a create/read round trip is lossless.
 	switch (type.id()) {
@@ -89,8 +137,8 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 		return Unpack(ffi::visit_field_map(state, name_slice, key_id, value_id, nullable, nullptr, allocate_error));
 	}
 	default:
-		throw NotImplementedException("Delta CREATE TABLE does not support column '%s' of type %s", name,
-		                              type.ToString());
+		throw InternalException("Delta schema builder has no case for type %s, which FindUnsupportedType accepts",
+		                        type.ToString());
 	}
 }
 

@@ -162,3 +162,316 @@ SELECT count(*) FILTER (field_id IS NOT NULL) FROM parquet_schema('{TEMP_DIR}/co
 6
 
 endloop
+
+# -----------------------------------------------------------------------------
+# Features that require the partition columns in the files: there the files hold them, under their physical names
+# and with the field ids the schema gives them, as kernel's physical write schema does. Two partition columns, by
+# CTAS and by COPY.
+#
+
+# ctas, 'delta.enableIcebergCompatV3' = 'true'
+
+statement ok
+ATTACH '{TEMP_DIR}/m_iceberg_v3_ctas' AS m_iceberg_v3_ctas (TYPE delta);
+
+statement ok
+CREATE TABLE m_iceberg_v3_ctas.m_iceberg_v3_ctas PARTITIONED BY (p, q) WITH ('delta.enableIcebergCompatV3' = 'true') AS SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, (range % 3)::BIGINT AS q FROM range(6);
+
+# Every file holds id, p and q, each under the physical name and with the field id the log's schema gives it
+query II
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/m_iceberg_v3_ctas/_delta_log/00000000000000000000.json')
+), fields AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name,
+           json_extract(f, '$.metadata."delta.columnMapping.id"')::BIGINT AS id
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract(j, '$.metaData') IS NOT NULL
+), files AS (
+    SELECT file_name, name, field_id FROM parquet_schema('{TEMP_DIR}/m_iceberg_v3_ctas/**/*.parquet') WHERE name <> 'duckdb_schema'
+)
+SELECT count(DISTINCT file_name), bool_and(fields.id = files.field_id AND fields.name IS NOT NULL)
+FROM files LEFT JOIN fields USING (name);
+----
+6	true
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/m_iceberg_v3_ctas/**/*.parquet') WHERE name <> 'duckdb_schema';
+----
+18
+
+query III
+SELECT id, p, q FROM m_iceberg_v3_ctas ORDER BY id;
+----
+0	0	0
+1	1	1
+2	0	2
+3	1	0
+4	0	1
+5	1	2
+
+statement ok
+INSERT INTO m_iceberg_v3_ctas VALUES (6, '0', 0);
+
+query I
+SELECT count(*) FROM m_iceberg_v3_ctas WHERE p = '0' AND q = 0;
+----
+2
+
+statement ok
+DETACH m_iceberg_v3_ctas;
+
+# copy, 'delta.enableIcebergCompatV3' = 'true'
+
+statement ok
+COPY (SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, (range % 3)::BIGINT AS q FROM range(6)) TO '{TEMP_DIR}/m_iceberg_v3_copy' (FORMAT delta, PARTITION_BY (p, q), WITH_PROPERTIES {'delta.enableIcebergCompatV3': 'true'});
+
+statement ok
+ATTACH '{TEMP_DIR}/m_iceberg_v3_copy' AS m_iceberg_v3_copy (TYPE delta);
+
+# Every file holds id, p and q, each under the physical name and with the field id the log's schema gives it
+query II
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/m_iceberg_v3_copy/_delta_log/00000000000000000000.json')
+), fields AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name,
+           json_extract(f, '$.metadata."delta.columnMapping.id"')::BIGINT AS id
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract(j, '$.metaData') IS NOT NULL
+), files AS (
+    SELECT file_name, name, field_id FROM parquet_schema('{TEMP_DIR}/m_iceberg_v3_copy/**/*.parquet') WHERE name <> 'duckdb_schema'
+)
+SELECT count(DISTINCT file_name), bool_and(fields.id = files.field_id AND fields.name IS NOT NULL)
+FROM files LEFT JOIN fields USING (name);
+----
+6	true
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/m_iceberg_v3_copy/**/*.parquet') WHERE name <> 'duckdb_schema';
+----
+18
+
+query III
+SELECT id, p, q FROM m_iceberg_v3_copy ORDER BY id;
+----
+0	0	0
+1	1	1
+2	0	2
+3	1	0
+4	0	1
+5	1	2
+
+statement ok
+INSERT INTO m_iceberg_v3_copy VALUES (6, '0', 0);
+
+query I
+SELECT count(*) FROM m_iceberg_v3_copy WHERE p = '0' AND q = 0;
+----
+2
+
+statement ok
+DETACH m_iceberg_v3_copy;
+
+# ctas, 'delta.enableIcebergCompatV2' = 'true'
+
+statement ok
+ATTACH '{TEMP_DIR}/m_iceberg_v2_ctas' AS m_iceberg_v2_ctas (TYPE delta);
+
+statement ok
+CREATE TABLE m_iceberg_v2_ctas.m_iceberg_v2_ctas PARTITIONED BY (p, q) WITH ('delta.enableIcebergCompatV2' = 'true') AS SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, (range % 3)::BIGINT AS q FROM range(6);
+
+# Every file holds id, p and q, each under the physical name and with the field id the log's schema gives it
+query II
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/m_iceberg_v2_ctas/_delta_log/00000000000000000000.json')
+), fields AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name,
+           json_extract(f, '$.metadata."delta.columnMapping.id"')::BIGINT AS id
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract(j, '$.metaData') IS NOT NULL
+), files AS (
+    SELECT file_name, name, field_id FROM parquet_schema('{TEMP_DIR}/m_iceberg_v2_ctas/**/*.parquet') WHERE name <> 'duckdb_schema'
+)
+SELECT count(DISTINCT file_name), bool_and(fields.id = files.field_id AND fields.name IS NOT NULL)
+FROM files LEFT JOIN fields USING (name);
+----
+6	true
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/m_iceberg_v2_ctas/**/*.parquet') WHERE name <> 'duckdb_schema';
+----
+18
+
+query III
+SELECT id, p, q FROM m_iceberg_v2_ctas ORDER BY id;
+----
+0	0	0
+1	1	1
+2	0	2
+3	1	0
+4	0	1
+5	1	2
+
+statement ok
+INSERT INTO m_iceberg_v2_ctas VALUES (6, '0', 0);
+
+query I
+SELECT count(*) FROM m_iceberg_v2_ctas WHERE p = '0' AND q = 0;
+----
+2
+
+statement ok
+DETACH m_iceberg_v2_ctas;
+
+# copy, 'delta.enableIcebergCompatV2' = 'true'
+
+statement ok
+COPY (SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, (range % 3)::BIGINT AS q FROM range(6)) TO '{TEMP_DIR}/m_iceberg_v2_copy' (FORMAT delta, PARTITION_BY (p, q), WITH_PROPERTIES {'delta.enableIcebergCompatV2': 'true'});
+
+statement ok
+ATTACH '{TEMP_DIR}/m_iceberg_v2_copy' AS m_iceberg_v2_copy (TYPE delta);
+
+# Every file holds id, p and q, each under the physical name and with the field id the log's schema gives it
+query II
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/m_iceberg_v2_copy/_delta_log/00000000000000000000.json')
+), fields AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name,
+           json_extract(f, '$.metadata."delta.columnMapping.id"')::BIGINT AS id
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract(j, '$.metaData') IS NOT NULL
+), files AS (
+    SELECT file_name, name, field_id FROM parquet_schema('{TEMP_DIR}/m_iceberg_v2_copy/**/*.parquet') WHERE name <> 'duckdb_schema'
+)
+SELECT count(DISTINCT file_name), bool_and(fields.id = files.field_id AND fields.name IS NOT NULL)
+FROM files LEFT JOIN fields USING (name);
+----
+6	true
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/m_iceberg_v2_copy/**/*.parquet') WHERE name <> 'duckdb_schema';
+----
+18
+
+query III
+SELECT id, p, q FROM m_iceberg_v2_copy ORDER BY id;
+----
+0	0	0
+1	1	1
+2	0	2
+3	1	0
+4	0	1
+5	1	2
+
+statement ok
+INSERT INTO m_iceberg_v2_copy VALUES (6, '0', 0);
+
+query I
+SELECT count(*) FROM m_iceberg_v2_copy WHERE p = '0' AND q = 0;
+----
+2
+
+statement ok
+DETACH m_iceberg_v2_copy;
+
+# ctas, 'delta.columnMapping.mode' = 'id', 'delta.feature.materializePartitionColumns' = 'supported'
+
+statement ok
+ATTACH '{TEMP_DIR}/m_materialize_id_ctas' AS m_materialize_id_ctas (TYPE delta);
+
+statement ok
+CREATE TABLE m_materialize_id_ctas.m_materialize_id_ctas PARTITIONED BY (p, q) WITH ('delta.columnMapping.mode' = 'id', 'delta.feature.materializePartitionColumns' = 'supported') AS SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, (range % 3)::BIGINT AS q FROM range(6);
+
+# Every file holds id, p and q, each under the physical name and with the field id the log's schema gives it
+query II
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/m_materialize_id_ctas/_delta_log/00000000000000000000.json')
+), fields AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name,
+           json_extract(f, '$.metadata."delta.columnMapping.id"')::BIGINT AS id
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract(j, '$.metaData') IS NOT NULL
+), files AS (
+    SELECT file_name, name, field_id FROM parquet_schema('{TEMP_DIR}/m_materialize_id_ctas/**/*.parquet') WHERE name <> 'duckdb_schema'
+)
+SELECT count(DISTINCT file_name), bool_and(fields.id = files.field_id AND fields.name IS NOT NULL)
+FROM files LEFT JOIN fields USING (name);
+----
+6	true
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/m_materialize_id_ctas/**/*.parquet') WHERE name <> 'duckdb_schema';
+----
+18
+
+query III
+SELECT id, p, q FROM m_materialize_id_ctas ORDER BY id;
+----
+0	0	0
+1	1	1
+2	0	2
+3	1	0
+4	0	1
+5	1	2
+
+statement ok
+INSERT INTO m_materialize_id_ctas VALUES (6, '0', 0);
+
+query I
+SELECT count(*) FROM m_materialize_id_ctas WHERE p = '0' AND q = 0;
+----
+2
+
+statement ok
+DETACH m_materialize_id_ctas;
+
+# copy, 'delta.columnMapping.mode' = 'id', 'delta.feature.materializePartitionColumns' = 'supported'
+
+statement ok
+COPY (SELECT range::INTEGER AS id, (range % 2)::VARCHAR AS p, (range % 3)::BIGINT AS q FROM range(6)) TO '{TEMP_DIR}/m_materialize_id_copy' (FORMAT delta, PARTITION_BY (p, q), WITH_PROPERTIES {'delta.columnMapping.mode': 'id', 'delta.feature.materializePartitionColumns': 'supported'});
+
+statement ok
+ATTACH '{TEMP_DIR}/m_materialize_id_copy' AS m_materialize_id_copy (TYPE delta);
+
+# Every file holds id, p and q, each under the physical name and with the field id the log's schema gives it
+query II
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/m_materialize_id_copy/_delta_log/00000000000000000000.json')
+), fields AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name,
+           json_extract(f, '$.metadata."delta.columnMapping.id"')::BIGINT AS id
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract(j, '$.metaData') IS NOT NULL
+), files AS (
+    SELECT file_name, name, field_id FROM parquet_schema('{TEMP_DIR}/m_materialize_id_copy/**/*.parquet') WHERE name <> 'duckdb_schema'
+)
+SELECT count(DISTINCT file_name), bool_and(fields.id = files.field_id AND fields.name IS NOT NULL)
+FROM files LEFT JOIN fields USING (name);
+----
+6	true
+
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/m_materialize_id_copy/**/*.parquet') WHERE name <> 'duckdb_schema';
+----
+18
+
+query III
+SELECT id, p, q FROM m_materialize_id_copy ORDER BY id;
+----
+0	0	0
+1	1	1
+2	0	2
+3	1	0
+4	0	1
+5	1	2
+
+statement ok
+INSERT INTO m_materialize_id_copy VALUES (6, '0', 0);
+
+query I
+SELECT count(*) FROM m_materialize_id_copy WHERE p = '0' AND q = 0;
+----
+2
+
+statement ok
+DETACH m_materialize_id_copy;
+

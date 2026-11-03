@@ -593,7 +593,24 @@ SinkFinalizeType DeltaInsert::Finalize(Pipeline &pipeline, Event &event, ClientC
 		}
 		state.transaction->AddFiles(context, global_state.written_files);
 		state.commit_attempted = true;
-		state.transaction->Commit(context);
+		try {
+			state.transaction->Commit(context);
+		} catch (std::exception &ex) {
+			// Another writer created a table at the path between the plan's check and this commit. The probe must
+			// not replace the commit's error, so it fails quietly.
+			ErrorData commit_error(ex);
+			bool taken = false;
+			try {
+				taken = DeltaTableExistsAt(context, state.path);
+			} catch (...) {
+			}
+			if (taken) {
+				throw CatalogException("%s creates a new Delta table, but '%s' already holds one, created while this "
+				                       "statement ran: choose another path (%s)",
+				                       state.statement, state.path, commit_error.RawMessage());
+			}
+			commit_error.Throw();
+		}
 		state.committed = true;
 		return SinkFinalizeType::READY;
 	}
@@ -1109,9 +1126,10 @@ PhysicalOperator &DeltaInsert::PlanCreateTableAs(ClientContext &context, Physica
 		}
 		target.partition_columns.push_back(NumericCast<idx_t>(entry - column_names.begin()));
 	}
-	// The create transaction gives a partition column of a mapped table its physical name but no field id, so the
-	// files leave it out, as Spark writes them; readers take its values from the log
-	target.write_partition_columns = !target.column_mapped;
+	// On a mapped table the files hold the partition columns only where the table's features require it, as kernel's
+	// physical write schema says; otherwise kernel gives a partition column no field id, and the files leave it out,
+	// as Spark writes them; readers take its values from the log
+	target.write_partition_columns = !target.column_mapped || state->transaction->PartitionColumnsMaterialized();
 
 	auto &physical_copy = PlanDeltaCopy(context, planner, child, request.columns, target, estimated_cardinality);
 	auto &insert = planner.Make<DeltaInsert>(vector<LogicalType> {LogicalType::BIGINT}, estimated_cardinality, state);

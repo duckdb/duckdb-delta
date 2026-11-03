@@ -39,50 +39,17 @@ static Value ParseCreateTableOption(ClientContext &context, TableFunctionBinder 
 	return value.DefaultCastAs(type);
 }
 
-//! Resolves the destination path for a CREATE TABLE. Defaults to the attached path; `WITH (location =
-//! '...')` names it explicitly, spelled as the Iceberg catalog spells it. `path` named the same thing
-//! before this, and it never shipped, so it is refused rather than taken for a table property.
-static string GetCreateTablePath(ClientContext &context, TableFunctionBinder &binder, const CreateTableInfo &base,
-                                 DeltaCatalog &delta_catalog) {
-	if (base.options.find("path") != base.options.end()) {
-		throw BinderException("Delta CREATE TABLE names the destination with 'location', not 'path'");
-	}
-	auto option = base.options.find("location");
-	if (option == base.options.end()) {
-		return delta_catalog.GetDBPath();
-	}
-	auto path = ParseCreateTableOption(context, binder, *option->second, option->first, LogicalType::VARCHAR)
-	                .GetValue<string>();
-
-	// A Delta catalog is a single table at a single path, so a divergent path would produce a
-	// catalog entry that does not describe what was attached. Compare normalized, so a trailing
-	// slash or a relative spelling of the attached path is not a spurious mismatch.
-	auto attached_path = delta_catalog.GetDBPath();
-	if (CanonicalTablePath(path) != CanonicalTablePath(attached_path)) {
-		throw NotImplementedException(
-		    "Delta CREATE TABLE can only create a table at the attached path ('%s'), not at '%s'", attached_path, path);
-	}
-	return path;
-}
-
-//! Every option that does not name the location is a Delta table property, handed to kernel untouched:
-//! kernel decides which keys it recognizes and derives the protocol from them. Sorted so that two bad
-//! properties always fail in the same order; the written configuration is a map kernel orders itself.
-static vector<pair<string, string>> GetCreateTableProperties(ClientContext &context, TableFunctionBinder &binder,
-                                                             const CreateTableInfo &base) {
-	vector<pair<string, string>> properties;
+//! Every option is evaluated to a string; `location` then names the destination (TakeLocationProperty), and every
+//! other option is a Delta table property, handed to kernel untouched: kernel decides which keys it recognizes and
+//! derives the protocol from them.
+static vector<pair<string, string>> GetCreateTableOptions(ClientContext &context, TableFunctionBinder &binder,
+                                                          const CreateTableInfo &base) {
+	vector<pair<string, string>> options;
 	for (auto &option : base.options) {
-		if (StringUtil::CIEquals(option.first, "location")) {
-			continue;
-		}
-		// A `delta.*` key must be one Delta has, spelled exactly; any other key is the user's own property and is kept
-		// as given, as COPY TO's WITH_PROPERTIES keeps it
-		DeltaTableProperties::ThrowIfUnknownDeltaKey(option.first, "Delta CREATE TABLE");
 		auto value = ParseCreateTableOption(context, binder, *option.second, option.first, LogicalType::VARCHAR);
-		properties.emplace_back(option.first, value.GetValue<string>());
+		options.emplace_back(option.first, value.GetValue<string>());
 	}
-	std::sort(properties.begin(), properties.end());
-	return properties;
+	return options;
 }
 
 static vector<string> GetCreateTablePartitionColumns(const CreateTableInfo &base) {
@@ -100,6 +67,57 @@ static vector<string> GetCreateTablePartitionColumns(const CreateTableInfo &base
 		result.push_back(colref.GetColumnName().GetIdentifierName());
 	}
 	return result;
+}
+
+vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<string> &keys, const string &statement,
+                                       const string &clause) {
+	vector<string> result;
+	for (auto &key : keys) {
+		optional_ptr<const ColumnDefinition> match;
+		for (auto &column : columns.Logical()) {
+			if (StringUtil::CIEquals(column.Name().GetIdentifierName(), key)) {
+				match = &column;
+				break;
+			}
+		}
+		if (!match) {
+			throw BinderException("%s: %s names column '%s', which the table does not have", statement, clause, key);
+		}
+		auto name = match->Name().GetIdentifierName();
+		if (std::find(result.begin(), result.end(), name) != result.end()) {
+			throw BinderException("%s: %s names column '%s' twice", statement, clause, name);
+		}
+		result.push_back(std::move(name));
+	}
+	return result;
+}
+
+void TakeLocationProperty(vector<pair<string, string>> &properties, const string &target, const string &target_name,
+                          const string &statement) {
+	// `path` named the destination before `location` did, and never shipped, so it is refused rather than taken for a
+	// table property. `location` is spelled as the Iceberg catalog spells it.
+	bool has_location = false;
+	for (idx_t i = 0; i < properties.size(); i++) {
+		auto &key = properties[i].first;
+		if (StringUtil::CIEquals(key, "path")) {
+			throw BinderException("%s names the destination with 'location', not 'path'", statement);
+		}
+		if (!StringUtil::CIEquals(key, "location")) {
+			continue;
+		}
+		if (has_location) {
+			throw BinderException("%s: 'location' is given twice", statement);
+		}
+		has_location = true;
+		// A Delta table lives at one path, so a location elsewhere would make a table that the statement does not
+		// describe. Compared normalized, so a trailing slash or a relative spelling is not a spurious mismatch.
+		if (CanonicalTablePath(properties[i].second) != CanonicalTablePath(target)) {
+			throw NotImplementedException("%s can only create a table at %s ('%s'), not at '%s'", statement,
+			                              target_name, target, properties[i].second);
+		}
+		properties.erase(properties.begin() + NumericCast<int64_t>(i));
+		i--;
+	}
 }
 
 DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalog &delta_catalog,
@@ -145,9 +163,17 @@ DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalo
 	auto binder = Binder::CreateBinder(context);
 	TableFunctionBinder option_binder(*binder, context, "CREATE TABLE", "Table option");
 	DeltaCreateTableRequest request;
-	request.path = GetCreateTablePath(context, option_binder, base, delta_catalog);
-	request.partition_columns = GetCreateTablePartitionColumns(base);
-	request.properties = GetCreateTableProperties(context, option_binder, base);
+	request.path = delta_catalog.GetDBPath();
+	request.partition_columns = ResolvePartitionColumns(base.columns, GetCreateTablePartitionColumns(base),
+	                                                    "Delta CREATE TABLE", "PARTITIONED BY");
+	request.properties = GetCreateTableOptions(context, option_binder, base);
+	TakeLocationProperty(request.properties, request.path, "the attached path", "Delta CREATE TABLE");
+	// A `delta.*` key must be one Delta has, spelled exactly; any other key is the user's own property, kept as given
+	for (auto &property : request.properties) {
+		DeltaTableProperties::ThrowIfUnknownDeltaKey(property.first, "Delta CREATE TABLE");
+	}
+	// Sorted so that two bad properties always fail in the same order; kernel orders the written configuration
+	std::sort(request.properties.begin(), request.properties.end());
 	request.columns = base.columns.Copy();
 
 	if (base.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
@@ -157,47 +183,10 @@ DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalo
 	return request;
 }
 
-//! The first type below `type` that the Delta schema has no type for, or nullptr. Mirrors DeltaSchemaBuilder.
-static optional_ptr<const LogicalType> FindUnstorableType(const LogicalType &type) {
-	switch (type.id()) {
-	case LogicalTypeId::BOOLEAN:
-	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::BIGINT:
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE:
-	case LogicalTypeId::VARCHAR:
-	case LogicalTypeId::BLOB:
-	case LogicalTypeId::DATE:
-	case LogicalTypeId::TIMESTAMP_TZ:
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::DECIMAL:
-	case LogicalTypeId::VARIANT:
-		return nullptr;
-	case LogicalTypeId::STRUCT:
-		for (auto &child : StructType::GetChildTypes(type)) {
-			auto result = FindUnstorableType(child.second);
-			if (result) {
-				return result;
-			}
-		}
-		return nullptr;
-	case LogicalTypeId::LIST:
-		return FindUnstorableType(ListType::GetChildType(type));
-	case LogicalTypeId::MAP: {
-		auto result = FindUnstorableType(MapType::KeyType(type));
-		return result ? result : FindUnstorableType(MapType::ValueType(type));
-	}
-	default:
-		return &type;
-	}
-}
-
 void ThrowIfDeltaCannotStore(const ColumnList &columns, const string &statement, const string &hint) {
 	for (auto &column : columns.Logical()) {
 		auto &type = column.Type();
-		auto unstorable = FindUnstorableType(type);
+		auto unstorable = DeltaSchemaBuilder::FindUnsupportedType(type);
 		if (!unstorable) {
 			continue;
 		}
@@ -422,9 +411,9 @@ vector<DeltaMultiFileColumnDefinition> DeltaCreateTableTransaction::GetWriteColu
 		throw InternalException("DeltaCreateTableTransaction::GetWriteColumns after the transaction was consumed");
 	}
 
-	// A write context per set of partition values: so for each partition column, one where only that column is not
-	// NULL, which then tells its physical name apart from the others'. Without partition columns, one context.
-	// Kernel keys partition values by physical name and leaves partition columns out of the write schema.
+	// A write context needs a value for every partition column. The base one (all NULL) gives the data columns; one
+	// per partition column, with only that column not NULL, tells its physical name apart from the others', since the
+	// context reports partition values under physical names (the map takes them under logical ones).
 	auto write_context_for = [&](optional_idx marked) {
 		ffi::SharedWriteContext *write_context;
 		ErrorData res;
@@ -433,6 +422,15 @@ vector<DeltaMultiFileColumnDefinition> DeltaCreateTableTransaction::GetWriteColu
 			    ffi::create_table_txn_get_unpartitioned_write_context(transaction, engine.get()), write_context);
 		} else {
 			auto map = ffi::partition_value_map_new();
+			// Freed here on every way out of the loop, a throw included; the write context call below consumes it
+			struct MapGuard {
+				ffi::ExclusivePartitionValueMap *map;
+				~MapGuard() {
+					if (map) {
+						ffi::free_partition_value_map(map);
+					}
+				}
+			} guard {map};
 			for (idx_t i = 0; i < partition_columns.size() && !res.HasError(); i++) {
 				auto &type = partition_types[i];
 				bool inserted;
@@ -446,9 +444,9 @@ vector<DeltaMultiFileColumnDefinition> DeltaCreateTableTransaction::GetWriteColu
 				res = KernelUtils::TryUnpackResult(insert, inserted);
 			}
 			if (res.HasError()) {
-				ffi::free_partition_value_map(map);
 				res.Throw();
 			}
+			guard.map = nullptr;
 			// Consumes the map, on error too
 			res = KernelUtils::TryUnpackResult(
 			    ffi::create_table_txn_get_partitioned_write_context(transaction, map, engine.get()), write_context);
@@ -460,16 +458,25 @@ vector<DeltaMultiFileColumnDefinition> DeltaCreateTableTransaction::GetWriteColu
 	};
 
 	auto write_context = write_context_for(optional_idx());
+	// The logical write schema has the data columns with their physical names and ids in the column mapping
+	// metadata. The physical one names the fields physically, with `parquet.field.id`, and also holds the partition
+	// columns when the table's features require them in the files (materializePartitionColumns, icebergCompatV2/V3).
 	auto schema = ffi::get_write_schema(write_context);
+	auto physical_schema = ffi::get_physical_write_schema(write_context);
 	vector<DeltaMultiFileColumnDefinition> data_columns;
+	vector<DeltaMultiFileColumnDefinition> physical_columns;
 	try {
 		data_columns = KernelSchemaVisitor::ToColumnDefinitions(engine.get(), schema, DeltaColumnMappingMode::NONE);
+		physical_columns =
+		    KernelSchemaVisitor::ToColumnDefinitions(engine.get(), physical_schema, DeltaColumnMappingMode::NONE);
 	} catch (...) {
 		ffi::free_schema(schema);
+		ffi::free_schema(physical_schema);
 		ffi::free_write_context(write_context);
 		throw;
 	}
 	ffi::free_schema(schema);
+	ffi::free_schema(physical_schema);
 	ffi::free_write_context(write_context);
 
 	bool mapped = false;
@@ -494,6 +501,24 @@ vector<DeltaMultiFileColumnDefinition> DeltaCreateTableTransaction::GetWriteColu
 		partition_physical_names.push_back(std::move(state.physical_names[0]));
 	}
 
+	// A partition column the files must hold: the physical schema lists it, with its field id
+	idx_t materialized = 0;
+	vector<optional_ptr<const DeltaMultiFileColumnDefinition>> partition_physical(partition_columns.size());
+	for (idx_t i = 0; i < partition_columns.size(); i++) {
+		for (auto &physical : physical_columns) {
+			if (physical.name.GetIdentifierName() == partition_physical_names[i]) {
+				partition_physical[i] = &physical;
+				materialized++;
+				break;
+			}
+		}
+	}
+	if (materialized != 0 && materialized != partition_columns.size()) {
+		throw InternalException("Delta create transaction's physical schema holds %llu of the %llu partition columns",
+		                        materialized, partition_columns.size());
+	}
+	partition_columns_materialized = !partition_columns.empty() && materialized == partition_columns.size();
+
 	// Back into table order: the data columns as kernel reports them, a partition column where the table has it
 	vector<DeltaMultiFileColumnDefinition> result;
 	idx_t next_data_column = 0;
@@ -501,9 +526,13 @@ vector<DeltaMultiFileColumnDefinition> DeltaCreateTableTransaction::GetWriteColu
 		auto name = column.Name().GetIdentifierName();
 		auto partition = std::find(partition_columns.begin(), partition_columns.end(), name);
 		if (partition != partition_columns.end()) {
+			auto index = NumericCast<idx_t>(partition - partition_columns.begin());
 			DeltaMultiFileColumnDefinition partition_column(name, column.Type(), true);
 			if (mapped) {
-				partition_column.physical_name = partition_physical_names[partition - partition_columns.begin()];
+				partition_column.physical_name = partition_physical_names[index];
+				if (partition_physical[index]) {
+					partition_column.field_id = partition_physical[index]->field_id;
+				}
 			}
 			result.push_back(std::move(partition_column));
 			continue;
