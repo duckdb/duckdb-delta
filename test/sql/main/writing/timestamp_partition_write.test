@@ -1,0 +1,463 @@
+# name: test/sql/main/writing/timestamp_partition_write.test
+# description: TIMESTAMPTZ partition values are written as UTC in ISO 8601 ('...Z'), in every session time zone and on
+#              every write path; BLOB partition columns are refused on every write path, and still read
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require icu
+
+require notwindows
+
+# The partition values a log's add actions carry, under any key: a mapped table keys them by physical name
+statement ok
+CREATE MACRO log_values(log_glob) AS TABLE
+SELECT DISTINCT unnest(json_extract_string(json, '$.add.partitionValues.*')) AS v
+FROM read_ndjson_objects(log_glob)
+WHERE json_extract(json, '$.add') IS NOT NULL;
+
+statement ok
+CALL copy_dir('data/inlined/timestamp_partition_write/spark_binary', '{TEMP_DIR}/tstz_write/spark_binary');
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/spark_binary' AS spark_binary (TYPE delta);
+
+foreach tz UTC America/Los_Angeles Asia/Kolkata Pacific/Kiritimati America/St_Johns
+
+statement ok
+SET TimeZone = '{tz}';
+
+# -----------------------------------------------------------------------------
+# CREATE + INSERT
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/{tz}/created' AS created (TYPE delta);
+
+statement ok
+CREATE TABLE created.created (id INTEGER, p TIMESTAMPTZ) PARTITIONED BY (p);
+
+# 2 and 7 are one instant, written at two offsets; 4 and 5 are the ends of the range Delta readers parse
+statement ok
+INSERT INTO created VALUES
+    (1, '2024-02-29 12:34:56.789012+00'),
+    (2, '2024-01-01 00:00:00-08'),
+    (3, '1969-12-31 23:59:59.999999+00'),
+    (4, '0001-01-01 00:00:00+00'),
+    (5, '9999-12-31 23:59:59.999999+00'),
+    (6, NULL),
+    (7, '2024-01-01 13:30:00+05:30');
+
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/{tz}/created/_delta_log/*.json') ORDER BY v NULLS LAST;
+----
+0001-01-01T00:00:00.000000Z
+1969-12-31T23:59:59.999999Z
+2024-01-01T08:00:00.000000Z
+2024-02-29T12:34:56.789012Z
+9999-12-31T23:59:59.999999Z
+NULL
+
+query II
+SELECT id, epoch_us(p) FROM created ORDER BY id;
+----
+1	1709210096789012
+2	1704096000000000
+3	-1
+4	-62135596800000000
+5	253402300799999999
+6	NULL
+7	1704096000000000
+
+query II
+SELECT id, epoch_us(p) FROM delta_scan('{TEMP_DIR}/tstz_write/{tz}/created') ORDER BY id;
+----
+1	1709210096789012
+2	1704096000000000
+3	-1
+4	-62135596800000000
+5	253402300799999999
+6	NULL
+7	1704096000000000
+
+query I
+SELECT id FROM created WHERE p = TIMESTAMPTZ '2024-01-01 08:00:00+00' ORDER BY id;
+----
+2
+7
+
+query I
+SELECT id FROM created WHERE p < TIMESTAMPTZ '1970-01-01 00:00:00+00' ORDER BY id;
+----
+3
+4
+
+# Values no Delta reader parses back are refused, and the table keeps its rows
+statement error
+INSERT INTO created VALUES (8, 'infinity');
+----
+Delta partition column 'p' cannot hold the value 'infinity': a Delta timestamp partition value must be finite
+
+statement error
+INSERT INTO created VALUES (8, '-infinity');
+----
+must be finite
+
+statement error
+INSERT INTO created VALUES (8, '0001-12-31 (BC) 23:59:59+00');
+----
+must lie in the years 0001 to 9999 (UTC)
+
+statement error
+INSERT INTO created VALUES (8, '10000-01-01 00:00:00+00');
+----
+must lie in the years 0001 to 9999 (UTC)
+
+# The literal's wall clock is in year 0001 at +05, but its UTC instant is before year 0001
+statement error
+INSERT INTO created VALUES (8, '0001-01-01 00:00:00+05');
+----
+must lie in the years 0001 to 9999 (UTC)
+
+query I
+SELECT count(*) FROM created;
+----
+7
+
+# -----------------------------------------------------------------------------
+# CREATE TABLE AS, plain and column-mapped
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/{tz}/ctas' AS ctas (TYPE delta);
+
+statement ok
+CREATE TABLE ctas.ctas PARTITIONED BY (p) AS SELECT * FROM created;
+
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/{tz}/ctas/_delta_log/*.json') ORDER BY v NULLS LAST;
+----
+0001-01-01T00:00:00.000000Z
+1969-12-31T23:59:59.999999Z
+2024-01-01T08:00:00.000000Z
+2024-02-29T12:34:56.789012Z
+9999-12-31T23:59:59.999999Z
+NULL
+
+query I
+SELECT count(*) FROM (SELECT id, p FROM ctas EXCEPT SELECT id, p FROM created);
+----
+0
+
+query I
+SELECT count(*) FROM ctas;
+----
+7
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/{tz}/ctas_mapped' AS ctas_mapped (TYPE delta);
+
+statement ok
+CREATE TABLE ctas_mapped.ctas_mapped PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'name') AS
+SELECT * FROM created WHERE id IN (1, 2);
+
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/{tz}/ctas_mapped/_delta_log/*.json') ORDER BY v;
+----
+2024-01-01T08:00:00.000000Z
+2024-02-29T12:34:56.789012Z
+
+query II
+SELECT id, epoch_us(p) FROM ctas_mapped ORDER BY id;
+----
+1	1709210096789012
+2	1704096000000000
+
+# INSERT into the mapped table takes the same path
+statement ok
+INSERT INTO ctas_mapped VALUES (3, '2024-01-01 00:00:00+00');
+
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/{tz}/ctas_mapped/_delta_log/*.json') ORDER BY v;
+----
+2024-01-01T00:00:00.000000Z
+2024-01-01T08:00:00.000000Z
+2024-02-29T12:34:56.789012Z
+
+# -----------------------------------------------------------------------------
+# COPY TO (FORMAT delta)
+#
+
+statement ok
+COPY (SELECT 1 AS id, TIMESTAMPTZ '2024-06-01 17:30:00+05:30' AS p) TO '{TEMP_DIR}/tstz_write/{tz}/copied' (FORMAT delta, PARTITION_BY (p));
+
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/{tz}/copied/_delta_log/*.json');
+----
+2024-06-01T12:00:00.000000Z
+
+query II
+SELECT id, epoch_us(p) FROM delta_scan('{TEMP_DIR}/tstz_write/{tz}/copied');
+----
+1	1717243200000000
+
+# -----------------------------------------------------------------------------
+# INSERT into tables Spark made (session America/Los_Angeles), unmapped and mapped
+#
+
+statement ok
+CALL copy_dir('data/inlined/timestamp_partition_write/spark_timestamp', '{TEMP_DIR}/tstz_write/{tz}/spark_timestamp');
+
+statement ok
+CALL copy_dir('data/inlined/timestamp_partition_write/spark_timestamp_mapped', '{TEMP_DIR}/tstz_write/{tz}/spark_timestamp_mapped');
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/{tz}/spark_timestamp' AS spark_timestamp (TYPE delta);
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/{tz}/spark_timestamp_mapped' AS spark_timestamp_mapped (TYPE delta);
+
+# Row 2 is the instant Spark wrote for row 1
+statement ok
+INSERT INTO spark_timestamp VALUES (2, '2024-01-01 00:00:00+00'), (3, '2024-06-01 12:00:00+00');
+
+statement ok
+INSERT INTO spark_timestamp_mapped VALUES (2, '2024-01-01 00:00:00+00'), (3, '2024-06-01 12:00:00+00');
+
+# Ours and Spark's are one string for one instant
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/{tz}/spark_timestamp/_delta_log/*.json') ORDER BY v;
+----
+2024-01-01T00:00:00.000000Z
+2024-06-01T12:00:00.000000Z
+
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/{tz}/spark_timestamp_mapped/_delta_log/*.json') ORDER BY v;
+----
+2024-01-01T00:00:00.000000Z
+2024-06-01T12:00:00.000000Z
+
+query II
+SELECT id, epoch_us(p) FROM spark_timestamp ORDER BY id;
+----
+1	1704067200000000
+2	1704067200000000
+3	1717243200000000
+
+query II
+SELECT id, epoch_us(p) FROM spark_timestamp_mapped ORDER BY id;
+----
+1	1704067200000000
+2	1704067200000000
+3	1717243200000000
+
+# One instant in two directories: Spark's, named in Los Angeles time, and ours, in UTC. Filters take the log values
+# (#414), so both rows match
+query I
+SELECT id FROM spark_timestamp WHERE p = TIMESTAMPTZ '2024-01-01 00:00:00+00' ORDER BY id;
+----
+1
+2
+
+query I
+SELECT id FROM spark_timestamp_mapped WHERE p = TIMESTAMPTZ '2024-01-01 00:00:00+00' ORDER BY id;
+----
+1
+2
+
+statement ok
+DETACH created;
+
+statement ok
+DETACH ctas;
+
+statement ok
+DETACH ctas_mapped;
+
+statement ok
+DETACH spark_timestamp;
+
+statement ok
+DETACH spark_timestamp_mapped;
+
+endloop
+
+# -----------------------------------------------------------------------------
+# DATE and TIMESTAMP (timestamp_ntz) partition values are written as DuckDB renders them, the protocol's form, and
+# refused where no Delta reader parses them back: infinity, BC, years above 9999
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/naive' AS naive (TYPE delta);
+
+statement ok
+CREATE TABLE naive.naive (id INTEGER, d DATE, t TIMESTAMP) PARTITIONED BY (d, t);
+
+statement ok
+INSERT INTO naive VALUES
+    (1, '0001-01-01', '0001-01-01 00:00:00'),
+    (2, '9999-12-31', '9999-12-31 23:59:59.999999'),
+    (3, NULL, NULL);
+
+query I
+SELECT v FROM log_values('{TEMP_DIR}/tstz_write/naive/_delta_log/*.json') ORDER BY v NULLS LAST;
+----
+0001-01-01
+0001-01-01 00:00:00
+9999-12-31
+9999-12-31 23:59:59.999999
+NULL
+
+foreach bad_date infinity -infinity
+
+statement error
+INSERT INTO naive VALUES (4, '{bad_date}', '2024-01-01 00:00:00');
+----
+a Delta date partition value must be finite
+
+endloop
+
+statement error
+INSERT INTO naive VALUES (4, '10000-01-01', '2024-01-01 00:00:00');
+----
+a Delta date partition value must lie in the years 0001 to 9999
+
+statement error
+INSERT INTO naive VALUES (4, '2024-01-01', 'infinity');
+----
+Delta partition column 't' cannot hold the value 'infinity': a Delta timestamp_ntz partition value must be finite
+
+statement error
+INSERT INTO naive VALUES (4, '2024-01-01', '-infinity');
+----
+a Delta timestamp_ntz partition value must be finite
+
+statement error
+INSERT INTO naive VALUES (4, '2024-01-01', '0044-03-15 (BC) 12:00:00');
+----
+Delta partition column 't' cannot hold the value '0044-03-15 (BC) 12:00:00': a Delta timestamp_ntz partition value must lie in the years 0001 to 9999
+
+statement error
+INSERT INTO naive VALUES (4, '2024-01-01', '10000-01-01 00:00:00');
+----
+a Delta timestamp_ntz partition value must lie in the years 0001 to 9999
+
+statement error
+INSERT INTO naive VALUES (4, '0044-03-15 (BC)', '2024-01-01 00:00:00');
+----
+Delta partition column 'd' cannot hold the value '0044-03-15 (BC)': a Delta date partition value must lie in the years 0001 to 9999
+
+# The table keeps its rows and still reads
+query III
+SELECT id, d, t FROM naive ORDER BY id;
+----
+1	0001-01-01	0001-01-01 00:00:00
+2	9999-12-31	9999-12-31 23:59:59.999999
+3	NULL	NULL
+
+# CTAS and COPY refuse them too, and leave no table behind
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/naive_ctas' AS naive_ctas (TYPE delta);
+
+statement error
+CREATE TABLE naive_ctas.naive_ctas PARTITIONED BY (d) AS SELECT 1 AS id, DATE 'infinity' AS d;
+----
+a Delta date partition value must be finite
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/tstz_write/naive_ctas/**');
+----
+0
+
+statement error
+COPY (SELECT 1 AS id, TIMESTAMP '10000-01-01 00:00:00' AS t) TO '{TEMP_DIR}/tstz_write/naive_copied' (FORMAT delta, PARTITION_BY (t));
+----
+a Delta timestamp_ntz partition value must lie in the years 0001 to 9999
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/tstz_write/naive_copied/**');
+----
+0
+
+# -----------------------------------------------------------------------------
+# BLOB partition columns: refused on every write path, before anything is written
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/blob_created' AS blob_created (TYPE delta);
+
+statement error
+CREATE TABLE blob_created.blob_created (id INTEGER, b BLOB) PARTITIONED BY (b);
+----
+Delta CREATE TABLE does not support partitioning on column 'b' of type BLOB: Delta stores partition values as text, which cannot hold arbitrary bytes
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/tstz_write/blob_created/**');
+----
+0
+
+# A BLOB column that is not a partition column is fine
+statement ok
+CREATE TABLE blob_created.blob_created (id INTEGER, b BLOB) PARTITIONED BY (id);
+
+statement ok
+INSERT INTO blob_created VALUES (1, '\xAA\x00b'::BLOB);
+
+query II
+SELECT id, b FROM blob_created;
+----
+1	\xAA\x00b
+
+statement ok
+ATTACH '{TEMP_DIR}/tstz_write/blob_ctas' AS blob_ctas (TYPE delta);
+
+statement error
+CREATE TABLE blob_ctas.blob_ctas PARTITIONED BY (b) AS SELECT 1 AS id, '\xAA\x00b'::BLOB AS b;
+----
+Delta CREATE TABLE does not support partitioning on column 'b' of type BLOB
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/tstz_write/blob_ctas/**');
+----
+0
+
+statement error
+COPY (SELECT 1 AS id, 'abc'::BLOB AS b) TO '{TEMP_DIR}/tstz_write/blob_copied' (FORMAT delta, PARTITION_BY (b));
+----
+Delta COPY TO does not support partitioning on column 'b' of type BLOB
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/tstz_write/blob_copied/**');
+----
+0
+
+# A table Spark made: INSERT is refused, even for a value that would survive as text, and even for NULL
+statement error
+INSERT INTO spark_binary VALUES (2, 'abc'::BLOB);
+----
+Delta INSERT does not support partitioning on column 'b' of type BLOB
+
+statement error
+INSERT INTO spark_binary VALUES (2, NULL);
+----
+Delta INSERT does not support partitioning on column 'b' of type BLOB
+
+# Reads are unchanged
+query II
+SELECT id, b FROM spark_binary;
+----
+1	abc
+
+query II
+SELECT id, b FROM delta_scan('{TEMP_DIR}/tstz_write/spark_binary');
+----
+1	abc
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/tstz_write/spark_binary/_delta_log/*.json');
+----
+2

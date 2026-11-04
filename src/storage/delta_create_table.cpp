@@ -70,6 +70,19 @@ static vector<string> GetCreateTablePartitionColumns(const CreateTableInfo &base
 	return result;
 }
 
+void ThrowIfPartitionTypeUnwritable(const string &column_name, const LogicalType &type, const string &statement) {
+	if (type.id() != LogicalTypeId::BLOB) {
+		return;
+	}
+	// The log keeps partition values as JSON strings. Kernel's writer refuses bytes that are not UTF-8, Spark turns
+	// them into U+FFFD, and readers take the string's UTF-8 bytes back, so most BLOB values cannot be written and read
+	// back as they were.
+	throw NotImplementedException("%s does not support partitioning on column '%s' of type BLOB: Delta stores "
+	                              "partition values as text, which cannot hold arbitrary bytes. Partition on another "
+	                              "column, or on a VARCHAR column holding a text form of it, e.g. hex(%s).",
+	                              statement, column_name, column_name);
+}
+
 vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<string> &keys, const string &statement,
                                        const string &clause) {
 	vector<string> result;
@@ -85,6 +98,7 @@ vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<s
 			throw BinderException("%s: %s names column '%s', which the table does not have", statement, clause, key);
 		}
 		auto name = match->Name().GetIdentifierName();
+		ThrowIfPartitionTypeUnwritable(name, match->Type(), statement);
 		if (std::find(result.begin(), result.end(), name) != result.end()) {
 			throw BinderException("%s: %s names column '%s' twice", statement, clause, name);
 		}
