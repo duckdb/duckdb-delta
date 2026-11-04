@@ -1,6 +1,9 @@
 #include "storage/delta_catalog.hpp"
 #include "storage/delta_schema_entry.hpp"
 #include "storage/delta_transaction.hpp"
+#include "storage/delta_create_table.hpp"
+#include "storage/delta_insert.hpp"
+#include "duckdb/planner/operator/logical_create_table.hpp"
 #include "duckdb/storage/database_size.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -189,8 +192,18 @@ DatabaseSize DeltaCatalog::GetDatabaseSize(ClientContext &context) {
 
 PhysicalOperator &DeltaCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                   LogicalCreateTable &op, PhysicalOperator &plan) {
-	throw NotImplementedException(
-	    "Delta tables do not support CREATE TABLE AS SELECT yet: create the table, then INSERT into it");
+	// A catalog that commits through its parent (Unity Catalog) registers what it creates; CTAS through it needs that
+	// registration to follow a commit with data, which is not built yet
+	if (parent_commit || child_catalog_mode) {
+		throw NotImplementedException("CREATE TABLE AS is not supported yet for a Delta table attached by another "
+		                              "catalog: create the table, then INSERT into it");
+	}
+	auto &base = op.info->Base();
+	auto request = BindDeltaCreateTable(context, *this, base);
+	// The planner reaches here only when no table was found; IF NOT EXISTS on an existing one plans a plain CREATE,
+	// which skips the query
+	return DeltaInsert::PlanCreateTableAs(context, planner, plan, std::move(request), "Delta CREATE TABLE AS",
+	                                      op.estimated_cardinality);
 }
 PhysicalOperator &DeltaCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner, LogicalDelete &op,
                                            PhysicalOperator &plan) {

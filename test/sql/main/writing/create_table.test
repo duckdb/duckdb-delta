@@ -184,6 +184,25 @@ SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_partitioned/part_col=*/*.parq
 ----
 2
 
+# A partition key matches its column whatever its case, and takes the column's spelling
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_partition_case' AS partition_case (TYPE delta);
+
+statement error
+CREATE TABLE partition_case.partition_case (id INTEGER, Part_Col VARCHAR) PARTITIONED BY (nope);
+----
+PARTITIONED BY names column 'nope', which the table does not have
+
+statement ok
+CREATE TABLE partition_case.partition_case (id INTEGER, Part_Col VARCHAR) PARTITIONED BY (PART_COL);
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/delta_create_partition_case/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[Part_Col]
+
 # Kernel requires at least one non-partition column
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_all_partitioned' AS all_partitioned (TYPE delta);
@@ -272,6 +291,40 @@ FROM read_json('{TEMP_DIR}/delta_create_path_and_prop/_delta_log/000000000000000
 WHERE metaData IS NOT NULL;
 ----
 [myApp.a]
+
+# A key outside delta.* is the user's own property, kept as given: in CREATE, CREATE TABLE AS and COPY TO alike
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_props_owner' AS props_owner (TYPE delta);
+
+statement ok
+CREATE TABLE props_owner.props_owner (i INTEGER) WITH ('owner' = 'me');
+
+query I
+SELECT json_extract_string(metaData.configuration, '$.owner')
+FROM read_json('{TEMP_DIR}/delta_create_props_owner/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+me
+
+# A delta.* key must be one Delta has, spelled exactly: keys are case-sensitive
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_props_bad' AS props_bad (TYPE delta);
+
+statement error
+CREATE TABLE props_bad.props_bad (i INTEGER) WITH ('delta.columnmapping.mode' = 'name');
+----
+Delta table property keys are case-sensitive: 'delta.columnmapping.mode' is spelled 'delta.columnMapping.mode'
+
+statement error
+CREATE TABLE props_bad.props_bad (i INTEGER) WITH ('delta.columnMapping.mod' = 'name');
+----
+unknown Delta table property 'delta.columnMapping.mod'
+
+# A known key kernel does not let a create set is kernel's to refuse
+statement error
+CREATE TABLE props_bad.props_bad (i INTEGER) WITH ('delta.targetFileSize' = '1000');
+----
+Setting delta property 'delta.targetFileSize' is not supported during CREATE TABLE
 
 # A property kernel knows turns its feature on, which is how a table gets its protocol
 statement ok
@@ -441,3 +494,27 @@ statement error
 CREATE TABLE unsupported.unsupported (i INTEGER) SORTED BY (i);
 ----
 SORTED BY is not supported for tables in a delta catalog
+
+# -----------------------------------------------------------------------------
+# data_change
+#
+# A schema-only version 0 adds no rows, so its commit passes data_change false. Kernel stamps the
+# flag on add actions only, and this commit has none, so the create's log line is where it shows.
+#
+
+statement ok
+CALL enable_logging(level = 'debug');
+
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_data_change' AS data_change (TYPE delta);
+
+statement ok
+CREATE TABLE data_change.data_change (i INTEGER);
+
+query I
+SELECT message FROM duckdb_logs WHERE type = 'delta.CreateTable' AND message LIKE '%delta_create_data_change%';
+----
+<REGEX>:Created .*delta_create_data_change at version 0, adding 0 files with data_change false
+
+statement ok
+CALL disable_logging();

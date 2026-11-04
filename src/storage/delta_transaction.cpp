@@ -195,13 +195,11 @@ struct WriteMetaData {
 		return {"path", "partitionValues", "size", "modificationTime", "stats"};
 	};
 
-	WriteMetaData(DeltaMultiFileList &snapshot, vector<DeltaDataFile> &outstanding_appends) {
+	WriteMetaData(const string &table_path, const vector<DeltaDataFile> &outstanding_appends) {
 		const DeltaDataFile *first_file = outstanding_appends.empty() ? nullptr : &outstanding_appends[0];
 		buffer_types = GetTypes(first_file);
 
 		for (const auto &file : outstanding_appends) {
-			auto table_path = snapshot.GetPath();
-
 			// consume any leading '/' chars to be certain path is relative -- as seen in #268 they corrupt (for spark)
 			// https://github.com/duckdb/duckdb-delta/issues/268
 			auto file_name_offset = table_path.size();
@@ -275,6 +273,21 @@ private:
 	vector<Value> modification_times;
 	vector<Value> stats;
 };
+
+KernelEngineData CreateAddFilesEngineData(ClientContext &context, const string &table_path,
+                                          const vector<DeltaDataFile> &files) {
+	WriteMetaData write_metadata(table_path, files);
+	auto write_metadata_ffi = write_metadata.ToArrow(context);
+
+	ffi::ExclusiveEngineData *engine_data;
+	auto res = KernelUtils::TryUnpackResult(
+	    ffi::get_engine_data(write_metadata_ffi.array, &write_metadata_ffi.schema, DuckDBEngineError::AllocateError),
+	    engine_data);
+	if (res.HasError()) {
+		res.Throw();
+	}
+	return KernelEngineData(engine_data);
+}
 
 void DeltaTransaction::CleanUpFiles() {
 	// Clean up the files created by this transaction
@@ -567,11 +580,8 @@ void DeltaTransaction::Append(ClientContext &context, const vector<DeltaDataFile
 		// simple.
 		vector<DeltaDataFile> new_files(outstanding_appends.begin() + NumericCast<ptrdiff_t>(start),
 		                                outstanding_appends.end());
-		WriteMetaData write_metadata(*table_entry->snapshot, new_files);
-		auto write_metadata_ffi = write_metadata.ToArrow(context);
-
-		KernelEngineData write_metadata_engine_data = table_entry->snapshot->TryUnpackKernelResult(ffi::get_engine_data(
-		    write_metadata_ffi.array, &write_metadata_ffi.schema, DuckDBEngineError::AllocateError));
+		auto write_metadata_engine_data =
+		    CreateAddFilesEngineData(context, table_entry->snapshot->GetPath(), new_files);
 
 		ffi::update_table_txn_add_files(kernel_transaction.get(), write_metadata_engine_data.release());
 	}

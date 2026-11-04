@@ -1,0 +1,428 @@
+# name: test/sql/main/writing/copy_to_delta.test
+# description: COPY ... TO ... (FORMAT delta) writes a new Delta table, through the same commit as CREATE TABLE AS
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Plain
+#
+
+query I
+COPY (SELECT range::INTEGER AS i, 'v' || range AS s FROM range(5)) TO '{TEMP_DIR}/copy_basic' (FORMAT delta);
+----
+5
+
+# No ATTACH: the table is read with delta_scan, or by attaching it
+query II
+SELECT i, s FROM delta_scan('{TEMP_DIR}/copy_basic') ORDER BY i;
+----
+0	v0
+1	v1
+2	v2
+3	v3
+4	v4
+
+statement ok
+ATTACH '{TEMP_DIR}/copy_basic' AS basic (TYPE delta);
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'basic';
+----
+i	INTEGER
+s	VARCHAR
+
+# One commit, version 0 with protocol, metadata and the add action, which changes data
+query IIII
+SELECT count(*) FILTER (json_extract(json, '$.protocol') IS NOT NULL),
+       count(*) FILTER (json_extract(json, '$.metaData') IS NOT NULL),
+       count(*) FILTER (json_extract(json, '$.add') IS NOT NULL),
+       bool_and(json_extract(json, '$.add.dataChange')::BOOLEAN) FILTER (json_extract(json, '$.add') IS NOT NULL)
+FROM read_ndjson_objects('{TEMP_DIR}/copy_basic/_delta_log/*.json');
+----
+1	1	1	true
+
+# A second COPY to the path fails: no append, no overwrite
+statement error
+COPY (SELECT 1 AS i, 'x' AS s) TO '{TEMP_DIR}/copy_basic' (FORMAT delta);
+----
+creates a new Delta table, but '{TEMP_DIR}/copy_basic' already holds one: choose another path
+
+query I
+SELECT count(*) FROM basic;
+----
+5
+
+# A table, not only a query
+statement ok
+CREATE TABLE src AS SELECT range::BIGINT AS id FROM range(3);
+
+statement ok
+COPY src TO '{TEMP_DIR}/copy_from_table' (FORMAT delta);
+
+query I
+SELECT sum(id) FROM delta_scan('{TEMP_DIR}/copy_from_table');
+----
+3
+
+# Duplicate names get a suffix, as in COPY to a file and in CREATE TABLE AS
+statement ok
+COPY (SELECT 1 AS a, 2 AS a) TO '{TEMP_DIR}/copy_duplicate_names' (FORMAT delta);
+
+query II
+SELECT a, a_1 FROM delta_scan('{TEMP_DIR}/copy_duplicate_names');
+----
+1	2
+
+# An empty result creates an empty table
+query I
+COPY (SELECT range AS i FROM range(0)) TO '{TEMP_DIR}/copy_empty' (FORMAT delta);
+----
+0
+
+query I
+SELECT count(*) FROM delta_scan('{TEMP_DIR}/copy_empty');
+----
+0
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_empty/_delta_log/*.json');
+----
+1
+
+# -----------------------------------------------------------------------------
+# Partitioned
+#
+
+statement ok
+COPY (SELECT range::INTEGER AS id, ['a', 'b', NULL][range % 3 + 1] AS part_col FROM range(6))
+TO '{TEMP_DIR}/copy_partitioned' (FORMAT delta, PARTITION_BY (part_col));
+
+query II
+SELECT id, part_col FROM delta_scan('{TEMP_DIR}/copy_partitioned') ORDER BY id;
+----
+0	a
+1	b
+2	NULL
+3	a
+4	b
+5	NULL
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/copy_partitioned/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[part_col]
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_partitioned/part_col=*/*.parquet');
+----
+3
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_partition' (FORMAT delta, PARTITION_BY (nope));
+----
+PARTITION_BY names column 'nope', which the table does not have
+
+# A partition key matches its column whatever its case, and takes the column's spelling
+statement ok
+COPY (SELECT 1 AS id, 'a' AS Part_Col) TO '{TEMP_DIR}/copy_partition_case' (FORMAT delta, PARTITION_BY (PART_COL));
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/copy_partition_case/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[Part_Col]
+
+# -----------------------------------------------------------------------------
+# Table properties, column mapping
+#
+# WITH_PROPERTIES takes every property, as CREATE's WITH (...) does: delta.* keys spelled exactly, and keys of the
+# user's own, kept as given. A known delta.* property may also be a COPY option of its own.
+#
+
+statement ok
+COPY (SELECT range::INTEGER AS i, (range % 2)::VARCHAR AS p FROM range(4)) TO '{TEMP_DIR}/copy_cm'
+(FORMAT delta, PARTITION_BY (p), WITH_PROPERTIES {'delta.columnMapping.mode': 'name'});
+
+query II
+SELECT i, p FROM delta_scan('{TEMP_DIR}/copy_cm') ORDER BY i;
+----
+0	0
+1	1
+2	0
+3	1
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"')
+FROM read_json('{TEMP_DIR}/copy_cm/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+name
+
+# Partition values keyed by the physical name, in part- directories, as INSERT writes a mapped table
+query I
+WITH log AS (
+    SELECT json AS j FROM read_ndjson_objects('{TEMP_DIR}/copy_cm/_delta_log/*.json')
+), physical AS (
+    SELECT json_extract_string(f, '$.metadata."delta.columnMapping.physicalName"') AS name
+    FROM log, unnest(json_extract(json_extract_string(j, '$.metaData.schemaString'), '$.fields[*]')) AS t(f)
+    WHERE json_extract_string(f, '$.name') = 'p'
+)
+SELECT bool_and(json_keys(json_extract(j, '$.add.partitionValues')) = [(SELECT name FROM physical)])
+FROM log WHERE json_extract(j, '$.add') IS NOT NULL;
+----
+true
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_cm/part-*/*.parquet');
+----
+2
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_props' (FORMAT delta,
+    WITH_PROPERTIES MAP {'delta.appendOnly': 'true', 'myApp.Mixed.Key': 'Kept'});
+
+query II
+SELECT json_extract_string(metaData.configuration, '$."delta.appendOnly"'),
+       json_extract_string(metaData.configuration, '$."myApp.Mixed.Key"')
+FROM read_json('{TEMP_DIR}/copy_props/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+true	Kept
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES 'delta.appendOnly');
+----
+WITH_PROPERTIES takes a MAP or a STRUCT
+
+# The complete form: delta.* and the user's own keys together
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_with_owner' (FORMAT delta,
+    WITH_PROPERTIES {'delta.columnMapping.mode': 'name', 'owner': 'x'});
+
+query II
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"'),
+       json_extract_string(metaData.configuration, '$.owner')
+FROM read_json('{TEMP_DIR}/copy_with_owner/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+name	x
+
+# In WITH_PROPERTIES, a delta.* key is checked as CREATE checks it: spelled exactly, and known
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'delta.columnmapping.mode': 'name'});
+----
+Delta table property keys are case-sensitive: 'delta.columnmapping.mode' is spelled 'delta.columnMapping.mode'
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'delta.columnMapping.mod': 'name'});
+----
+unknown Delta table property 'delta.columnMapping.mod'
+
+# A known delta.* property as an option of its own: COPY lowercases the name, and it is set under its own spelling
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bare_props' (FORMAT delta, "delta.columnMapping.mode" 'id', "DELTA.APPENDONLY" true);
+
+query II
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"'),
+       json_extract_string(metaData.configuration, '$."delta.appendOnly"')
+FROM read_json('{TEMP_DIR}/copy_bare_props/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+id	true
+
+# An unknown delta.* option: DuckDB refuses it, suggesting the known ones
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, "delta.columnMapping.mod" 'id');
+----
+Candidate options: "delta.columnMapping.mode"
+
+# A key of the user's own goes in WITH_PROPERTIES; as an option it is refused
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, owner 'x');
+----
+Unrecognized option "owner" for delta
+
+# One property, given both ways, is refused
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, "delta.appendOnly" 'true',
+    WITH_PROPERTIES {'delta.appendOnly': 'true'});
+----
+is given both as an option and in WITH_PROPERTIES
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_bad_props/**');
+----
+0
+
+# Duplicate names differing only in case: DuckDB renames the second to A_1, and the key resolves to the first column,
+# as Delta matches names case-insensitively
+statement ok
+COPY (SELECT 1 AS a, 2 AS "A", 3 AS b) TO '{TEMP_DIR}/copy_case_duplicates' (FORMAT delta, PARTITION_BY ("A"));
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/copy_case_duplicates/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[a]
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta,
+    WITH_PROPERTIES MAP {'location': '{TEMP_DIR}/copy_bad_props', 'LOCATION': '{TEMP_DIR}/copy_bad_props'});
+----
+'location' is given twice
+
+# `location` and `path` are taken as CREATE takes them: `location` must name the target, `path` is refused
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'location': 'elsewhere'});
+----
+can only create a table at its target path
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_props' (FORMAT delta, WITH_PROPERTIES {'path': 'elsewhere'});
+----
+names the destination with 'location', not 'path'
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_location' (FORMAT delta, WITH_PROPERTIES {'location': '{TEMP_DIR}/copy_location/'});
+
+query I
+SELECT json_keys(metaData.configuration)
+FROM read_json('{TEMP_DIR}/copy_location/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[]
+
+# COPY's own file options say nothing about a table
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_option' (FORMAT delta, OVERWRITE);
+----
+does not take the option 'overwrite'
+
+statement error
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_bad_option' (FORMAT delta, PER_THREAD_OUTPUT);
+----
+does not take the option 'per_thread_output'
+
+# -----------------------------------------------------------------------------
+# Refused before anything is written
+#
+
+statement error
+COPY (SELECT 1::UHUGEINT AS u) TO '{TEMP_DIR}/copy_unstorable' (FORMAT delta);
+----
+Delta COPY TO does not support column 'u' of type UHUGEINT: Delta has no such type. Cast the column in the query
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_unstorable/**');
+----
+0
+
+statement error
+COPY (SELECT 'a' AS p) TO '{TEMP_DIR}/copy_all_partitioned' (FORMAT delta, PARTITION_BY (p));
+----
+Table must have at least one non-partition column
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_all_partitioned/**');
+----
+0
+
+# -----------------------------------------------------------------------------
+# A query that fails while the files are written leaves nothing on disk
+#
+
+statement ok
+SET threads = 1;
+
+statement error
+COPY (SELECT CASE WHEN range < 300000 THEN range ELSE error('fails mid-write') END AS i FROM range(400000))
+TO '{TEMP_DIR}/copy_fails' (FORMAT delta);
+----
+fails mid-write
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_fails/**');
+----
+0
+
+statement error
+COPY (SELECT range % 3 AS p, CASE WHEN range < 300000 THEN range ELSE error('fails mid-write') END AS i
+      FROM range(400000))
+TO '{TEMP_DIR}/copy_fails_partitioned' (FORMAT delta, PARTITION_BY (p), WITH_PROPERTIES {'delta.columnMapping.mode': 'id'});
+----
+fails mid-write
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_fails_partitioned/**');
+----
+0
+
+# And the path takes the table afterwards
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_fails' (FORMAT delta);
+
+query I
+SELECT i FROM delta_scan('{TEMP_DIR}/copy_fails');
+----
+1
+
+# -----------------------------------------------------------------------------
+# A prepared COPY plans its create transaction once: the first EXECUTE creates the table, a second finds it there
+#
+
+statement ok
+PREPARE copy_prepared AS COPY (SELECT range AS i FROM range(3)) TO '{TEMP_DIR}/copy_prepared' (FORMAT delta);
+
+# Preparing leaves nothing on disk
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_prepared/**');
+----
+0
+
+query I
+EXECUTE copy_prepared;
+----
+3
+
+statement error
+EXECUTE copy_prepared;
+----
+already holds one: choose another path
+
+query I
+SELECT count(*) FROM delta_scan('{TEMP_DIR}/copy_prepared');
+----
+3
+
+# A table created at the path while the COPY ran: the COPY's commit loses, says what to do, and removes its files
+statement ok
+PREPARE copy_race AS COPY (SELECT 'loser' AS who) TO '{TEMP_DIR}/copy_race' (FORMAT delta);
+
+statement ok
+COPY (SELECT 'winner' AS who) TO '{TEMP_DIR}/copy_race' (FORMAT delta);
+
+statement error
+EXECUTE copy_race;
+----
+already holds one, created while this statement ran: choose another path
+
+query I
+SELECT who FROM delta_scan('{TEMP_DIR}/copy_race');
+----
+winner
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_race/*.parquet');
+----
+1

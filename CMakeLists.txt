@@ -17,10 +17,12 @@ set(EXTENSION_SOURCES
     src/delta_log_types.cpp
     src/delta_macros.cpp
     src/delta_schema_builder.cpp
+    src/delta_table_properties.cpp
     src/delta_utils.cpp
     src/functions/delta_scan/delta_scan.cpp
     src/functions/delta_scan/delta_multi_file_list.cpp
     src/functions/delta_scan/delta_multi_file_reader.cpp
+    src/functions/delta_copy.cpp
     src/functions/delta_domain_metadata.cpp
     src/functions/delta_metadata_scan.cpp
     src/functions/metadata_functions.cpp
@@ -30,6 +32,7 @@ set(EXTENSION_SOURCES
     src/path_utils.cpp
     src/storage/delta_insert.cpp
     src/storage/delta_catalog.cpp
+    src/storage/delta_create_table.cpp
     src/storage/delta_schema_entry.cpp
     src/storage/delta_table_entry.cpp
     src/storage/delta_transaction.cpp

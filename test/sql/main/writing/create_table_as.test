@@ -1,0 +1,522 @@
+# name: test/sql/main/writing/create_table_as.test
+# description: CREATE TABLE ... AS SELECT for delta tables: one commit, version 0 with the rows
+# group: [writing]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# -----------------------------------------------------------------------------
+# Plain
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_basic' AS basic (TYPE delta);
+
+query I
+CREATE TABLE basic.basic AS SELECT range::INTEGER AS i, 'v' || range AS s FROM range(5);
+----
+5
+
+query II
+SELECT i, s FROM basic.basic ORDER BY i;
+----
+0	v0
+1	v1
+2	v2
+3	v3
+4	v4
+
+# The column names and types are the query's
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'basic';
+----
+i	INTEGER
+s	VARCHAR
+
+# One commit: version 0 holds protocol, metadata and the add actions, as Spark writes a CTAS
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_basic/_delta_log/*.json');
+----
+1
+
+query IIII
+SELECT count(*) FILTER (json_extract(json, '$.commitInfo') IS NOT NULL),
+       count(*) FILTER (json_extract(json, '$.protocol') IS NOT NULL),
+       count(*) FILTER (json_extract(json, '$.metaData') IS NOT NULL),
+       count(*) FILTER (json_extract(json, '$.add') IS NOT NULL)
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_basic/_delta_log/00000000000000000000.json');
+----
+1	1	1	1
+
+# Kernel names every create commit CREATE TABLE; Spark says CREATE TABLE AS SELECT
+query I
+SELECT json_extract_string(json, '$.commitInfo.operation')
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_basic/_delta_log/00000000000000000000.json')
+WHERE json_extract(json, '$.commitInfo') IS NOT NULL;
+----
+CREATE TABLE
+
+# The commit adds rows, so its add actions change data
+query II
+SELECT json_extract(json, '$.add.dataChange'), json_extract_string(json, '$.add.stats')::JSON->>'numRecords'
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_basic/_delta_log/00000000000000000000.json')
+WHERE json_extract(json, '$.add') IS NOT NULL;
+----
+true	5
+
+# Stats as INSERT writes them
+query II
+SELECT json_extract_string(json, '$.add.stats')::JSON->'minValues'->>'i',
+       json_extract_string(json, '$.add.stats')::JSON->'maxValues'->>'s'
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_basic/_delta_log/00000000000000000000.json')
+WHERE json_extract(json, '$.add') IS NOT NULL;
+----
+0	v4
+
+# The table reads back through delta_scan as well, from a fresh look at the log
+query I
+SELECT sum(i) FROM delta_scan('{TEMP_DIR}/ctas_basic');
+----
+10
+
+# And takes further writes
+statement ok
+INSERT INTO basic.basic VALUES (5, 'v5');
+
+query I
+SELECT count(*) FROM basic.basic;
+----
+6
+
+# A second CTAS onto the table fails, says what to do, and runs nothing
+statement error
+CREATE TABLE basic.basic AS SELECT 1 AS i;
+----
+already exists
+
+# IF NOT EXISTS on an existing table skips the query entirely
+statement ok
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT error('the query ran') AS i;
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_basic/_delta_log/*.json');
+----
+2
+
+# OR REPLACE needs a replace commit that keeps the table id: refused
+statement error
+CREATE OR REPLACE TABLE basic.basic AS SELECT 1 AS i;
+----
+do not support CREATE OR REPLACE TABLE
+
+# IF NOT EXISTS on a fresh path creates
+statement ok
+ATTACH '{TEMP_DIR}/ctas_ine' AS ine (TYPE delta);
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine.ine AS SELECT 42 AS i;
+
+query I
+SELECT i FROM ine.ine;
+----
+42
+
+# -----------------------------------------------------------------------------
+# Types
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_types' AS types (TYPE delta);
+
+statement ok
+CREATE TABLE types.types AS SELECT true AS b, 1::TINYINT AS t, 2::SMALLINT AS sm, 3 AS i, 4::BIGINT AS bi,
+    1.5::FLOAT AS f, 2.5::DOUBLE AS d, 12.34::DECIMAL(10, 2) AS dec, 'x' AS s, '\x01'::BLOB AS bl,
+    DATE '2026-01-02' AS dt, TIMESTAMP '2026-01-02 03:04:05' AS ts, TIMESTAMPTZ '2026-01-02 03:04:05+00' AS tstz,
+    [1, 2] AS l, {'a': 1, 'b': 'y'} AS st, MAP {'k': 1} AS m;
+
+query IIIIIIIIIIIIIIII
+SELECT * FROM types.types;
+----
+true	1	2	3	4	1.5	2.5	12.34	x	\x01	2026-01-02	2026-01-02 03:04:05	2026-01-02 03:04:05+00	[1, 2]	{'a': 1, 'b': y}	{k=1}
+
+# A type Delta cannot store is refused before anything is written, naming the column, with a hint to cast
+statement ok
+ATTACH '{TEMP_DIR}/ctas_unstorable' AS unstorable (TYPE delta);
+
+statement error
+CREATE TABLE unstorable.unstorable AS SELECT 1 AS ok, 1::UHUGEINT AS u;
+----
+does not support column 'u' of type UHUGEINT: Delta has no such type. Cast the column in the query
+
+statement error
+CREATE TABLE unstorable.unstorable AS SELECT [INTERVAL 1 DAY] AS l;
+----
+does not support column 'l' of type INTERVAL[] (it holds a INTERVAL)
+
+# No implicit cast: SELECT NULL has no type Delta has
+statement error
+CREATE TABLE unstorable.unstorable AS SELECT NULL AS n;
+----
+does not support column 'n'
+
+# The cast the hint asks for works
+statement ok
+CREATE TABLE unstorable.unstorable AS SELECT 1::UHUGEINT::DECIMAL(38, 0) AS u, NULL::INTEGER AS n;
+
+query II
+SELECT u, n FROM unstorable.unstorable;
+----
+1	NULL
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_unstorable_fresh' AS unstorable_fresh (TYPE delta);
+
+statement error
+CREATE TABLE unstorable_fresh.unstorable_fresh AS SELECT 1::UTINYINT AS u;
+----
+does not support column 'u' of type UTINYINT
+
+# Refused before anything is written: the directory was never made
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_unstorable_fresh/**');
+----
+0
+
+# -----------------------------------------------------------------------------
+# An empty query creates an empty table
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_empty' AS empty (TYPE delta);
+
+query I
+CREATE TABLE empty.empty AS SELECT range AS i FROM range(0);
+----
+0
+
+query I
+SELECT count(*) FROM empty.empty;
+----
+0
+
+query II
+SELECT count(*) FILTER (json_extract(json, '$.metaData') IS NOT NULL),
+       count(*) FILTER (json_extract(json, '$.add') IS NOT NULL)
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_empty/_delta_log/00000000000000000000.json');
+----
+1	0
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_empty/**/*.parquet');
+----
+0
+
+# -----------------------------------------------------------------------------
+# A query that fails while the files are written leaves nothing on disk
+#
+
+statement ok
+SET threads = 1;
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_fails' AS fails (TYPE delta);
+
+statement error
+CREATE TABLE fails.fails AS
+SELECT CASE WHEN range < 300000 THEN range ELSE error('fails mid-write') END AS i FROM range(400000);
+----
+fails mid-write
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_fails/**');
+----
+0
+
+# A directory that was there before stays, empty
+statement ok
+COPY (SELECT 1 AS marker) TO '{TEMP_DIR}/ctas_fails_existing_dir' (FORMAT csv, PER_THREAD_OUTPUT);
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_fails_existing_dir' AS fails_existing (TYPE delta);
+
+statement error
+CREATE TABLE fails_existing.fails_existing PARTITIONED BY (p) AS
+SELECT range % 3 AS p, CASE WHEN range < 300000 THEN range ELSE error('fails mid-write') END AS i FROM range(400000);
+----
+fails mid-write
+
+query I
+SELECT parse_filename(file) FROM glob('{TEMP_DIR}/ctas_fails_existing_dir/**');
+----
+data_0.csv
+
+# And the path can be created afterwards
+statement ok
+CREATE TABLE fails_existing.fails_existing AS SELECT 1 AS i;
+
+query I
+SELECT i FROM fails_existing.fails_existing;
+----
+1
+
+statement ok
+RESET threads;
+
+# -----------------------------------------------------------------------------
+# Statement-atomic, not transaction-scoped: version 0 commits as the statement ends
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_rollback' AS rb (TYPE delta);
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE rb.rb AS SELECT 1 AS i;
+
+statement ok
+INSERT INTO rb.rb VALUES (2);
+
+statement ok
+ROLLBACK;
+
+# ROLLBACK leaves the table with its rows, as for a plain CREATE; the INSERT is undone
+query I
+SELECT i FROM rb.rb;
+----
+1
+
+# EXPLAIN plans the write, and leaves nothing behind
+statement ok
+ATTACH '{TEMP_DIR}/ctas_explain' AS ex (TYPE delta);
+
+statement ok
+EXPLAIN CREATE TABLE ex.ex AS SELECT 1 AS i;
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_explain/**');
+----
+0
+
+# -----------------------------------------------------------------------------
+# Partitioned
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_partitioned' AS partitioned (TYPE delta);
+
+statement ok
+CREATE TABLE partitioned.partitioned PARTITIONED BY (part_col) AS
+SELECT range::INTEGER AS id, ['a', 'b', NULL][range % 3 + 1] AS part_col FROM range(6);
+
+query II
+SELECT id, part_col FROM partitioned.partitioned ORDER BY id;
+----
+0	a
+1	b
+2	NULL
+3	a
+4	b
+5	NULL
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/ctas_partitioned/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[part_col]
+
+# One directory and one add action per partition value, keyed as INSERT keys them
+query II
+SELECT count(*), list(json_extract_string(json, '$.add.partitionValues.part_col') ORDER BY 1 NULLS LAST)
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_partitioned/_delta_log/00000000000000000000.json')
+WHERE json_extract(json, '$.add') IS NOT NULL;
+----
+3	[a, b, NULL]
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_partitioned/part_col=*/*.parquet');
+----
+3
+
+query I
+SELECT id FROM partitioned.partitioned WHERE part_col = 'b' ORDER BY id;
+----
+1
+4
+
+# A partition key matches its column whatever its case, and takes the column's spelling
+statement ok
+ATTACH '{TEMP_DIR}/ctas_partition_case' AS partition_case (TYPE delta);
+
+statement ok
+CREATE TABLE partition_case.partition_case PARTITIONED BY (PART_COL) AS SELECT 1 AS id, 'a' AS Part_Col;
+
+query II
+SELECT id, Part_Col FROM partition_case.partition_case;
+----
+1	a
+
+query I
+SELECT metaData.partitionColumns
+FROM read_json('{TEMP_DIR}/ctas_partition_case/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+[Part_Col]
+
+# Kernel requires at least one non-partition column, and refuses before anything is written
+statement ok
+ATTACH '{TEMP_DIR}/ctas_all_partitioned' AS all_partitioned (TYPE delta);
+
+statement error
+CREATE TABLE all_partitioned.all_partitioned PARTITIONED BY (part_col) AS SELECT 'a' AS part_col;
+----
+Table must have at least one non-partition column
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_all_partitioned/**');
+----
+0
+
+# -----------------------------------------------------------------------------
+# Column mapping
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_cm' AS cm (TYPE delta);
+
+statement ok
+CREATE TABLE cm.cm WITH ('delta.columnMapping.mode' = 'name') AS SELECT 1 AS i, 'a' AS s;
+
+query II
+SELECT i, s FROM cm.cm;
+----
+1	a
+
+query I
+SELECT json_extract_string(metaData.configuration, '$."delta.columnMapping.mode"')
+FROM read_json('{TEMP_DIR}/ctas_cm/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+name
+
+# The file names the columns by the physical names kernel assigned in the create, with their field ids
+query I
+SELECT count(*) FROM parquet_schema('{TEMP_DIR}/ctas_cm/*.parquet') WHERE name LIKE 'col-%' AND field_id IS NOT NULL;
+----
+2
+
+# Stats are keyed by physical name
+query I
+SELECT json_extract_string(json, '$.add.stats') LIKE '%"minValues":{"col-%'
+FROM read_ndjson_objects('{TEMP_DIR}/ctas_cm/_delta_log/00000000000000000000.json')
+WHERE json_extract(json, '$.add') IS NOT NULL;
+----
+true
+
+# Nested columns by id: mapped at every level
+statement ok
+ATTACH '{TEMP_DIR}/ctas_cm_nested' AS cm_nested (TYPE delta);
+
+statement ok
+CREATE TABLE cm_nested.cm_nested WITH ('delta.columnMapping.mode' = 'id') AS
+SELECT 1 AS i, {'x': 2} AS s, [3] AS l;
+
+query III
+SELECT i, s, l FROM cm_nested.cm_nested;
+----
+1	{'x': 2}	[3]
+
+query I
+SELECT json_extract_string(metaData.schemaString, '$.fields[1].type.fields[0].metadata."delta.columnMapping.physicalName"')
+    LIKE 'col-%'
+FROM read_json('{TEMP_DIR}/ctas_cm_nested/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+true
+
+query II
+SELECT count(*) FILTER (name IN ('i', 's', 'x', 'l')), count(*) FILTER (field_id IS NOT NULL)
+FROM parquet_schema('{TEMP_DIR}/ctas_cm_nested/*.parquet');
+----
+0	4
+
+# Partitioned and mapped
+statement ok
+ATTACH '{TEMP_DIR}/ctas_cm_part' AS cm_part (TYPE delta);
+
+statement ok
+CREATE TABLE cm_part.cm_part PARTITIONED BY (p) WITH ('delta.columnMapping.mode' = 'name') AS
+SELECT range::INTEGER AS i, (range % 2)::VARCHAR AS p FROM range(4);
+
+query II
+SELECT i, p FROM cm_part.cm_part ORDER BY i;
+----
+0	0
+1	1
+2	0
+3	1
+
+# -----------------------------------------------------------------------------
+# Table properties, checked as CREATE checks them
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_props' AS props (TYPE delta);
+
+statement error
+CREATE TABLE props.props WITH ('Delta.AppendOnly' = 'true') AS SELECT 1 AS i;
+----
+'Delta.AppendOnly' is spelled 'delta.appendOnly'
+
+statement ok
+CREATE TABLE props.props WITH ('delta.appendOnly' = 'true', 'owner' = 'me') AS SELECT 1 AS i;
+
+query II
+SELECT json_extract_string(metaData.configuration, '$."delta.appendOnly"'),
+       json_extract_string(metaData.configuration, '$.owner')
+FROM read_json('{TEMP_DIR}/ctas_props/_delta_log/00000000000000000000.json')
+WHERE metaData IS NOT NULL;
+----
+true	me
+
+# -----------------------------------------------------------------------------
+# Refused
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_refused' AS refused (TYPE delta);
+
+statement error
+CREATE TABLE refused.wrong_name AS SELECT 1 AS i;
+----
+must use the attached name
+
+statement error
+CREATE TABLE refused.refused SORTED BY (i) AS SELECT 1 AS i;
+----
+SORTED BY is not supported
+
+statement error
+CREATE TABLE refused.refused AS SELECT {'v': 1::VARIANT} AS s;
+----
+VARIANT nested in a STRUCT
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_refused/**');
+----
+0
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_read_only' AS ro (TYPE delta, READ_ONLY);
+
+statement error
+CREATE TABLE ro.ro AS SELECT 1 AS i;
+----
+read only
