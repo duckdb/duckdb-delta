@@ -210,6 +210,38 @@ void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement) 
 	}
 }
 
+//! Whether `type` holds a MAP whose key is a LIST, at any depth
+static bool HoldsMapWithListKey(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::STRUCT:
+		for (auto &child : StructType::GetChildTypes(type)) {
+			if (HoldsMapWithListKey(child.second)) {
+				return true;
+			}
+		}
+		return false;
+	case LogicalTypeId::LIST:
+		return HoldsMapWithListKey(ListType::GetChildType(type));
+	case LogicalTypeId::MAP: {
+		auto &key = MapType::KeyType(type);
+		return key.id() == LogicalTypeId::LIST || HoldsMapWithListKey(key) ||
+		       HoldsMapWithListKey(MapType::ValueType(type));
+	}
+	default:
+		return false;
+	}
+}
+
+void ThrowIfMapKeyIsList(const ColumnList &columns, const string &statement) {
+	for (auto &column : columns.Logical()) {
+		if (HoldsMapWithListKey(column.Type())) {
+			throw NotImplementedException("%s does not support column '%s' of type %s: a MAP with a LIST key is a "
+			                              "non-nullable list in Delta, which INSERT cannot write yet",
+			                              statement, column.Name().GetIdentifierName(), column.Type().ToString());
+		}
+	}
+}
+
 bool DeltaTableExistsAt(ClientContext &context, const string &path) {
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto log_path = Path::FromString(path).Join("_delta_log");

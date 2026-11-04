@@ -49,6 +49,11 @@ void ThrowIfDeltaCannotStore(const ColumnList &columns, const string &statement,
 //! top-level column. CREATE refuses it too, so that a table DuckDB creates is one DuckDB can write.
 void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement);
 
+//! Refuses a column with a LIST as a MAP key, at any depth, naming it. Delta map keys are not nullable, and INSERT
+//! refuses a table with a non-nullable list (DeltaTableEntry::ThrowOnUnsupportedFieldForInserting), so CREATE, CTAS
+//! and COPY refuse one too: a table DuckDB creates is one DuckDB can write.
+void ThrowIfMapKeyIsList(const ColumnList &columns, const string &statement);
+
 //! Whether a Delta table has been created at `path` yet, judged as kernel judges it: by the presence of
 //! `_delta_log`. A cheap existence probe rather than a snapshot build.
 bool DeltaTableExistsAt(ClientContext &context, const string &path);

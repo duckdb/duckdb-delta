@@ -1079,6 +1079,7 @@ PhysicalOperator &DeltaInsert::PlanCreateTableAs(ClientContext &context, Physica
 	ThrowIfDeltaCannotStore(request.columns, statement,
 	                        "Cast the column in the query to a type Delta can store, e.g. ::BIGINT or ::VARCHAR.");
 	ThrowIfVariantIsNested(request.columns, statement);
+	ThrowIfMapKeyIsList(request.columns, statement);
 	if (DeltaTableExistsAt(context, request.path)) {
 		throw CatalogException("%s creates a new Delta table, but '%s' already holds one: choose another path",
 		                       statement, request.path);

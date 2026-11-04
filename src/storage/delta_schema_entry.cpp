@@ -75,7 +75,14 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		return nullptr;
 	}
 
-	EnsureTableDirectory(context, request.path);
+	// After the conflict check, where the kernel call refused these before: CREATE TABLE AS IF NOT EXISTS on an
+	// existing table plans this CREATE with the query's types, and stays a no-op. Before the directory exists.
+	ThrowIfDeltaCannotStore(request.columns, "Delta CREATE TABLE",
+	                        "Declare the column as a type Delta can store, e.g. BIGINT or VARCHAR.");
+	// Only what DuckDB can then INSERT; tables other engines made with a LIST map key still read
+	ThrowIfMapKeyIsList(request.columns, "Delta CREATE TABLE");
+
+	auto created_directory = EnsureTableDirectory(context, request.path);
 
 	// A catalog-managed table's version 0 goes through the catalog's committer. Kernel writes version 0
 	// itself and leaves the table unregistered, so whoever staged it finishes the registration.
@@ -97,6 +104,18 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 			                error.RawMessage() +
 			                    ". Delta tables cannot be replaced or dropped yet: use CREATE TABLE IF NOT "
 			                    "EXISTS, or attach another path");
+		}
+		// Kernel refused the table (a property, a partition column): leave no directory behind for it
+		if (created_directory) {
+			try {
+				auto &fs = FileSystem::GetFileSystem(context);
+				bool empty = true;
+				fs.ListFiles(request.path, [&](const string &, bool) { empty = false; });
+				if (empty) {
+					fs.RemoveDirectory(request.path);
+				}
+			} catch (...) {
+			}
 		}
 		throw;
 	}
