@@ -56,13 +56,13 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 			DeltaRejectFutureTimestamp(context, DeltaTimestampToEpochMs(res->specific_timestamp));
 			res->access_mode = AccessMode::READ_ONLY;
 		} else if (option_name == "internal_table_name") {
-			res->internal_table_name = StringValue::Get(option.second);
+			res->internal_table_name = option.second.GetValue<string>();
 		} else if (option_name == "child_catalog_mode") {
 			res->child_catalog_mode = option.second.GetValue<bool>();
 		} else if (option_name == "parent_catalog") {
-			res->parent_catalog_name = StringValue::Get(option.second);
+			res->parent_catalog_name = Identifier(option.second.GetValue<string>());
 		} else if (option_name == "parent_catalog_schema") {
-			// passed by parent catalogs, not used yet
+			res->parent_catalog_schema = Identifier(option.second.GetValue<string>());
 		} else if (option_name == "parent_commit") {
 			res->parent_commit = option.second.GetValue<bool>();
 		} else if (option_name == "log_tail") {
@@ -70,24 +70,29 @@ static unique_ptr<Catalog> DeltaCatalogAttach(optional_ptr<StorageExtensionInfo>
 		} else if (option_name == "max_catalog_version") {
 			res->max_catalog_version = option.second.GetValue<int64_t>();
 		} else if (option_name == "unity_table_id") {
-			res->unity_table_id = StringValue::Get(option.second);
+			res->unity_table_id = option.second.GetValue<string>();
 		} else {
 			throw BinderException("Unrecognized option for Delta attach: %s", option_name);
 		}
 	}
 
-	// If parent_commit is enabled, we need to load the internal commit function of the parent catalog here
+	// If parent_commit is enabled, we need to load the internal commit function of the parent catalog here.
+	// Look it up in the schema the parent passed (the table's own schema): a parent catalog may have no usable
+	// default schema (unity_catalog#150, unity_catalog#111). Only without that option use the default schema; never
+	// fall back to it, so that another schema cannot stand in for the one the parent named.
 	if (res->parent_commit) {
-		string schema = DEFAULT_SCHEMA;
-		string commit_fun_name = "__internal_delta_ccv2_commit_staged";
+		const string commit_fun_name = "__internal_delta_ccv2_commit_staged";
+		auto schema = res->parent_catalog_schema.empty() ? Identifier::DefaultSchema() : res->parent_catalog_schema;
 
 		CatalogEntryRetriever retriever(context);
-		EntryLookupInfo lookup_info(
-		    CatalogType::TABLE_FUNCTION_ENTRY,
-		    QualifiedName(Identifier(res->parent_catalog_name), Identifier(schema), Identifier(commit_fun_name)));
+		EntryLookupInfo lookup_info(CatalogType::TABLE_FUNCTION_ENTRY,
+		                            QualifiedName(res->parent_catalog_name, schema, Identifier(commit_fun_name)));
 		auto fun = retriever.GetEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
-		if (!fun) {
-			throw InternalException("Parent catalog does not have a __internal_delta_ccv2_commit_staged function");
+		// table macros share the table function namespace: skip them
+		if (!fun || fun->type != CatalogType::TABLE_FUNCTION_ENTRY) {
+			throw InvalidInputException("Parent catalog \"%s\" has no %s function in schema \"%s\"",
+			                            res->parent_catalog_name.GetIdentifierName(), commit_fun_name,
+			                            schema.GetIdentifierName());
 		}
 		res->commit_function = fun->Cast<TableFunctionCatalogEntry>();
 	}

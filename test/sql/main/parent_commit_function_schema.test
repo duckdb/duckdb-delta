@@ -1,0 +1,78 @@
+# name: test/sql/main/parent_commit_function_schema.test
+# description: a child attach with parent_commit looks the commit function up in parent_catalog_schema only, or in the default schema without it (unity_catalog#150, unity_catalog#111)
+# group: [main]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS t (TYPE delta);
+
+statement ok
+CREATE TABLE t.t (i INTEGER);
+
+statement ok
+INSERT INTO t.t VALUES (1);
+
+statement ok
+DETACH t;
+
+# A native parent catalog under a fixed name, so the test does not depend on the name of the initial database
+statement ok
+ATTACH ':memory:' AS parent;
+
+statement ok
+CREATE SCHEMA parent.s;
+
+# No parent_catalog_schema: only the default schema is searched
+statement error
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS c (TYPE delta, CHILD_CATALOG_MODE true, PARENT_CATALOG 'parent', PARENT_COMMIT true);
+----
+<REGEX>:.*Parent catalog "parent" has no __internal_delta_ccv2_commit_staged function in schema "main"[^"]*
+
+# Only parent_catalog_schema is searched: no fallback to the default schema
+statement error
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS c (TYPE delta, CHILD_CATALOG_MODE true, PARENT_CATALOG 'parent', PARENT_CATALOG_SCHEMA 'nope', PARENT_COMMIT true);
+----
+<REGEX>:.*Parent catalog "parent" has no __internal_delta_ccv2_commit_staged function in schema "nope"[^"]*
+
+# A non-string schema name is converted, not asserted on
+statement error
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS c (TYPE delta, CHILD_CATALOG_MODE true, PARENT_CATALOG 'parent', PARENT_CATALOG_SCHEMA 42, PARENT_COMMIT true);
+----
+<REGEX>:.*Parent catalog "parent" has no __internal_delta_ccv2_commit_staged function in schema "42"[^"]*
+
+# Names are identifiers: the default schema spelt "MAIN" is searched once, not as "MAIN" and then "main"
+statement error
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS c (TYPE delta, CHILD_CATALOG_MODE true, PARENT_CATALOG 'PARENT', PARENT_CATALOG_SCHEMA 'MAIN', PARENT_COMMIT true);
+----
+<REGEX>:.*Parent catalog "PARENT" has no __internal_delta_ccv2_commit_staged function in schema "MAIN"[^"]*
+
+# A table macro of that name shares the table function namespace, but is not the commit function
+statement ok
+CREATE MACRO parent.s.__internal_delta_ccv2_commit_staged() AS TABLE SELECT 1 AS x;
+
+statement ok
+CREATE MACRO parent.main.__internal_delta_ccv2_commit_staged() AS TABLE SELECT 1 AS x;
+
+statement error
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS c (TYPE delta, CHILD_CATALOG_MODE true, PARENT_CATALOG 'parent', PARENT_CATALOG_SCHEMA 's', PARENT_COMMIT true);
+----
+<REGEX>:.*Parent catalog "parent" has no __internal_delta_ccv2_commit_staged function in schema "s"[^"]*
+
+statement error
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS c (TYPE delta, CHILD_CATALOG_MODE true, PARENT_CATALOG 'parent', PARENT_COMMIT true);
+----
+<REGEX>:.*Parent catalog "parent" has no __internal_delta_ccv2_commit_staged function in schema "main"[^"]*
+
+# Without parent_commit the schema option is accepted and unused
+statement ok
+ATTACH '{TEMP_DIR}/parent_commit_function_schema' AS c (TYPE delta, CHILD_CATALOG_MODE true, PARENT_CATALOG 'parent', PARENT_CATALOG_SCHEMA 's');
+
+query I
+SELECT * FROM c;
+----
+1
