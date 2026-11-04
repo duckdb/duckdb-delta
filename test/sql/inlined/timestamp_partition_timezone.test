@@ -1,0 +1,158 @@
+# name: test/sql/inlined/timestamp_partition_timezone.test
+# description: filters on a `timestamp` (TIMESTAMPTZ) partition column match the UTC instant in the log, in every session time zone (#414)
+# group: [inlined]
+
+require parquet
+
+require delta
+
+require icu
+
+# Both tables hold, partitioned by p (a Delta `timestamp`):
+#   id 1  2023-06-01 00:00 UTC
+#   id 2  2023-12-31 22:00 UTC
+#   id 3  2024-01-01 00:00 UTC
+#   id 4  2024-01-01 03:00 UTC
+#   id 5  NULL
+# delta_rs: written by delta-rs; log and directory both hold the UTC wall clock, no zone
+#   (`2024-01-01 00:00:00.000000`). Also partitioned by n, a `timestamp_ntz` holding the same wall clock.
+# spark_los_angeles: written by Spark with session TimeZone America/Los_Angeles; the log holds the UTC instant
+#   (`2024-01-01T00:00:00.000000Z`), the directory the Los Angeles wall clock (`p=2023-12-31 16%3A00%3A00`).
+# The directory name has no meaning under the Delta protocol: a filter must only see the log's value.
+
+foreach table delta_rs spark_los_angeles
+
+foreach tz UTC America/New_York America/Los_Angeles Asia/Kolkata Pacific/Kiritimati
+
+foreach pushdown true false
+
+statement ok
+SET TimeZone = '{tz}';
+
+query II
+SELECT id, epoch_us(p) FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown}) ORDER BY id;
+----
+1	1685577600000000
+2	1704060000000000
+3	1704067200000000
+4	1704078000000000
+5	NULL
+
+# the value DuckDB returns for a row finds that row
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p = TIMESTAMPTZ '2024-01-01 00:00:00+00';
+----
+3
+
+# the same instant written with another offset
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p = TIMESTAMPTZ '2023-12-31 19:00:00-05';
+----
+3
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p < TIMESTAMPTZ '2024-01-01 00:00:00+00' ORDER BY id;
+----
+1
+2
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p <= TIMESTAMPTZ '2024-01-01 00:00:00+00' ORDER BY id;
+----
+1
+2
+3
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p > TIMESTAMPTZ '2024-01-01 00:00:00+00' ORDER BY id;
+----
+4
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p BETWEEN TIMESTAMPTZ '2023-12-31 22:00:00+00' AND TIMESTAMPTZ '2024-01-01 03:00:00+00' ORDER BY id;
+----
+2
+3
+4
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p IN (TIMESTAMPTZ '2023-12-31 22:00:00+00', TIMESTAMPTZ '2024-01-01 03:00:00+00') ORDER BY id;
+----
+2
+4
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/{table}', pushdown_partition_info = {pushdown})
+WHERE p IS NULL;
+----
+5
+
+endloop
+
+endloop
+
+endloop
+
+# A `timestamp_ntz` partition stays naive: the same wall clock in every session time zone
+
+foreach tz UTC America/New_York Asia/Kolkata
+
+foreach pushdown true false
+
+statement ok
+SET TimeZone = '{tz}';
+
+query II
+SELECT id, n::VARCHAR FROM delta_scan('data/inlined/timestamp_partition/delta_rs', pushdown_partition_info = {pushdown}) ORDER BY id;
+----
+1	2023-06-01 00:00:00
+2	2023-12-31 22:00:00
+3	2024-01-01 00:00:00
+4	2024-01-01 03:00:00
+5	NULL
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/delta_rs', pushdown_partition_info = {pushdown})
+WHERE n = TIMESTAMP '2024-01-01 00:00:00';
+----
+3
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/delta_rs', pushdown_partition_info = {pushdown})
+WHERE n < TIMESTAMP '2024-01-01 00:00:00' ORDER BY id;
+----
+1
+2
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/delta_rs', pushdown_partition_info = {pushdown})
+WHERE n BETWEEN TIMESTAMP '2023-12-31 22:00:00' AND TIMESTAMP '2024-01-01 00:00:00' ORDER BY id;
+----
+2
+3
+
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/delta_rs', pushdown_partition_info = {pushdown})
+WHERE n IN (TIMESTAMP '2023-06-01 00:00:00', TIMESTAMP '2024-01-01 03:00:00') ORDER BY id;
+----
+1
+4
+
+# both partition columns at once
+query I
+SELECT id FROM delta_scan('data/inlined/timestamp_partition/delta_rs', pushdown_partition_info = {pushdown})
+WHERE n >= TIMESTAMP '2023-12-31 22:00:00' AND p < TIMESTAMPTZ '2024-01-01 03:00:00+00' ORDER BY id;
+----
+2
+3
+
+endloop
+
+endloop
