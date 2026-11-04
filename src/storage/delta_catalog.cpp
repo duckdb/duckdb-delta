@@ -192,11 +192,12 @@ DatabaseSize DeltaCatalog::GetDatabaseSize(ClientContext &context) {
 
 PhysicalOperator &DeltaCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                   LogicalCreateTable &op, PhysicalOperator &plan) {
-	// A catalog that commits through its parent (Unity Catalog) registers what it creates; CTAS through it needs that
-	// registration to follow a commit with data, which is not built yet
-	if (parent_commit || child_catalog_mode) {
-		throw NotImplementedException("CREATE TABLE AS is not supported yet for a Delta table attached by another "
-		                              "catalog: create the table, then INSERT into it");
+	// A catalog attached in child-catalog mode plans CTAS as a path table does: the parent (Unity Catalog) registers the
+	// table after this statement's commit. One that commits through its parent (a catalog-managed table) would need the
+	// create transaction on the parent's committer, which is not built yet.
+	if (parent_commit) {
+		throw NotImplementedException("CREATE TABLE AS is not supported yet for a Delta table that commits through "
+		                              "its parent catalog: create the table, then INSERT into it");
 	}
 	auto &base = op.info->Base();
 	auto request = BindDeltaCreateTable(context, *this, base);
