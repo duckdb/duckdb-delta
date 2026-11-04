@@ -10,6 +10,7 @@
 #include "duckdb/common/path.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/to_string.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -194,6 +195,18 @@ void ThrowIfDeltaCannotStore(const ColumnList &columns, const string &statement,
 		    unstorable.get() == &type ? string() : StringUtil::Format(" (it holds a %s)", unstorable->ToString());
 		throw NotImplementedException("%s does not support column '%s' of type %s%s: Delta has no such type. %s",
 		                              statement, column.Name().GetIdentifierName(), type.ToString(), nested, hint);
+	}
+}
+
+void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement) {
+	for (auto &column : columns.Logical()) {
+		auto &type = column.Type();
+		if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
+			throw NotImplementedException("%s does not support column '%s' with a VARIANT nested in a %s "
+			                              "yet; only top-level VARIANT columns can be written",
+			                              statement, column.Name().GetIdentifierName(),
+			                              LogicalTypeIdToString(type.id()));
+		}
 	}
 }
 

@@ -66,6 +66,8 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	auto request = BindDeltaCreateTable(context, delta_catalog, base);
 	// Schema only: version 0 adds no files
 	request.data_change = false;
+	// Only what DuckDB can then INSERT; tables other engines made with nested VARIANT still read
+	ThrowIfVariantIsNested(request.columns, "Delta CREATE TABLE");
 
 	// After the options are read, so that a bad option fails even where IF NOT EXISTS makes the
 	// statement a no-op: embedded SQL should not carry a typo until the day the table is gone.

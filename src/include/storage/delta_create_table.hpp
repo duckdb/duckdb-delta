@@ -45,6 +45,10 @@ void TakeLocationProperty(vector<pair<string, string>> &properties, const string
 //! Refuses every column type that the Delta schema cannot store, naming the column. `hint` ends the message.
 void ThrowIfDeltaCannotStore(const ColumnList &columns, const string &statement, const string &hint);
 
+//! Refuses a column with a VARIANT below its top level, naming it: the parquet writer writes VARIANT only as a
+//! top-level column. CREATE refuses it too, so that a table DuckDB creates is one DuckDB can write.
+void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement);
+
 //! Whether a Delta table has been created at `path` yet, judged as kernel judges it: by the presence of
 //! `_delta_log`. A cheap existence probe rather than a snapshot build.
 bool DeltaTableExistsAt(ClientContext &context, const string &path);
