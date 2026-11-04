@@ -494,6 +494,23 @@ FindPartitionValues(ParsedExpression &transformation, const vector<DeltaMultiFil
 	return res;
 }
 
+// True if the path starts with a URI scheme and "://" (RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )), e.g.
+// "s3://", "abfss://" or "file://". Characters a relative add.path may hold before a ':' (like '=' or '/' in
+// partition directories) are not allowed in a scheme, so those stay relative.
+static bool HasUriScheme(const string &path) {
+	auto pos = path.find("://");
+	if (pos == string::npos || pos == 0 || !StringUtil::CharacterIsAlpha(path[0])) {
+		return false;
+	}
+	for (idx_t i = 1; i < pos; i++) {
+		auto c = path[i];
+		if (!StringUtil::CharacterIsAlphaNumeric(c) && c != '+' && c != '-' && c != '.') {
+			return false;
+		}
+	}
+	return true;
+}
+
 void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, ffi::KernelStringSlice path,
                                              int64_t size, int64_t mod_time, const ffi::Stats *stats,
                                              const ffi::CDvInfo *dv_info, const ffi::Expression *transform) {
@@ -502,7 +519,10 @@ void ScanDataCallBack::VisitCallbackInternal(ffi::NullableCvoid engine_context, 
 
 	auto path_string = snapshot.GetPath();
 	auto sub_path = KernelUtils::FromDeltaString(path);
-	if (StringUtil::StartsWith(sub_path, "/") && sub_path.find('/', 1) != std::string::npos) {
+	// add.path is relative to the table root, or an absolute path or URI (e.g. shallow clones, #74). "file:/abs" (no
+	// "//") is the Hadoop spelling of a local absolute path.
+	if ((StringUtil::StartsWith(sub_path, "/") && sub_path.find('/', 1) != std::string::npos) ||
+	    HasUriScheme(sub_path) || StringUtil::StartsWith(sub_path, "file:/")) {
 		path_string = sub_path;
 	} else {
 		StringUtil::RTrim(path_string, "/");
@@ -626,8 +646,17 @@ string DeltaMultiFileList::GetPath() const {
 }
 
 string DeltaMultiFileList::ToDuckDBPath(const string &raw_path) {
+	// "file://localhost/abs" names the local "/abs"
+	if (StringUtil::StartsWith(raw_path, "file://localhost/")) {
+		return raw_path.substr(16);
+	}
+	// "file:///abs" (empty host); any other host keeps its old mapping, "file://host/abs" -> "host/abs"
 	if (StringUtil::StartsWith(raw_path, "file://")) {
 		return raw_path.substr(7);
+	}
+	// "file:/abs", the Hadoop spelling
+	if (StringUtil::StartsWith(raw_path, "file:/")) {
+		return raw_path.substr(5);
 	}
 	return raw_path;
 }

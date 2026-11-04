@@ -1,0 +1,99 @@
+# name: test/sql/main/absolute_add_path.test
+# description: an add.path that is an absolute URI is read as is, not joined to the table root (#74)
+# group: [main]
+
+require parquet
+
+require delta
+
+require json
+
+require notwindows
+
+# The table, written by the extension: one file with a relative add.path
+statement ok
+ATTACH '{TEMP_DIR}/absolute_add_path' AS t (TYPE delta);
+
+statement ok
+CREATE TABLE t.t (i INTEGER);
+
+statement ok
+INSERT INTO t.t VALUES (3);
+
+statement ok
+DETACH t;
+
+# Data files outside the table directory, as in a shallow clone; one under a name that needs URL encoding
+statement ok
+COPY (SELECT 1::INTEGER AS i) TO '{TEMP_DIR}/absolute_add_path_part-1.parquet';
+
+statement ok
+COPY (SELECT 2::INTEGER AS i) TO '{TEMP_DIR}/absolute_add_path_part 2.parquet';
+
+statement ok
+COPY (SELECT 6::INTEGER AS i) TO '{TEMP_DIR}/absolute_add_path_part-6.parquet';
+
+statement ok
+COPY (SELECT 7::INTEGER AS i) TO '{TEMP_DIR}/absolute_add_path_part-7.parquet';
+
+# Relative paths that hold "://" but no scheme before it: '=' (a partition directory) or '/' comes first.
+# Delta writers percent-encode ':', but the reader must not take a raw one for a scheme either.
+statement ok
+COPY (SELECT 4::INTEGER AS i) TO '{TEMP_DIR}/absolute_add_path/p=a:' (FORMAT parquet, PER_THREAD_OUTPUT);
+
+statement ok
+COPY (SELECT 0::INTEGER AS i) TO '{TEMP_DIR}/absolute_add_path/ab' (FORMAT parquet, PER_THREAD_OUTPUT);
+
+statement ok
+COPY (SELECT 5::INTEGER AS i) TO '{TEMP_DIR}/absolute_add_path/ab/c:' (FORMAT parquet, PER_THREAD_OUTPUT);
+
+# A hand-written commit (version 0 creates, 1 inserts) that adds the outside files by absolute file URIs (file:///abs, the
+# Hadoop spelling file:/abs, and file://localhost/abs) and the
+# others by relative paths ({TEMP_DIR} may be relative to {WORKING_DIR})
+statement ok
+CREATE TABLE src_dir AS
+SELECT CASE WHEN '{TEMP_DIR}' LIKE '/%' THEN '{TEMP_DIR}' ELSE '{WORKING_DIR}/{TEMP_DIR}' END AS dir;
+
+statement ok
+CREATE TABLE adds AS
+SELECT 'file://' || dir || '/absolute_add_path_part-1.parquet' AS p, '{TEMP_DIR}/absolute_add_path_part-1.parquet' AS f
+FROM src_dir
+UNION ALL
+SELECT 'file://' || dir || '/absolute_add_path_part%202.parquet', '{TEMP_DIR}/absolute_add_path_part 2.parquet'
+FROM src_dir
+UNION ALL
+SELECT 'file:' || dir || '/absolute_add_path_part-6.parquet', '{TEMP_DIR}/absolute_add_path_part-6.parquet'
+FROM src_dir
+UNION ALL
+SELECT 'file://localhost' || dir || '/absolute_add_path_part-7.parquet', '{TEMP_DIR}/absolute_add_path_part-7.parquet'
+FROM src_dir
+UNION ALL
+SELECT 'p=a://data_0.parquet', '{TEMP_DIR}/absolute_add_path/p=a:/data_0.parquet'
+UNION ALL
+SELECT 'ab/c://data_0.parquet', '{TEMP_DIR}/absolute_add_path/ab/c:/data_0.parquet';
+
+statement ok
+COPY (
+    SELECT json_object('add', json_object('path', p, 'partitionValues', json_object(), 'size', b.size,
+                                          'modificationTime', 0, 'dataChange', true))::VARCHAR AS line
+    -- the real file sizes, though the reader does not use them today
+    FROM adds JOIN read_blob(['{TEMP_DIR}/absolute_add_path_part*.parquet',
+                                    '{TEMP_DIR}/absolute_add_path/p=a:/data_0.parquet',
+                                    '{TEMP_DIR}/absolute_add_path/ab/c:/data_0.parquet']) b ON b.filename = adds.f
+) TO '{TEMP_DIR}/absolute_add_path/_delta_log/00000000000000000002.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT i FROM delta_scan('{TEMP_DIR}/absolute_add_path') ORDER BY i;
+----
+1
+2
+3
+4
+5
+6
+7
+
+query I
+SELECT count(*) FROM delta_scan('{TEMP_DIR}/absolute_add_path') WHERE filename LIKE 'file:%' OR filename LIKE 'localhost%' OR filename LIKE '%/absolute_add_path/file:%';
+----
+0
