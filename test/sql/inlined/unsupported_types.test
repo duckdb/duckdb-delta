@@ -22,6 +22,52 @@ SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_day_time');
 ----
 Column 'v' has the Delta type interval day to second, which DuckDB cannot read yet
 
+# Nested: the refused field is named by its path. A list or a map of intervals used to abort the process at
+# bind: the refused element left its container without children.
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_in_list');
+----
+Column 'v.element' has the Delta type interval year to month, which DuckDB cannot read yet
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_in_map_value');
+----
+Column 'v.value' has the Delta type interval day to second, which DuckDB cannot read yet
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_in_map_key');
+----
+Column 'v.key' has the Delta type interval year to month, which DuckDB cannot read yet
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_in_list_of_lists');
+----
+Column 'v.element.element' has the Delta type interval day to second, which DuckDB cannot read yet
+
+statement error
+SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_in_list_of_structs');
+----
+Column 'v.element.gap' has the Delta type interval day to second, which DuckDB cannot read yet
+
+# The refusal also holds when the table is attached, and the session survives it
+
+statement ok
+ATTACH 'data/inlined/unsupported_types/interval_in_map_value' AS iv_map (TYPE delta);
+
+statement error
+SELECT * FROM iv_map;
+----
+Column 'v.value' has the Delta type interval day to second, which DuckDB cannot read yet
+
+statement ok
+DETACH iv_map;
+
+query I
+SELECT 42;
+----
+42
+
 # -----------------------------------------------------------------------------
 # Geospatial
 #

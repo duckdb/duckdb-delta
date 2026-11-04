@@ -452,6 +452,10 @@ private:
 	ffi::SharedExternEngine *engine = nullptr;
 	DeltaColumnMappingMode mapping_mode = DeltaColumnMappingMode::NONE;
 	ErrorData error;
+	//! The refused type, its path from the top-level column down, and the field list its outermost part is in
+	string refused_type;
+	vector<string> refused_path;
+	uintptr_t refused_list_id = 0;
 
 	static ffi::EngineSchemaVisitor CreateSchemaVisitor(KernelSchemaVisitor &state);
 
@@ -635,8 +639,15 @@ private:
 	                             ffi::FfiNullableStringMap annotation);
 	//! Records the first error of a visit; it is raised once the visit is over
 	void RecordError(ExceptionType type, const string &message);
-	//! Records that a column has a type DuckDB cannot read yet
-	void RefuseType(ffi::KernelStringSlice name, const string &type_name);
+	//! Records that a column has a type DuckDB cannot read yet, unless an error is recorded already
+	void RefuseType(uintptr_t sibling_list_id, ffi::KernelStringSlice name, const string &type_name);
+	//! Prepends a container's name to the refused field's path when the refusal is among its children
+	void ExtendRefusedPath(uintptr_t child_list_id, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
+	                       bool list_or_map);
+	void SetRefusalError();
+	//! False, with an error recorded unless one already is, when a container has not the expected child count
+	bool HasChildren(ffi::KernelStringSlice name, const vector<DeltaMultiFileColumnDefinition> &children,
+	                 idx_t expected);
 
 	uintptr_t MakeFieldListImpl(uintptr_t capacity_hint);
 	void AppendToList(uintptr_t id, ffi::KernelStringSlice name, DeltaMultiFileColumnDefinition &&child);
