@@ -852,7 +852,8 @@ void KernelSchemaVisitor::RefuseType(uintptr_t sibling_list_id, ffi::KernelStrin
 
 // Kernel visits children before their container, so the path of a refused nested field grows upwards: each
 // container whose child list holds the refusal prepends its own name. Kernel names a list element
-// "array_element" and map entries "map_key"/"map_value"; the message uses the Parquet/Spark names.
+// "array_element" and map entries "map_key"/"map_value"; the message uses `element`, `key` and `value`, the
+// suffixes Delta writers use in `delta.columnMapping.nested.ids` and Spark uses in field paths.
 void KernelSchemaVisitor::ExtendRefusedPath(uintptr_t child_list_id, uintptr_t sibling_list_id,
                                             ffi::KernelStringSlice name, bool list_or_map) {
 	if (refused_type.empty() || refused_list_id != child_list_id) {
@@ -908,6 +909,8 @@ void KernelSchemaVisitor::VisitUserDefined(KernelSchemaVisitor *state, uintptr_t
                                            ffi::KernelStringSlice name, bool is_nullable,
                                            const ffi::CMetadataMap *metadata, uintptr_t child_list_id,
                                            ffi::FfiNullableStringMap annotation) {
+	// A refused child (in the UDT's `sqlType`) is named under the UDT's column
+	state->ExtendRefusedPath(child_list_id, sibling_list_id, name, false);
 	state->RefuseType(sibling_list_id, name, "user-defined type");
 }
 

@@ -644,8 +644,9 @@ private:
 	//! Prepends a container's name to the refused field's path when the refusal is among its children
 	void ExtendRefusedPath(uintptr_t child_list_id, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                       bool list_or_map);
+	//! Sets the error to the refusal message for the path recorded so far
 	void SetRefusalError();
-	//! False, with an error recorded unless one already is, when a container has not the expected child count
+	//! False, with an error recorded unless one already is, when a container does not have the expected child count
 	bool HasChildren(ffi::KernelStringSlice name, const vector<DeltaMultiFileColumnDefinition> &children,
 	                 idx_t expected);
 
