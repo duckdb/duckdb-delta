@@ -50,7 +50,7 @@ SELECT * FROM delta_scan('data/inlined/unsupported_types/interval_in_list_of_str
 ----
 Column 'v.element.gap' has the Delta type interval day to second, which DuckDB cannot read yet
 
-# A refused struct field was refused before; its message now carries the path (was 'gap')
+# A refused struct field is named by its path too, not by the bare field name
 
 statement error
 SELECT * FROM delta_scan('data/inlined/unsupported_types/struct_interval');
