@@ -187,6 +187,17 @@ SELECT count(*) FROM glob('{TEMP_DIR}/ctas_unstorable_fresh/**');
 ----
 0
 
+# A MAP with a LIST key would make a table that INSERT refuses, so CTAS refuses it, as CREATE does
+statement error
+CREATE TABLE unstorable_fresh.unstorable_fresh AS SELECT 1 AS i, MAP {[1]: 2} AS m;
+----
+Delta CREATE TABLE AS does not support column 'm' of type MAP(INTEGER[], INTEGER): a MAP with a LIST key
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_unstorable_fresh/**');
+----
+0
+
 # -----------------------------------------------------------------------------
 # An empty query creates an empty table
 #
@@ -520,3 +531,40 @@ statement error
 CREATE TABLE ro.ro AS SELECT 1 AS i;
 ----
 read only
+
+# -----------------------------------------------------------------------------
+# Child-catalog mode, as Unity Catalog attaches an EXTERNAL table: CTAS plans as
+# for a path table (the parent registers the table after the commit), and the
+# table takes INSERTs afterwards
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_child' AS child (TYPE delta, child_catalog_mode true, internal_table_name 'uc_t');
+
+query I
+CREATE TABLE child.uc_t PARTITIONED BY (p) AS SELECT range::INTEGER AS i, (range % 2)::INTEGER AS p FROM range(5);
+----
+5
+
+query I
+SELECT json_extract(metaData.partitionColumns, '$') FROM read_json('{TEMP_DIR}/ctas_child/_delta_log/00000000000000000000.json') WHERE metaData IS NOT NULL;
+----
+["p"]
+
+query II
+SELECT count(*), count(DISTINCT p) FROM delta_scan('{TEMP_DIR}/ctas_child');
+----
+5	2
+
+statement ok
+INSERT INTO child.uc_t VALUES (9, 1);
+
+query III
+SELECT count(*), sum(i), max(i) FROM delta_scan('{TEMP_DIR}/ctas_child');
+----
+6	19	9
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/ctas_child/_delta_log/*.json');
+----
+2

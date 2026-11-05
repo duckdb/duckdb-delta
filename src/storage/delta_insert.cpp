@@ -2,7 +2,6 @@
 
 #include "duckdb/common/sorting/hashed_sort.hpp"
 #include "duckdb/common/path.hpp"
-#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/crypto/md5.hpp"
 
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
@@ -875,18 +874,6 @@ static void ApplyColumnMappingToWriteSchema(const vector<DeltaMultiFileColumnDef
 	}
 }
 
-//! The parquet writer writes VARIANT only as a top-level column; name the column instead of passing its error on
-static void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement) {
-	for (auto &col : columns.Logical()) {
-		auto &type = col.Type();
-		if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
-			throw NotImplementedException("%s does not support column '%s' with a VARIANT nested in a %s "
-			                              "yet; only top-level VARIANT columns can be written",
-			                              statement, col.Name().GetIdentifierName(), LogicalTypeIdToString(type.id()));
-		}
-	}
-}
-
 namespace {
 
 //! Where and how a write lays out the table's files, from a snapshot (INSERT) or a create transaction (CTAS, COPY)
@@ -1092,6 +1079,7 @@ PhysicalOperator &DeltaInsert::PlanCreateTableAs(ClientContext &context, Physica
 	ThrowIfDeltaCannotStore(request.columns, statement,
 	                        "Cast the column in the query to a type Delta can store, e.g. ::BIGINT or ::VARCHAR.");
 	ThrowIfVariantIsNested(request.columns, statement);
+	ThrowIfMapKeyIsList(request.columns, statement);
 	if (DeltaTableExistsAt(context, request.path)) {
 		throw CatalogException("%s creates a new Delta table, but '%s' already holds one: choose another path",
 		                       statement, request.path);

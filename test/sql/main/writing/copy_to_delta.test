@@ -328,6 +328,17 @@ SELECT count(*) FROM glob('{TEMP_DIR}/copy_unstorable/**');
 ----
 0
 
+# A MAP with a LIST key would make a table that INSERT refuses, so COPY refuses it, as CREATE does
+statement error
+COPY (SELECT 1 AS i, {'s': MAP {['a']: 2}} AS m) TO '{TEMP_DIR}/copy_map_list_key' (FORMAT delta);
+----
+Delta COPY TO does not support column 'm' of type STRUCT(s MAP(VARCHAR[], INTEGER)): a MAP with a LIST key
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_map_list_key/**');
+----
+0
+
 statement error
 COPY (SELECT 'a' AS p) TO '{TEMP_DIR}/copy_all_partitioned' (FORMAT delta, PARTITION_BY (p));
 ----

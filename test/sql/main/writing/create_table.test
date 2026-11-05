@@ -485,15 +485,58 @@ SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_unsupported/_delta_log/*.json
 ----
 0
 
+# Refused before the kernel call, so before the table directory is made, with the hint CTAS gives
 statement error
 CREATE TABLE unsupported.unsupported (i UINTEGER);
 ----
-does not support column 'i' of type UINTEGER
+does not support column 'i' of type UINTEGER: Delta has no such type. Declare the column as a type Delta can store
+
+statement error
+CREATE TABLE IF NOT EXISTS unsupported.unsupported (s STRUCT(u UUID));
+----
+does not support column 's' of type STRUCT(u UUID) (it holds a UUID): Delta has no such type
+
+# A MAP with a LIST key is a non-nullable list in Delta, and INSERT refuses a table with one, so CREATE
+# refuses it too (CREATE accepts only what INSERT can then write), at any depth
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER, m MAP(INTEGER[], INTEGER));
+----
+does not support column 'm' of type MAP(INTEGER[], INTEGER): a MAP with a LIST key is a non-nullable list in Delta, which INSERT cannot write yet
+
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER, s STRUCT(m MAP(VARCHAR, MAP(VARCHAR[], INTEGER))));
+----
+does not support column 's' of type STRUCT(m MAP(VARCHAR, MAP(VARCHAR[], INTEGER))): a MAP with a LIST key
+
+statement error
+CREATE TABLE IF NOT EXISTS unsupported.unsupported (i INTEGER, l MAP(INTEGER[], INTEGER)[]);
+----
+a MAP with a LIST key
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_unsupported/**');
+----
+0
 
 statement error
 CREATE TABLE unsupported.unsupported (i INTEGER) SORTED BY (i);
 ----
 SORTED BY is not supported for tables in a delta catalog
+
+# A list below a struct key, or as a map value, is nullable: INSERT writes those, so CREATE takes them
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_map_list' AS map_list (TYPE delta);
+
+statement ok
+CREATE TABLE map_list.map_list (i INTEGER, k MAP(STRUCT(a INTEGER[]), INTEGER), v MAP(INTEGER, INTEGER[]));
+
+statement ok
+INSERT INTO map_list.map_list VALUES (1, MAP {{'a': [1, NULL]}: 2}, MAP {3: [4, NULL]});
+
+query III
+SELECT * FROM map_list.map_list;
+----
+1	{{'a': [1, NULL]}=2}	{3=[4, NULL]}
 
 # -----------------------------------------------------------------------------
 # data_change
