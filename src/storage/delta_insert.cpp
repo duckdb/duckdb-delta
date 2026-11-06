@@ -1001,6 +1001,12 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 	if (op.on_conflict_info.action_type != OnConflictAction::THROW) {
 		throw BinderException("ON CONFLICT clause not yet supported for insertion into Delta table");
 	}
+	// A pinned attach hands out the schema's entry, not one the transaction owns, so the write would have no table
+	// entry to commit to. VERSION and TIMESTAMP attaches are read-only and refused at the append instead.
+	if (UseCachedSnapshot() && access_mode != AccessMode::READ_ONLY) {
+		throw NotImplementedException("INSERT into a Delta table attached with PIN_SNAPSHOT is not supported: "
+		                              "attach it without PIN_SNAPSHOT to write to it");
+	}
 
 	// Lookup table here:
 	optional_ptr<DeltaTableEntry> table_entry;

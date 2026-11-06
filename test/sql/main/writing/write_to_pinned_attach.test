@@ -1,0 +1,33 @@
+# name: test/sql/main/writing/write_to_pinned_attach.test
+# description: INSERT into a PIN_SNAPSHOT attach is refused before anything is written
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+FROM copy_dir('data/inlined/simple_table', '{TEMP_DIR}/main/writing/write_to_pinned_attach');
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/write_to_pinned_attach/delta_lake' AS t (TYPE delta, PIN_SNAPSHOT);
+
+statement ok
+CREATE TABLE before AS SELECT count(*) AS n FROM t;
+
+statement error
+INSERT INTO t VALUES (42);
+----
+INSERT into a Delta table attached with PIN_SNAPSHOT is not supported
+
+statement error
+PREPARE ins_pinned AS INSERT INTO t VALUES (42);
+----
+INSERT into a Delta table attached with PIN_SNAPSHOT is not supported
+
+query I
+SELECT count(*) = (SELECT n FROM before) FROM t;
+----
+true
