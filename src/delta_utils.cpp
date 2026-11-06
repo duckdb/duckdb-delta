@@ -736,6 +736,7 @@ void KernelSchemaVisitor::VisitStruct(KernelSchemaVisitor *state, uintptr_t sibl
                                       ffi::KernelStringSlice name, bool is_nullable, const ffi::CMetadataMap *metadata,
                                       uintptr_t child_list_id) {
 	auto children = state->TakeFieldList(child_list_id);
+	state->ExtendRefusedPath(child_list_id, sibling_list_id, name, false);
 
 	child_list_t<LogicalType> children_types;
 	for (const auto &child_col_def : children) {
@@ -755,8 +756,10 @@ void KernelSchemaVisitor::VisitStruct(KernelSchemaVisitor *state, uintptr_t sibl
 void KernelSchemaVisitor::VisitArray(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
                                      bool is_nullable, const ffi::CMetadataMap *metadata, uintptr_t child_list_id) {
 	auto children = state->TakeFieldList(child_list_id);
-
-	D_ASSERT(children.size() == 1);
+	state->ExtendRefusedPath(child_list_id, sibling_list_id, name, true);
+	if (!state->HasChildren(name, children, 1)) {
+		return;
+	}
 
 	auto list_type = LogicalType::LIST(children.front().type);
 
@@ -779,8 +782,10 @@ void KernelSchemaVisitor::VisitArray(KernelSchemaVisitor *state, uintptr_t sibli
 void KernelSchemaVisitor::VisitMap(KernelSchemaVisitor *state, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
                                    bool is_nullable, const ffi::CMetadataMap *metadata, uintptr_t child_list_id) {
 	auto children = state->TakeFieldList(child_list_id);
-
-	D_ASSERT(children.size() == 2);
+	state->ExtendRefusedPath(child_list_id, sibling_list_id, name, true);
+	if (!state->HasChildren(name, children, 2)) {
+		return;
+	}
 
 	auto &key = children.front();
 	key.name = "key";
@@ -821,35 +826,81 @@ void KernelSchemaVisitor::RecordError(ExceptionType type, const string &message)
 	}
 }
 
-void KernelSchemaVisitor::RefuseType(ffi::KernelStringSlice name, const string &type_name) {
-	RecordError(ExceptionType::NOT_IMPLEMENTED,
-	            StringUtil::Format("Column '%s' has the Delta type %s, which DuckDB cannot read yet",
-	                               KernelUtils::FromDeltaString(name), type_name));
+// A refused child (e.g. an interval element) records an error and appends nothing, so its list or map arrives
+// short. Skip the container and let the recorded refusal surface after visit_schema returns: this runs inside
+// kernel's `extern "C"` callback, where a throw (a failed D_ASSERT included) aborts the process.
+bool KernelSchemaVisitor::HasChildren(ffi::KernelStringSlice name,
+                                      const vector<DeltaMultiFileColumnDefinition> &children, idx_t expected) {
+	if (children.size() == expected) {
+		return true;
+	}
+	RecordError(ExceptionType::INTERNAL,
+	            StringUtil::Format("Delta column '%s' has %llu child types, expected %llu",
+	                               KernelUtils::FromDeltaString(name), children.size(), expected));
+	return false;
+}
+
+void KernelSchemaVisitor::RefuseType(uintptr_t sibling_list_id, ffi::KernelStringSlice name, const string &type_name) {
+	if (error.HasError()) {
+		return;
+	}
+	refused_type = type_name;
+	refused_path = {KernelUtils::FromDeltaString(name)};
+	refused_list_id = sibling_list_id;
+	SetRefusalError();
+}
+
+// Kernel visits children before their container, so the path of a refused nested field grows upwards: each
+// container whose child list holds the refusal prepends its own name. Kernel names a list element
+// "array_element" and map entries "map_key"/"map_value"; the message uses `element`, `key` and `value`, the
+// suffixes Delta writers use in `delta.columnMapping.nested.ids` and Spark uses in field paths.
+void KernelSchemaVisitor::ExtendRefusedPath(uintptr_t child_list_id, uintptr_t sibling_list_id,
+                                            ffi::KernelStringSlice name, bool list_or_map) {
+	if (refused_type.empty() || refused_list_id != child_list_id) {
+		return;
+	}
+	auto &child = refused_path.front();
+	if (list_or_map && child == "array_element") {
+		child = "element";
+	} else if (list_or_map && child == "map_key") {
+		child = "key";
+	} else if (list_or_map && child == "map_value") {
+		child = "value";
+	}
+	refused_path.insert(refused_path.begin(), KernelUtils::FromDeltaString(name));
+	refused_list_id = sibling_list_id;
+	SetRefusalError();
+}
+
+void KernelSchemaVisitor::SetRefusalError() {
+	error = ErrorData(ExceptionType::NOT_IMPLEMENTED,
+	                  StringUtil::Format("Column '%s' has the Delta type %s, which DuckDB cannot read yet",
+	                                     StringUtil::Join(refused_path, "."), refused_type));
 }
 
 void KernelSchemaVisitor::VisitIntervalYearMonth(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                                  ffi::KernelStringSlice name, bool is_nullable,
                                                  const ffi::CMetadataMap *metadata) {
-	state->RefuseType(name, "interval year to month");
+	state->RefuseType(sibling_list_id, name, "interval year to month");
 }
 
 void KernelSchemaVisitor::VisitIntervalDayTime(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                                ffi::KernelStringSlice name, bool is_nullable,
                                                const ffi::CMetadataMap *metadata) {
-	state->RefuseType(name, "interval day to second");
+	state->RefuseType(sibling_list_id, name, "interval day to second");
 }
 
 void KernelSchemaVisitor::VisitGeometry(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                         ffi::KernelStringSlice name, bool is_nullable,
                                         const ffi::CMetadataMap *metadata, ffi::KernelStringSlice crs) {
-	state->RefuseType(name, "geometry");
+	state->RefuseType(sibling_list_id, name, "geometry");
 }
 
 void KernelSchemaVisitor::VisitGeography(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                          ffi::KernelStringSlice name, bool is_nullable,
                                          const ffi::CMetadataMap *metadata, ffi::KernelStringSlice crs,
                                          ffi::KernelStringSlice algorithm) {
-	state->RefuseType(name, "geography");
+	state->RefuseType(sibling_list_id, name, "geography");
 }
 
 // Kernel parses user-defined types only with its `udt-in-dev` cargo feature, which the build does not enable, so
@@ -858,7 +909,9 @@ void KernelSchemaVisitor::VisitUserDefined(KernelSchemaVisitor *state, uintptr_t
                                            ffi::KernelStringSlice name, bool is_nullable,
                                            const ffi::CMetadataMap *metadata, uintptr_t child_list_id,
                                            ffi::FfiNullableStringMap annotation) {
-	state->RefuseType(name, "user-defined type");
+	// A refused child (in the UDT's `sqlType`) is named under the UDT's column
+	state->ExtendRefusedPath(child_list_id, sibling_list_id, name, false);
+	state->RefuseType(sibling_list_id, name, "user-defined type");
 }
 
 uintptr_t KernelSchemaVisitor::MakeFieldListImpl(uintptr_t capacity_hint) {
