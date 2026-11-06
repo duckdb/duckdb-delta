@@ -43,7 +43,10 @@ public:
 
 	string internal_table_name;
 	bool child_catalog_mode = false;
-	string parent_catalog_name;
+	Identifier parent_catalog_name;
+	//! Schema of the parent catalog that holds this table; the commit function is looked up there (the default
+	//! schema if empty)
+	Identifier parent_catalog_schema;
 	optional_ptr<TableCatalogEntry> parent_table_entry;
 	bool parent_commit = false;
 	optional_ptr<TableFunctionCatalogEntry> commit_function;

@@ -106,8 +106,7 @@ private:
 
 	//! Whether we should invoke our parent catalog to do the commit or this catalog can do the commit itself
 	bool parent_commit = false;
-	string parent_catalog_name;
-	// string parent_catalog_schema;
+	Identifier parent_catalog_name;
 	optional_ptr<TableFunctionCatalogEntry> commit_function;
 	string unity_table_id;
 	weak_ptr<ClientContext> current_context;
