@@ -160,27 +160,6 @@ bool DeltaCatalog::UseCachedSnapshot() {
 	return use_cache;
 }
 
-optional_idx DeltaCatalog::GetCatalogVersion(ClientContext &context) {
-	auto &delta_transaction = DeltaTransaction::Get(context, *this);
-
-	// Option 1: snapshot is cached table-wide
-	auto cached_snapshot = main_schema->GetCachedTable();
-	if (cached_snapshot) {
-		return cached_snapshot->snapshot->GetVersion();
-	}
-
-	// Option 2: snapshot is cached in transaction
-	auto transaction_table_entry = delta_transaction.GetTableEntry(use_specific_version);
-	if (transaction_table_entry) {
-		return transaction_table_entry->snapshot->GetVersion();
-	}
-
-	// TODO: a catalog attached at a timestamp reports Invalid until the first lookup binds the
-	// timestamp to a version, then reports that version -- so it looks like a moving catalog for
-	// exactly one query. Binding at ATTACH would make it fixed from the start, as the option implies.
-	return use_specific_version == DConstants::INVALID_INDEX ? optional_idx::Invalid() : use_specific_version;
-}
-
 DatabaseSize DeltaCatalog::GetDatabaseSize(ClientContext &context) {
 	if (default_schema.empty()) {
 		throw InvalidInputException("Attempting to fetch the database size - but no database was provided "

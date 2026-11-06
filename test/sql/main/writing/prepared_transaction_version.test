@@ -1,0 +1,68 @@
+# name: test/sql/main/writing/prepared_transaction_version.test
+# description: Prepared delta_get_transaction_version / delta_set_transaction_version run in a later transaction
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+ATTACH '{TEMP_DIR}/main/writing/prepared_transaction_version/plain' AS plain (TYPE delta);
+
+statement ok
+CREATE TABLE plain.plain (id INTEGER);
+
+statement ok
+INSERT INTO plain VALUES (1);
+
+statement ok
+PREPARE gv AS SELECT version FROM delta_get_transaction_version('plain', 'my_app');
+
+query I
+EXECUTE gv;
+----
+NULL
+
+query I
+EXECUTE gv;
+----
+NULL
+
+statement ok
+PREPARE sv AS SELECT * FROM delta_set_transaction_version('plain', 'my_app', $1::UBIGINT, $2::UBIGINT);
+
+statement ok
+BEGIN;
+
+statement ok
+EXECUTE sv(7, NULL);
+
+statement ok
+INSERT INTO plain VALUES (2);
+
+statement ok
+COMMIT;
+
+query I
+EXECUTE gv;
+----
+7
+
+statement ok
+BEGIN;
+
+statement ok
+EXECUTE sv(8, 7);
+
+statement ok
+INSERT INTO plain VALUES (3);
+
+statement ok
+COMMIT;
+
+query I
+EXECUTE gv;
+----
+8

@@ -95,8 +95,6 @@ public:
 
 	DatabaseSize GetDatabaseSize(ClientContext &context) override;
 
-	optional_idx GetCatalogVersion(ClientContext &context) override;
-
 	bool InMemory() override;
 	string GetDBPath() override;
 

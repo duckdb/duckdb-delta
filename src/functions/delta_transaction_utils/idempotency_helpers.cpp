@@ -31,6 +31,11 @@ struct TransactionSetVersionBindData : public TableFunctionData {
 	Value expected_version;
 
 	optional_ptr<DeltaTableEntry> delta_table_entry;
+
+	//! The entry belongs to the transaction that bound this, so a prepared plan must not outlive it
+	bool SupportStatementCache() const override {
+		return false;
+	}
 };
 
 struct TransactionGetVersionBindData : public TableFunctionData {
@@ -38,6 +43,11 @@ struct TransactionGetVersionBindData : public TableFunctionData {
 	Value version;
 
 	optional_ptr<DeltaTableEntry> delta_table_entry;
+
+	//! The entry belongs to the transaction that bound this, so a prepared plan must not outlive it
+	bool SupportStatementCache() const override {
+		return false;
+	}
 };
 
 static void DeltaGetTransactionVersionFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
