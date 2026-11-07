@@ -1,7 +1,8 @@
 # name: test/sql/main/writing/timestamp_partition_write.test
 # description: TIMESTAMPTZ partition values are written as UTC in ISO 8601 ('...Z'), in every session time zone and on
-#              every write path; BLOB partition columns are refused on every write path, and still read
 # group: [writing]
+
+#              every write path; BLOB partition columns are refused on every write path, and still read
 
 require parquet
 
