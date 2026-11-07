@@ -146,6 +146,22 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 	return true;
 }
 
+// Before it opens a file, core resolves a hive partitioning column from the file's path (CanSkipFileFromFilters ->
+// TryResolvePreOpenConstant parses `<key>=<value>` directory names) and skips the file if a filter rejects the value.
+// Under the Delta protocol a path carries no meaning: the value is the log's `partitionValues`, which FinalizeBind
+// reads. For most types the directory name is the same string; for a Delta `timestamp` (TIMESTAMPTZ) it is not:
+// - core casts the directory name to TIMESTAMPTZ in the session time zone, where the log value is a UTC instant, so a
+//   session that is not on UTC skips files it should read (#414);
+// - Spark names the directory in its own session time zone (`p=2023-12-31 16%3A00%3A00` for 2024-01-01T00:00:00Z
+//   under America/Los_Angeles), so no reading of the name gives the instant back.
+// Such a column is registered under a key no path segment can hold ('/' separates them), so core never resolves it
+// from the path. A `timestamp_ntz` has no zone in either place and keeps the pre-open skipping.
+static constexpr const char *UNRESOLVABLE_PARTITION_KEY_PREFIX = "delta/";
+
+static bool ResolvePartitionFromPath(const LogicalType &type) {
+	return type.id() != LogicalTypeId::TIMESTAMP_TZ;
+}
+
 void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList &files,
                                        vector<LogicalType> &return_types, vector<Identifier> &names,
                                        MultiFileReaderBindData &bind_data) {
@@ -189,10 +205,17 @@ void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList 
 			} else {
 				throw IOException("Delta Snapshot returned partition column that is not present in the schema");
 			}
+			auto &part_type = return_types[hive_partitioning_index];
+			if (!ResolvePartitionFromPath(part_type)) {
+				// Still a partition column (GetPartitionInfo, statistics); see UNRESOLVABLE_PARTITION_KEY_PREFIX
+				bind_data.hive_partitioning_indexes.emplace_back(UNRESOLVABLE_PARTITION_KEY_PREFIX + part,
+				                                                 hive_partitioning_index);
+				continue;
+			}
 			bind_data.hive_partitioning_indexes.emplace_back(part, hive_partitioning_index);
 			// Register the partition column's type so pre-open filter skipping resolves the partition value as the
 			// column type instead of defaulting to VARCHAR (which crashes typed ExpressionFilter evaluation).
-			options.hive_types_schema[part] = return_types[hive_partitioning_index];
+			options.hive_types_schema[part] = part_type;
 		}
 	}
 }

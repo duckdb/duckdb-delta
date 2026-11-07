@@ -459,6 +459,74 @@ static bool StatsPathIsRecordable(const LogicalType &column_type, const vector<s
 	return !current.get().IsNested();
 }
 
+//! The table column the copy wrote as `written_name`: on a column-mapped table the copy names columns, stats and
+//! partition values by their physical names
+static optional_ptr<const DeltaMultiFileColumnDefinition> FindWrittenColumn(const DeltaInsertGlobalState &global_state,
+                                                                            const string &written_name) {
+	for (auto &col : global_state.columns) {
+		const auto &name = global_state.column_mapped ? WrittenName(col) : col.name.GetIdentifierName();
+		if (name == written_name) {
+			return &col;
+		}
+	}
+	return nullptr;
+}
+
+//! Refuses a temporal partition value that Delta readers cannot parse back: they read four-digit years (Spark's range
+//! is 0001-9999) and have no infinity. `kind` names the Delta type in the message; `in_utc` says the year is UTC's.
+static void ThrowIfPartitionValueOutOfRange(const string &column_name, const string &copy_value, const char *kind,
+                                            bool finite, int32_t year, bool in_utc = false) {
+	if (!finite) {
+		throw InvalidInputException("Delta partition column '%s' cannot hold the value '%s': a Delta %s partition "
+		                            "value must be finite",
+		                            column_name, copy_value, kind);
+	}
+	if (year < 1 || year > 9999) {
+		throw InvalidInputException("Delta partition column '%s' cannot hold the value '%s': a Delta %s partition "
+		                            "value must lie in the years 0001 to 9999%s",
+		                            column_name, copy_value, kind, in_utc ? " (UTC)" : "");
+	}
+}
+
+//! The copy renders a TIMESTAMPTZ partition value with DuckDB's text cast, without ICU, so always in UTC with a `+00`
+//! suffix: kernel cannot parse that, so every later read of the table would fail. PROTOCOL.md allows a value without
+//! a zone, to be read in the writer's time zone (Spark reads it in its own session's), or one in ISO 8601 adjusted to
+//! UTC, which it recommends. The second is unambiguous, and it is what kernel's writer and Spark write.
+static string DeltaTimestampPartitionValue(const string &copy_value, const string &column_name) {
+	timestamp_t instant;
+	bool has_offset = false;
+	string_t zone("", 0);
+	auto result =
+	    Timestamp::TryConvertTimestampTZ(copy_value.c_str(), copy_value.size(), instant, true, has_offset, zone);
+	if (result != TimestampCastResult::SUCCESS || !zone.Empty()) {
+		throw InternalException("Delta partition column '%s': cannot read back the partition value '%s'", column_name,
+		                        copy_value);
+	}
+	auto finite = Value::IsFinite(instant);
+	auto parts = finite ? Timestamp::GetComponents(instant) : TimestampComponents {};
+	ThrowIfPartitionValueOutOfRange(column_name, copy_value, "timestamp", finite, parts.year, true);
+	return StringUtil::Format("%04d-%02d-%02dT%02d:%02d:%02d.%06dZ", parts.year, parts.month, parts.day, parts.hour,
+	                          parts.minute, parts.second, parts.microsecond);
+}
+
+//! A DATE or TIMESTAMP (timestamp_ntz) partition value is written as the copy renders it, which is the protocol's form
+//! for the years 0001-9999; outside them (BC, years above 9999, infinity) kernel cannot parse it, so refuse it as for
+//! TIMESTAMPTZ
+static void ThrowIfNaiveTemporalPartitionValueOutOfRange(const LogicalType &type, const string &copy_value,
+                                                         const string &column_name) {
+	auto value = Value(copy_value).DefaultCastAs(type);
+	if (type.id() == LogicalTypeId::DATE) {
+		auto date = value.GetValue<date_t>();
+		auto finite = Value::IsFinite(date);
+		ThrowIfPartitionValueOutOfRange(column_name, copy_value, "date", finite, finite ? Date::ExtractYear(date) : 0);
+		return;
+	}
+	auto timestamp = value.GetValue<timestamp_t>();
+	auto finite = Value::IsFinite(timestamp);
+	ThrowIfPartitionValueOutOfRange(column_name, copy_value, "timestamp_ntz", finite,
+	                                finite ? Timestamp::GetComponents(timestamp).year : 0);
+}
+
 static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chunk) {
 	for (idx_t r = 0; r < chunk.size(); r++) {
 		DeltaDataFile data_file;
@@ -483,14 +551,7 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 			// physical ones -- and that is also how the log wants them keyed, so they pass through untouched.
 			// Constraints and messages resolve on the logical name, which would otherwise miss silently and
 			// stop enforcing the constraint.
-			optional_ptr<const DeltaMultiFileColumnDefinition> column;
-			for (auto &col : global_state.columns) {
-				const auto &written_name = global_state.column_mapped ? WrittenName(col) : col.name.GetIdentifierName();
-				if (written_name == column_names[0]) {
-					column = &col;
-					break;
-				}
-			}
+			auto column = FindWrittenColumn(global_state, column_names[0]);
 			if (!column) {
 				throw InternalException("Column %s not found in table %s", StringUtil::Join(column_names, "."),
 				                        global_state.table_name);
@@ -545,6 +606,19 @@ static void AddWrittenFiles(DeltaInsertGlobalState &global_state, DataChunk &chu
 				// hold for STRING columns, where "" is itself a legal value.
 				if (!struct_children[1].IsNull()) {
 					file_partition_info.partition_value = StringValue::Get(struct_children[1]);
+					auto column = FindWrittenColumn(global_state, file_partition_info.partition_column);
+					if (!column) {
+						throw InternalException("Partition column %s not found in table %s",
+						                        file_partition_info.partition_column, global_state.table_name);
+					}
+					if (column->type.id() == LogicalTypeId::TIMESTAMP_TZ) {
+						file_partition_info.partition_value = DeltaTimestampPartitionValue(
+						    *file_partition_info.partition_value, column->name.GetIdentifierName());
+					} else if (column->type.id() == LogicalTypeId::DATE ||
+					           column->type.id() == LogicalTypeId::TIMESTAMP) {
+						ThrowIfNaiveTemporalPartitionValueOutOfRange(column->type, *file_partition_info.partition_value,
+						                                             column->name.GetIdentifierName());
+					}
 				}
 				data_file.partition_values.push_back(std::move(file_partition_info));
 			}
@@ -1044,6 +1118,9 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 		for (int64_t i = 0; i < partitions.size(); i++) {
 			for (int64_t j = 0; j < column_names.size(); j++) {
 				if (column_names[j] == partitions[i]) {
+					// Reading such a table stays as it is; only writing new partition values is refused
+					ThrowIfPartitionTypeUnwritable(
+					    column_names[j], columns.GetColumn(LogicalIndex(NumericCast<idx_t>(j))).Type(), "Delta INSERT");
 					target.partition_columns.push_back(j);
 					break;
 				}

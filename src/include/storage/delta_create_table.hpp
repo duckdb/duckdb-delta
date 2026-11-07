@@ -32,8 +32,12 @@ struct DeltaCreateTableRequest {
 DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalog &catalog,
                                              const CreateTableInfo &base);
 
+//! Refuses a partition column of a type whose values duckdb-delta cannot write into the log faithfully (BLOB)
+void ThrowIfPartitionTypeUnwritable(const string &column_name, const LogicalType &type, const string &statement);
+
 //! Resolves partition keys to the columns they name, case-insensitively as kernel does, in the columns' spelling.
-//! Refuses a key that names no column, or a column twice. `clause` is PARTITIONED BY or PARTITION_BY.
+//! Refuses a key that names no column, or a column twice, or a column ThrowIfPartitionTypeUnwritable refuses.
+//! `clause` is PARTITIONED BY or PARTITION_BY.
 vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<string> &keys, const string &statement,
                                        const string &clause);
 
