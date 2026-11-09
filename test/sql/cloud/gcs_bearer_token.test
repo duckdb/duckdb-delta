@@ -37,9 +37,7 @@ statement ok
 DROP SECRET gcs_hmac;
 
 # A bearer token takes the native GCS store instead, where object_store attaches it as
-# `Authorization: Bearer`. GCS answers a malformed token with 401, which is what distinguishes
-# delivery from the 403 an unauthenticated or ambient-credential request gets: same URL, same
-# bucket, different credential, and no SigV4 signature in sight.
+# `Authorization: Bearer`. 401 is the expected response for an invalid token.
 
 statement ok
 CREATE SECRET gcs_bearer (

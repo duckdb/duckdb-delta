@@ -164,18 +164,22 @@ static ffi::ExclusiveEngineBuilder *CreateBuilder(ClientContext &context, const 
 	auto &secret_manager = SecretManager::Get(context);
 	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
 	auto secret_match = secret_manager.LookupSecret(transaction, path, secret_type);
+	// One reader over the matched secret, shared by the scheme decision below and the option mapping after it
+	optional_ptr<const KeyValueSecret> matched_secret;
+	unique_ptr<KeyValueSecretReader> matched_secret_reader;
+	if (secret_match.HasMatch()) {
+		matched_secret = &dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
+		matched_secret_reader = make_uniq<KeyValueSecretReader>(*matched_secret, *context.client_data->file_opener);
+	}
 
 	// A GCS bearer token only reaches object_store's native GCS store; the S3-compatible endpoint
 	// has no bearer auth mode. So the credential decides the scheme: a bearer keeps gs://, while
 	// HMAC interoperability keys and the no-secret case keep the existing s3:// rewrite.
-	bool gcs_bearer = false;
-	if (secret_type == "gcs" && secret_match.HasMatch()) {
-		const auto &gcs_secret = dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
-		KeyValueSecretReader gcs_reader(gcs_secret, *context.client_data->file_opener);
-		string bearer_token;
-		gcs_reader.TryGetSecretKey("bearer_token", bearer_token);
-		gcs_bearer = !bearer_token.empty();
+	string bearer_token;
+	if (secret_type == "gcs" && matched_secret_reader) {
+		matched_secret_reader->TryGetSecretKey("bearer_token", bearer_token);
 	}
+	const bool gcs_bearer = !bearer_token.empty();
 
 	// We need to substitute DuckDB's usage of s3 and r2 paths because delta kernel needs to just interpret them as s3
 	// protocol servers. GCS goes the same way unless a bearer token sends it to the native store, where gcs:// has to
@@ -212,9 +216,8 @@ static ffi::ExclusiveEngineBuilder *CreateBuilder(ClientContext &context, const 
 		builder = ffi::builder_with_multithreaded_executor(builder, 0, 0);
 		return builder;
 	}
-	const auto &kv_secret = dynamic_cast<const KeyValueSecret &>(*secret_match.secret_entry->secret);
-
-	KeyValueSecretReader secret_reader(kv_secret, *context.client_data->file_opener);
+	const auto &kv_secret = *matched_secret;
+	auto &secret_reader = *matched_secret_reader;
 
 	// Here you would need to add the logic for setting the builder options for Azure
 	// This is just a placeholder and will need to be replaced with the actual logic
@@ -233,10 +236,10 @@ static ffi::ExclusiveEngineBuilder *CreateBuilder(ClientContext &context, const 
 	};
 
 	if (gcs_bearer) {
-		// object_store 0.14 added GoogleConfigKey::BearerToken, so the pre-issued OAuth token that
-		// Unity Catalog vends for GCP can be handed to the native GCS store as a plain option.
-		string bearer_token;
-		secret_reader.TryGetSecretKey("bearer_token", bearer_token);
+		// GoogleConfigKey::BearerToken arrived in object_store 0.14 (kernel v0.30); older versions drop the unknown
+		// key without an error, so the request goes out without the token: do not backport below kernel v0.30.
+		// The token is static: it is the pre-issued OAuth token (as Unity Catalog vends for GCP), and nothing here
+		// refreshes it when it expires.
 		set_option(builder, "bearer_token", bearer_token);
 	} else if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
 		string key_id, secret, session_token, region, endpoint, url_style;
