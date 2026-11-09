@@ -10,6 +10,7 @@
 
 #include "delta_utils.hpp"
 
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/parser/column_list.hpp"
 
 namespace duckdb {
@@ -65,6 +66,11 @@ bool DeltaTableExistsAt(ClientContext &context, const string &path);
 //! Kernel rejects a table location that does not exist. Object stores conjure prefixes on write, but a local
 //! filesystem needs the directory first. Returns whether this call created it.
 bool EnsureTableDirectory(ClientContext &context, const string &path);
+
+//! Removes `directory` if it is empty, and never what is in it: a file another writer adds keeps the directory. One
+//! rmdir, so nothing can land between a check and the removal. Best effort: a directory that is missing, not empty,
+//! not a directory, or cannot be removed is left as it is.
+void TryRemoveEmptyDirectory(FileSystem &fs, const string &directory);
 
 //! A kernel create-table transaction, held open from its build to its commit. Version 0 -- protocol, metadata and the
 //! add actions of every file passed to AddFiles -- is written by Commit and by nothing else, so a transaction freed

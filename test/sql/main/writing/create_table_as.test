@@ -275,6 +275,36 @@ SELECT i FROM fails_existing.fails_existing;
 ----
 1
 
+# A directory goes only while empty. A stand-in for another writer, whose file lands in a partition directory while
+# the cleanup removes it: here the file is there before the statement starts, as SQL cannot add it mid-statement. A
+# `_delta_log` that is a file fails the commit after the data files are written, so the cleanup removes them and then
+# their directories: p=1 held only this write's file and goes, p=0 keeps the other file and stays.
+statement ok
+COPY (SELECT 0 AS p, 1 AS marker) TO '{TEMP_DIR}/ctas_shared_dir' (FORMAT csv, PARTITION_BY (p));
+
+statement ok
+COPY (SELECT 1 AS marker) TO '{TEMP_DIR}/ctas_shared_dir/_delta_log' (FORMAT csv);
+
+statement ok
+ATTACH '{TEMP_DIR}/ctas_shared_dir' AS shared (TYPE delta);
+
+statement error
+CREATE TABLE shared.shared PARTITIONED BY (p) AS SELECT range % 2 AS p, range AS i FROM range(4);
+----
+Not a directory
+
+query I
+SELECT replace(file, '{TEMP_DIR}/ctas_shared_dir/', '') FROM glob('{TEMP_DIR}/ctas_shared_dir/**') ORDER BY ALL;
+----
+_delta_log
+p=0/data_0.csv
+
+# The files above, and the directories: only p=0 is left
+query I
+SELECT replace(file, '{TEMP_DIR}/ctas_shared_dir/', '') FROM glob('{TEMP_DIR}/ctas_shared_dir/p=*/') ORDER BY ALL;
+----
+p=0
+
 statement ok
 RESET threads;
 

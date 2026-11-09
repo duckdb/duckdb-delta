@@ -78,17 +78,6 @@ struct DeltaCreateTableAsState {
 	void CleanUp(ClientContext &context);
 };
 
-static void TryRemoveEmptyDirectory(FileSystem &fs, const string &directory) {
-	if (!fs.DirectoryExists(directory)) {
-		return;
-	}
-	bool empty = true;
-	fs.ListFiles(directory, [&](const string &, bool) { empty = false; });
-	if (empty) {
-		fs.RemoveDirectory(directory);
-	}
-}
-
 void DeltaCreateTableAsState::CleanUp(ClientContext &context) {
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto table_path = Path::FromString(Path::Normalize(path));
