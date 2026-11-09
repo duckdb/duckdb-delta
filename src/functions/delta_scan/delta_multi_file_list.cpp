@@ -241,6 +241,23 @@ static ffi::ExclusiveEngineBuilder *CreateBuilder(ClientContext &context, const 
 		// The token is static: it is the pre-issued OAuth token (as Unity Catalog vends for GCP), and nothing here
 		// refreshes it when it expires.
 		set_option(builder, "bearer_token", bearer_token);
+
+		// ENDPOINT (an emulator or private endpoint) becomes the native store's base URL, with USE_SSL choosing the
+		// scheme as on the S3 path. REGION and URL_STYLE mean nothing to the native GCS API (and may hold httpfs
+		// defaults), so they are ignored.
+		string endpoint;
+		bool use_ssl = true;
+		secret_reader.TryGetSecretKey("endpoint", endpoint);
+		secret_reader.TryGetSecretKey("use_ssl", use_ssl);
+		if (!endpoint.empty()) {
+			if (!StringUtil::StartsWith(endpoint, "https://") && !StringUtil::StartsWith(endpoint, "http://")) {
+				endpoint = (use_ssl ? "https://" : "http://") + endpoint;
+			}
+			if (StringUtil::StartsWith(endpoint, "http://")) {
+				set_option(builder, "allow_http", "true");
+			}
+			set_option(builder, "google_base_url", endpoint);
+		}
 	} else if (secret_type == "s3" || secret_type == "gcs" || secret_type == "r2") {
 		string key_id, secret, session_token, region, endpoint, url_style;
 		bool use_ssl = true;
