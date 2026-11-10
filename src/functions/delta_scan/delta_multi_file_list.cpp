@@ -1308,6 +1308,21 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 	}
 }
 
+//! True if `filter` is the one already pushed down for its column.
+//! ExpressionFilter::Equals compares the bound functions of the expressions by their callback pointers. A comparison
+//! built in this extension (by the FilterCombiner of the constant pushdown) points at this extension's copy of the
+//! comparison callbacks; the same comparison handed over by the scan for the dynamic pushdown points at the host's
+//! copy, so the two never compare equal. Fall back to the rendered expression: a false match only skips a
+//! redundant file-pruning pass and never changes the rows the scan returns.
+static bool IsSamePushedDownFilter(const ExpressionFilter &filter, const ExpressionFilter &pushed_down) {
+	if (filter.Equals(pushed_down)) {
+		return true;
+	}
+	return filter.column_indexes == pushed_down.column_indexes &&
+	       filter.expr->GetReturnType() == pushed_down.expr->GetReturnType() &&
+	       filter.expr->ToString() == pushed_down.expr->ToString();
+}
+
 unique_ptr<MultiFileList>
 DeltaMultiFileList::DynamicFilterPushdown(MultiFileDynamicPushdownInfo &dynamic_pushdown_info) const {
 	auto &options = dynamic_pushdown_info.options;
@@ -1336,7 +1351,7 @@ DeltaMultiFileList::DynamicFilterPushdown(MultiFileDynamicPushdownInfo &dynamic_
 		}
 		auto column_id = column_ids[proj_id];
 		auto previously_pushed_down_filter = table_filters.TryGetFilterByColumnIndex(column_id);
-		if (previously_pushed_down_filter && filter.Equals(*previously_pushed_down_filter)) {
+		if (previously_pushed_down_filter && IsSamePushedDownFilter(filter, *previously_pushed_down_filter)) {
 			// Skip filters that we already have pushed down
 			continue;
 		}
