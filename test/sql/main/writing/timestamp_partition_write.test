@@ -419,7 +419,7 @@ ATTACH '{TEMP_DIR}/tstz_write/blob_ctas' AS blob_ctas (TYPE delta);
 statement error
 CREATE TABLE blob_ctas.blob_ctas PARTITIONED BY (b) AS SELECT 1 AS id, '\xAA\x00b'::BLOB AS b;
 ----
-Delta CREATE TABLE does not support partitioning on column 'b' of type BLOB
+Delta CREATE TABLE AS does not support partitioning on column 'b' of type BLOB
 
 query I
 SELECT count(*) FROM glob('{TEMP_DIR}/tstz_write/blob_ctas/**');

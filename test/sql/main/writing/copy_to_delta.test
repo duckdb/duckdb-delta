@@ -339,6 +339,43 @@ SELECT count(*) FROM glob('{TEMP_DIR}/copy_map_list_key/**');
 ----
 0
 
+# Delta has no collations: the table would compare case-sensitively, so COPY refuses a collated column, at any depth
+statement error
+COPY (SELECT 1 AS i, 'x' COLLATE nocase AS s) TO '{TEMP_DIR}/copy_collated' (FORMAT delta);
+----
+Not implemented Error: Column collations are not supported for Delta tables: Delta COPY TO, column 's' holds a VARCHAR COLLATE nocase
+
+statement error
+COPY (SELECT 1 AS i, MAP {'k': ['x' COLLATE nocase]} AS m) TO '{TEMP_DIR}/copy_collated' (FORMAT delta);
+----
+Column collations are not supported for Delta tables: Delta COPY TO, column 'm' holds a VARCHAR COLLATE nocase
+
+# A partition column must have a primitive type
+statement error
+COPY (SELECT 1 AS i, {'a': 1} AS s) TO '{TEMP_DIR}/copy_collated' (FORMAT delta, PARTITION_BY (s));
+----
+Not implemented Error: Delta COPY TO does not support partitioning on column 's' of type STRUCT(a INTEGER): a Delta partition column must have a primitive type
+
+# glob lists no directories: writing a file into it shows the directory was never made
+statement error
+COPY (SELECT 1) TO '{TEMP_DIR}/copy_collated/probe.csv';
+----
+No such file or directory
+
+# Onto an existing table, the column is refused first, as in CREATE TABLE IF NOT EXISTS
+statement ok
+COPY (SELECT 1 AS i) TO '{TEMP_DIR}/copy_refused_existing' (FORMAT delta);
+
+statement error
+COPY (SELECT 1 AS i, 'x' COLLATE nocase AS s) TO '{TEMP_DIR}/copy_refused_existing' (FORMAT delta);
+----
+Column collations are not supported for Delta tables: Delta COPY TO, column 's'
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/copy_refused_existing/_delta_log/*.json');
+----
+1
+
 statement error
 COPY (SELECT 'a' AS p) TO '{TEMP_DIR}/copy_all_partitioned' (FORMAT delta, PARTITION_BY (p));
 ----

@@ -116,6 +116,10 @@ BoundStatement DeltaCopyPlan(Binder &binder, CopyStatement &stmt) {
 	for (idx_t i = 0; i < names.size(); i++) {
 		request.columns.AddColumn(ColumnDefinition(names[i], query.types[i]));
 	}
+	// Before the options, as CREATE and CREATE TABLE AS refuse columns before theirs
+	ThrowIfDeltaCannotCreateThenWrite(
+	    request.columns, "Delta COPY TO",
+	    "Cast the column in the query to a type Delta can store, e.g. ::BIGINT or ::VARCHAR.");
 
 	vector<pair<string, string>> bare_properties;
 	for (auto &option : info.options) {

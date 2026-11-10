@@ -42,12 +42,16 @@ public:
 	DeltaFilterPushdownMode filter_pushdown_mode;
 
 	string internal_table_name;
+	//! Attached by a parent catalog (Unity Catalog) for one of its tables: the parent resolves the name, and registers
+	//! a table that a CREATE TABLE AS creates here once that statement has committed
 	bool child_catalog_mode = false;
 	Identifier parent_catalog_name;
 	//! Schema of the parent catalog that holds this table; the commit function is looked up there (the default
 	//! schema if empty)
 	Identifier parent_catalog_schema;
 	optional_ptr<TableCatalogEntry> parent_table_entry;
+	//! Commits go through the parent catalog's commit function (a catalog-managed table), not straight to storage;
+	//! CREATE TABLE AS is refused in this mode
 	bool parent_commit = false;
 	optional_ptr<TableFunctionCatalogEntry> commit_function;
 	string unity_table_id;

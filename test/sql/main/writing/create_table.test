@@ -146,6 +146,45 @@ CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER DEFAULT 7);
 ----
 does not support DEFAULT values ('i')
 
+# And so does every column type that DuckDB could not create and then write: the statement asks for a table
+# DuckDB will not make, so it fails fast, whether or not the table is there
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s STRUCT(u UUID));
+----
+Delta CREATE TABLE does not support column 's' of type STRUCT(u UUID) (it holds a UUID): Delta has no such type
+
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s STRUCT(v VARIANT));
+----
+Delta CREATE TABLE does not support column 's' with a VARIANT nested in a STRUCT yet
+
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, m MAP(INTEGER[], INTEGER));
+----
+Delta CREATE TABLE does not support column 'm' of type MAP(INTEGER[], INTEGER): a MAP with a LIST key
+
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s VARCHAR COLLATE NOCASE);
+----
+Column collations are not supported for Delta tables: Delta CREATE TABLE, column 's' holds a VARCHAR COLLATE NOCASE
+
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (i INTEGER, s STRUCT(a INTEGER)) PARTITIONED BY (s);
+----
+Delta CREATE TABLE does not support partitioning on column 's' of type STRUCT(a INTEGER)
+
+# A type Delta cannot store is named as such, not as a misplaced VARIANT
+statement error
+CREATE TABLE IF NOT EXISTS conflict.conflict (u UNION(a VARIANT, b INTEGER));
+----
+Delta CREATE TABLE does not support column 'u' of type UNION(a VARIANT, b INTEGER): Delta has no such type
+
+# None of them wrote a commit
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_conflict/_delta_log/*.json');
+----
+1
+
 # IF NOT EXISTS on a fresh path still creates
 statement ok
 ATTACH '{TEMP_DIR}/delta_create_if_not_exists' AS ine (TYPE delta);
@@ -211,6 +250,36 @@ statement error
 CREATE TABLE all_partitioned.all_partitioned (part_col VARCHAR) PARTITIONED BY (part_col);
 ----
 Table must have at least one non-partition column
+
+# A partition column must have a primitive type. Refused before kernel sees it, so before a directory exists, and
+# before IF NOT EXISTS (below)
+statement ok
+ATTACH '{TEMP_DIR}/delta_create_nested_partition' AS nested_partition (TYPE delta);
+
+statement error
+CREATE TABLE nested_partition.nested_partition (i INTEGER, s STRUCT(a INTEGER)) PARTITIONED BY (s);
+----
+Not implemented Error: Delta CREATE TABLE does not support partitioning on column 's' of type STRUCT(a INTEGER): a Delta partition column must have a primitive type
+
+statement error
+CREATE TABLE nested_partition.nested_partition (i INTEGER, l INTEGER[]) PARTITIONED BY (l);
+----
+partitioning on column 'l' of type INTEGER[]
+
+statement error
+CREATE TABLE nested_partition.nested_partition (i INTEGER, m MAP(VARCHAR, INTEGER)) PARTITIONED BY (m);
+----
+partitioning on column 'm' of type MAP(VARCHAR, INTEGER)
+
+statement error
+CREATE TABLE nested_partition.nested_partition (i INTEGER, v VARIANT) PARTITIONED BY (v);
+----
+partitioning on column 'v' of type VARIANT
+
+statement error
+COPY (SELECT 1) TO '{TEMP_DIR}/delta_create_nested_partition/probe.csv';
+----
+No such file or directory
 
 # -----------------------------------------------------------------------------
 # Table properties
@@ -513,10 +582,22 @@ CREATE TABLE IF NOT EXISTS unsupported.unsupported (i INTEGER, l MAP(INTEGER[], 
 ----
 a MAP with a LIST key
 
+# Delta has no collations: the table would compare case-sensitively, so CREATE refuses a collated column
+statement error
+CREATE TABLE unsupported.unsupported (i INTEGER, s VARCHAR COLLATE NOCASE);
+----
+Not implemented Error: Column collations are not supported for Delta tables: Delta CREATE TABLE, column 's' holds a VARCHAR COLLATE NOCASE. The collation survives casts and string functions: write the column from an uncollated source
+
 query I
 SELECT count(*) FROM glob('{TEMP_DIR}/delta_create_unsupported/**');
 ----
 0
+
+# glob lists no directories: writing a file into it shows the directory was never made
+statement error
+COPY (SELECT 1) TO '{TEMP_DIR}/delta_create_unsupported/probe.csv';
+----
+No such file or directory
 
 statement error
 CREATE TABLE unsupported.unsupported (i INTEGER) SORTED BY (i);

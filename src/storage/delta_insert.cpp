@@ -1147,11 +1147,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 PhysicalOperator &DeltaInsert::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                  PhysicalOperator &child, DeltaCreateTableRequest request,
                                                  const string &statement, idx_t estimated_cardinality) {
-	// Everything that can be refused is refused here, before a directory or a file exists
-	ThrowIfDeltaCannotStore(request.columns, statement,
-	                        "Cast the column in the query to a type Delta can store, e.g. ::BIGINT or ::VARCHAR.");
-	ThrowIfVariantIsNested(request.columns, statement);
-	ThrowIfMapKeyIsList(request.columns, statement);
+	// The callers refused the columns already (ThrowIfDeltaCannotCreateThenWrite); nothing exists on disk yet
 	if (DeltaTableExistsAt(context, request.path)) {
 		throw CatalogException("%s creates a new Delta table, but '%s' already holds one: choose another path",
 		                       statement, request.path);
