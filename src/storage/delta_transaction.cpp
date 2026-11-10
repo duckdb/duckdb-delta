@@ -304,6 +304,16 @@ void DeltaTransaction::CleanUpFiles() {
 ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> DeltaTransaction::CommitCallback(ffi::NullableCvoid context,
                                                                                            ffi::CommitRequest request) {
 	auto transaction = reinterpret_cast<DeltaTransaction *>(context);
+	if (!transaction) {
+		// A create transaction's committer (CreateCatalogCommitter with `create`): version 0 never calls back
+		auto error_str = ffi::allocate_kernel_string(
+		    KernelUtils::ToDeltaString("A Delta create-table committer has no transaction to commit through"),
+		    DuckDBEngineError::AllocateError);
+		ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>> error_result;
+		error_result.tag = ffi::OptionalValue<ffi::Handle<ffi::ExclusiveRustString>>::Tag::Some;
+		error_result.some._0 = error_str.ok._0;
+		return error_result;
+	}
 
 	try {
 		auto current_context = transaction->current_context.lock();
@@ -477,9 +487,9 @@ void DeltaTransaction::Rollback() {
 	}
 }
 
-ffi::Handle<ffi::MutableCommitter> DeltaTransaction::CreateCatalogCommitter(const string &table_path) {
-	// `this` is the context every commit comes back to
-	auto commit_client = ffi::get_uc_commit_client(this, CommitCallback);
+ffi::Handle<ffi::MutableCommitter> DeltaTransaction::CreateCatalogCommitter(const string &table_path, bool create) {
+	// `this` is the context every commit comes back to; a create has none to come back to
+	auto commit_client = ffi::get_uc_commit_client(create ? nullptr : this, CommitCallback);
 	auto table_id = KernelUtils::ToDeltaString(unity_table_id.empty() ? table_path : unity_table_id);
 	// Placeholders, deliberately: kernel's FFI commit client ignores the table name
 	// (`update_table(_target, ..)` in ffi/src/delta_kernel_unity_catalog.rs) and commits reach CommitCallback
@@ -493,6 +503,8 @@ ffi::Handle<ffi::MutableCommitter> DeltaTransaction::CreateCatalogCommitter(cons
 	                          KernelUtils::ToDeltaString(IGNORED_UC_SCHEMA),
 	                          KernelUtils::ToDeltaString(IGNORED_UC_TABLE), DuckDBEngineError::AllocateError),
 	    committer);
+	// The committer holds its own reference to the client
+	ffi::free_uc_commit_client(commit_client);
 	if (res.HasError()) {
 		res.Throw();
 	}
@@ -534,8 +546,8 @@ void DeltaTransaction::InitializeTransaction(ClientContext &context) {
 		    KernelUtils::ToDeltaString(engine_info), true, engine));
 
 		if (parent_commit) {
-			// Kernel has no free for a committer handle, so the committer is built after the builder and the
-			// builder is freed if building it fails; build_with_committer then consumes both, on error too.
+			// The committer is built after the builder, so a failure to build it has only the builder to free;
+			// build_with_committer then consumes both, on error too.
 			ffi::Handle<ffi::MutableCommitter> committer;
 			try {
 				committer = CreateCatalogCommitter(path);

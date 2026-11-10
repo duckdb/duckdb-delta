@@ -60,8 +60,9 @@ public:
 
 	//! A committer that routes commits through the catalog this table was attached from, for the table id
 	//! given at ATTACH (`table_path` stands in when there is none). The caller passes it to a kernel API
-	//! that consumes it.
-	ffi::Handle<ffi::MutableCommitter> CreateCatalogCommitter(const string &table_path);
+	//! that consumes it, or frees it with free_uc_committer. `create` is for a create transaction: kernel writes
+	//! version 0 itself and never calls back, so the committer holds no pointer to this transaction.
+	ffi::Handle<ffi::MutableCommitter> CreateCatalogCommitter(const string &table_path, bool create = false);
 
 	void SetParentTableEntry(TableCatalogEntry &entry) {
 		lock_guard<mutex> guard(lock);
