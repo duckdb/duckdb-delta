@@ -107,15 +107,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 		}
 		// Kernel refused the table (a property, a partition column): leave no directory behind for it
 		if (created_directory) {
-			try {
-				auto &fs = FileSystem::GetFileSystem(context);
-				bool empty = true;
-				fs.ListFiles(request.path, [&](const string &, bool) { empty = false; });
-				if (empty) {
-					fs.RemoveDirectory(request.path);
-				}
-			} catch (...) {
-			}
+			TryRemoveEmptyDirectory(FileSystem::GetFileSystem(context), request.path);
 		}
 		throw;
 	}

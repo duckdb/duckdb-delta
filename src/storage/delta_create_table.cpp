@@ -280,6 +280,13 @@ bool EnsureTableDirectory(ClientContext &context, const string &path) {
 	return true;
 }
 
+void TryRemoveEmptyDirectory(FileSystem &fs, const string &directory) {
+	try {
+		fs.RemoveDirectoryExtended(directory, {RemoveDirectoryMode::SINGLE});
+	} catch (std::exception &) {
+	}
+}
+
 DeltaCreateTableTransaction::DeltaCreateTableTransaction(ClientContext &context, const DeltaCreateTableRequest &request,
                                                          const CommitterFactory &committer)
     : path(request.path), data_change(request.data_change), partition_columns(request.partition_columns),
