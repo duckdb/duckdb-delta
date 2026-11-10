@@ -172,11 +172,16 @@ CREATE TABLE IF NOT EXISTS n.n (id INTEGER, s STRUCT(l VARIANT[]));
 ----
 Not implemented Error: Delta CREATE TABLE does not support column 's' with a VARIANT nested in a STRUCT yet
 
-# Nothing was written, not even the directory
+# Nothing was written, not even the directory: glob lists no directories, so write a file into it
 query I
 SELECT count(*) FROM glob('{TEMP_DIR}/variant_create_nested/**');
 ----
 0
+
+statement error
+COPY (SELECT 1) TO '{TEMP_DIR}/variant_create_nested/probe.csv';
+----
+No such file or directory
 
 # The same table with its VARIANT columns at the top level is fine
 statement ok

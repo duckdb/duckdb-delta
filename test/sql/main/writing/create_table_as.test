@@ -99,9 +99,48 @@ CREATE TABLE basic.basic AS SELECT 1 AS i;
 ----
 already exists
 
-# IF NOT EXISTS on an existing table skips the query entirely
+# IF NOT EXISTS on an existing table skips the query entirely. Cast, since error() has no type Delta can store,
+# and an untyped column is refused even here (below)
 statement ok
-CREATE TABLE IF NOT EXISTS basic.basic AS SELECT error('the query ran') AS i;
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT error('the query ran')::INTEGER AS i;
+
+# But not past a column DuckDB could not create and then write: the statement asks for a table DuckDB will not
+# make, so it fails fast, whether or not the table is there, and runs nothing
+statement error
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT 1 AS i, 1::UTINYINT AS u;
+----
+Delta CREATE TABLE does not support column 'u' of type UTINYINT: Delta has no such type
+
+# An untyped NULL included, as on a fresh path
+statement error
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT NULL AS n;
+----
+Delta CREATE TABLE does not support column 'n'
+
+statement error
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT 1 AS i, {'v': 1::VARIANT} AS s;
+----
+Delta CREATE TABLE does not support column 's' with a VARIANT nested in a STRUCT yet
+
+statement error
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT 1 AS i, MAP {[1]: 2} AS m;
+----
+Delta CREATE TABLE does not support column 'm' of type MAP(INTEGER[], INTEGER): a MAP with a LIST key
+
+statement error
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT 1 AS i, 'x' COLLATE nocase AS s;
+----
+Column collations are not supported for Delta tables: Delta CREATE TABLE, column 's' holds a VARCHAR COLLATE nocase
+
+statement error
+CREATE TABLE IF NOT EXISTS basic.basic AS SELECT 1 AS i, [{'n': 'x' COLLATE nocase}] AS l;
+----
+Column collations are not supported for Delta tables: Delta CREATE TABLE, column 'l' holds a VARCHAR COLLATE nocase
+
+statement error
+CREATE TABLE IF NOT EXISTS basic.basic PARTITIONED BY (s) AS SELECT 1 AS i, {'a': 1} AS s;
+----
+Delta CREATE TABLE does not support partitioning on column 's' of type STRUCT(a INTEGER)
 
 query I
 SELECT count(*) FROM glob('{TEMP_DIR}/ctas_basic/_delta_log/*.json');
@@ -197,6 +236,35 @@ query I
 SELECT count(*) FROM glob('{TEMP_DIR}/ctas_unstorable_fresh/**');
 ----
 0
+
+# Delta has no collations: the table would compare case-sensitively, so CTAS refuses a collated column, at any depth
+statement error
+CREATE TABLE unstorable_fresh.unstorable_fresh AS SELECT 1 AS i, 'x' COLLATE nocase AS s;
+----
+Not implemented Error: Column collations are not supported for Delta tables: Delta CREATE TABLE AS, column 's' holds a VARCHAR COLLATE nocase
+
+statement error
+CREATE TABLE unstorable_fresh.unstorable_fresh AS SELECT 1 AS i, {'n': 'x' COLLATE nocase} AS s;
+----
+Column collations are not supported for Delta tables: Delta CREATE TABLE AS, column 's' holds a VARCHAR COLLATE nocase
+
+# As the message says, a cast keeps the collation
+statement error
+CREATE TABLE unstorable_fresh.unstorable_fresh AS SELECT 1 AS i, ('x' COLLATE nocase)::VARCHAR AS s;
+----
+Column collations are not supported for Delta tables: Delta CREATE TABLE AS, column 's' holds a VARCHAR COLLATE nocase
+
+# A partition column must have a primitive type
+statement error
+CREATE TABLE unstorable_fresh.unstorable_fresh PARTITIONED BY (l) AS SELECT 1 AS i, [1, 2] AS l;
+----
+Not implemented Error: Delta CREATE TABLE AS does not support partitioning on column 'l' of type INTEGER[]: a Delta partition column must have a primitive type
+
+# glob lists no directories: writing a file into it shows the directory was never made
+statement error
+COPY (SELECT 1) TO '{TEMP_DIR}/ctas_unstorable_fresh/probe.csv';
+----
+No such file or directory
 
 # -----------------------------------------------------------------------------
 # An empty query creates an empty table
@@ -598,3 +666,22 @@ query I
 SELECT count(*) FROM glob('{TEMP_DIR}/ctas_child/_delta_log/*.json');
 ----
 2
+
+# Unity Catalog always sends the location, pinned to the attached path: taken, not written as a property
+statement ok
+ATTACH '{TEMP_DIR}/ctas_child_location' AS child_location (TYPE delta, child_catalog_mode true, internal_table_name 'uc_t');
+
+query I
+CREATE TABLE child_location.uc_t WITH (location = '{TEMP_DIR}/ctas_child_location') AS SELECT range::INTEGER AS i FROM range(3);
+----
+3
+
+query II
+SELECT count(*), sum(i) FROM delta_scan('{TEMP_DIR}/ctas_child_location');
+----
+3	3
+
+query II
+SELECT count(*), bool_and(json_extract(metaData.configuration, '$.location') IS NULL) FROM read_json('{TEMP_DIR}/ctas_child_location/_delta_log/00000000000000000000.json') WHERE metaData IS NOT NULL;
+----
+1	true

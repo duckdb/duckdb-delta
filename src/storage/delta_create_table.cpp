@@ -70,6 +70,18 @@ static vector<string> GetCreateTablePartitionColumns(const CreateTableInfo &base
 	return result;
 }
 
+//! Kernel takes only primitive partition columns; refused here, with the column named, so that the refusal comes
+//! with the other create-then-write ones: before IF NOT EXISTS, and before a directory exists
+static void ThrowIfPartitionTypeNotPrimitive(const string &column_name, const LogicalType &type,
+                                             const string &statement) {
+	if (!type.IsNested() && type.id() != LogicalTypeId::VARIANT) {
+		return;
+	}
+	throw NotImplementedException("%s does not support partitioning on column '%s' of type %s: a Delta partition "
+	                              "column must have a primitive type",
+	                              statement, column_name, type.ToString());
+}
+
 void ThrowIfPartitionTypeUnwritable(const string &column_name, const LogicalType &type, const string &statement) {
 	if (type.id() != LogicalTypeId::BLOB) {
 		return;
@@ -98,6 +110,7 @@ vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<s
 			throw BinderException("%s: %s names column '%s', which the table does not have", statement, clause, key);
 		}
 		auto name = match->Name().GetIdentifierName();
+		ThrowIfPartitionTypeNotPrimitive(name, match->Type(), statement);
 		ThrowIfPartitionTypeUnwritable(name, match->Type(), statement);
 		if (std::find(result.begin(), result.end(), name) != result.end()) {
 			throw BinderException("%s: %s names column '%s' twice", statement, clause, name);
@@ -161,8 +174,8 @@ DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalo
 			                              column.GetName().GetIdentifierName());
 		}
 	}
-	// DeltaCatalog::SupportsCreateTable refuses SORTED BY too, but the binder consults it for CREATE only, not for
-	// CREATE TABLE AS. Delta has partition columns, but nothing that SORTED BY maps onto.
+	// DeltaCatalog::SupportsCreateTable refuses SORTED BY too, but a CREATE TABLE AS on a fresh path does not go
+	// through it. Delta has partition columns, but nothing that SORTED BY maps onto.
 	if (!base.sort_keys.empty()) {
 		throw CatalogException("SORTED BY is not supported for tables in a delta catalog");
 	}
@@ -198,29 +211,29 @@ DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalo
 	return request;
 }
 
-void ThrowIfDeltaCannotStore(const ColumnList &columns, const string &statement, const string &hint) {
-	for (auto &column : columns.Logical()) {
-		auto &type = column.Type();
-		auto unstorable = DeltaSchemaBuilder::FindUnsupportedType(type);
-		if (!unstorable) {
-			continue;
-		}
-		auto nested =
-		    unstorable.get() == &type ? string() : StringUtil::Format(" (it holds a %s)", unstorable->ToString());
-		throw NotImplementedException("%s does not support column '%s' of type %s%s: Delta has no such type. %s",
-		                              statement, column.Name().GetIdentifierName(), type.ToString(), nested, hint);
+static void ThrowIfDeltaCannotStore(const ColumnDefinition &column, const string &statement, const string &hint) {
+	auto &type = column.Type();
+	auto unstorable = DeltaSchemaBuilder::FindUnsupportedType(type);
+	if (!unstorable) {
+		return;
+	}
+	auto nested = unstorable.get() == &type ? string() : StringUtil::Format(" (it holds a %s)", unstorable->ToString());
+	throw NotImplementedException("%s does not support column '%s' of type %s%s: Delta has no such type. %s", statement,
+	                              column.Name().GetIdentifierName(), type.ToString(), nested, hint);
+}
+
+static void ThrowIfColumnHoldsNestedVariant(const ColumnDefinition &column, const string &statement) {
+	auto &type = column.Type();
+	if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
+		throw NotImplementedException("%s does not support column '%s' with a VARIANT nested in a %s "
+		                              "yet; only top-level VARIANT columns can be written",
+		                              statement, column.Name().GetIdentifierName(), LogicalTypeIdToString(type.id()));
 	}
 }
 
 void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement) {
 	for (auto &column : columns.Logical()) {
-		auto &type = column.Type();
-		if (type.id() != LogicalTypeId::VARIANT && TypeVisitor::Contains(type, LogicalTypeId::VARIANT)) {
-			throw NotImplementedException("%s does not support column '%s' with a VARIANT nested in a %s "
-			                              "yet; only top-level VARIANT columns can be written",
-			                              statement, column.Name().GetIdentifierName(),
-			                              LogicalTypeIdToString(type.id()));
-		}
+		ThrowIfColumnHoldsNestedVariant(column, statement);
 	}
 }
 
@@ -246,14 +259,50 @@ static bool HoldsMapWithListKey(const LogicalType &type) {
 	}
 }
 
-void ThrowIfMapKeyIsList(const ColumnList &columns, const string &statement) {
-	for (auto &column : columns.Logical()) {
-		if (HoldsMapWithListKey(column.Type())) {
-			throw NotImplementedException("%s does not support column '%s' of type %s: a MAP with a LIST key is a "
-			                              "non-nullable list in Delta, which INSERT cannot write yet",
-			                              statement, column.Name().GetIdentifierName(), column.Type().ToString());
-		}
+//! Delta map keys are not nullable, and INSERT refuses a table with a non-nullable list
+//! (DeltaTableEntry::ThrowOnUnsupportedFieldForInserting); a LIST below a STRUCT key, or as a MAP value, is nullable
+static void ThrowIfMapKeyIsList(const ColumnDefinition &column, const string &statement) {
+	if (HoldsMapWithListKey(column.Type())) {
+		throw NotImplementedException("%s does not support column '%s' of type %s: a MAP with a LIST key is a "
+		                              "non-nullable list in Delta, which INSERT cannot write yet",
+		                              statement, column.Name().GetIdentifierName(), column.Type().ToString());
 	}
+}
+
+//! Delta has no collations: the table would store a plain string, and comparisons on it would change, the same
+//! ground on which CREATE refuses DEFAULT. A CTAS query can carry a collation at any depth.
+static void ThrowIfCollated(const ColumnDefinition &column, const string &statement) {
+	string collation;
+	TypeVisitor::Contains(column.Type(), [&](const LogicalType &type) {
+		if (type.id() == LogicalTypeId::VARCHAR && !StringType::GetCollation(type).empty()) {
+			collation = StringType::GetCollation(type);
+			return true;
+		}
+		return false;
+	});
+	if (!collation.empty()) {
+		// Named here, as the type's own text leaves the collation out. A cast to VARCHAR or a string function keeps
+		// the collation, so there is no cast to suggest.
+		throw NotImplementedException("Column collations are not supported for Delta tables: %s, column '%s' holds a "
+		                              "VARCHAR COLLATE %s. The collation survives casts and string functions: write "
+		                              "the column from an uncollated source",
+		                              statement, column.Name().GetIdentifierName(), collation);
+	}
+}
+
+void ThrowIfDeltaCannotCreateThenWrite(const ColumnList &columns, const string &statement, const string &type_hint) {
+	for (auto &column : columns.Logical()) {
+		// Storable first: a type Delta cannot store at all gets that answer, not advice about where a VARIANT may go
+		ThrowIfDeltaCannotStore(column, statement, type_hint);
+		ThrowIfColumnHoldsNestedVariant(column, statement);
+		ThrowIfMapKeyIsList(column, statement);
+		ThrowIfCollated(column, statement);
+	}
+}
+
+void ThrowIfDeltaCannotCreateTable(const CreateTableInfo &base, const string &statement, const string &type_hint) {
+	ThrowIfDeltaCannotCreateThenWrite(base.columns, statement, type_hint);
+	ResolvePartitionColumns(base.columns, GetCreateTablePartitionColumns(base), statement, "PARTITIONED BY");
 }
 
 bool DeltaTableExistsAt(ClientContext &context, const string &path) {

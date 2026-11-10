@@ -37,7 +37,8 @@ DeltaCreateTableRequest BindDeltaCreateTable(ClientContext &context, DeltaCatalo
 void ThrowIfPartitionTypeUnwritable(const string &column_name, const LogicalType &type, const string &statement);
 
 //! Resolves partition keys to the columns they name, case-insensitively as kernel does, in the columns' spelling.
-//! Refuses a key that names no column, or a column twice, or a column ThrowIfPartitionTypeUnwritable refuses.
+//! Refuses a key that names no column, or a column twice, or a column of a type that is not primitive (STRUCT, LIST,
+//! MAP, ARRAY, VARIANT, ...) or that ThrowIfPartitionTypeUnwritable refuses.
 //! `clause` is PARTITIONED BY or PARTITION_BY.
 vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<string> &keys, const string &statement,
                                        const string &clause);
@@ -47,17 +48,25 @@ vector<string> ResolvePartitionColumns(const ColumnList &columns, const vector<s
 void TakeLocationProperty(vector<pair<string, string>> &properties, const string &target, const string &target_name,
                           const string &statement);
 
-//! Refuses every column type that the Delta schema cannot store, naming the column. `hint` ends the message.
-void ThrowIfDeltaCannotStore(const ColumnList &columns, const string &statement, const string &hint);
+//! Refuses every column that a Delta table DuckDB creates could not hold, or that DuckDB could not then write into it,
+//! naming the column: a type the Delta schema cannot store (`type_hint` ends that message), a VARIANT below the top
+//! level, a MAP with a LIST key, a collated VARCHAR. One column at a time, in column order; for each column the checks
+//! run in the order above. A new refusal of this kind belongs here. CREATE and CREATE TABLE AS run it through
+//! ThrowIfDeltaCannotCreateTable, COPY TO when it binds: on every path before the existing-table check (IF NOT EXISTS
+//! included) and before any directory exists, so a statement fails the same way whether the table exists or not.
+void ThrowIfDeltaCannotCreateThenWrite(const ColumnList &columns, const string &statement, const string &type_hint);
+
+//! The refusals of a CREATE TABLE that need no client context: ThrowIfDeltaCannotCreateThenWrite on its columns, then
+//! its PARTITIONED BY columns (ResolvePartitionColumns). DeltaCatalog::SupportsCreateTable runs them for CREATE, and
+//! for CREATE TABLE AS on an existing table, which DuckDB may settle without calling the schema's CreateTable;
+//! DeltaCatalog::PlanCreateTableAs runs them for CREATE TABLE AS on a fresh path. Bad options need a context to bind,
+//! so BindDeltaCreateTable refuses them, after the conflict check for an existing table.
+void ThrowIfDeltaCannotCreateTable(const CreateTableInfo &base, const string &statement, const string &type_hint);
 
 //! Refuses a column with a VARIANT below its top level, naming it: the parquet writer writes VARIANT only as a
-//! top-level column. CREATE refuses it too, so that a table DuckDB creates is one DuckDB can write.
+//! top-level column. INSERT calls it for a table another engine made; CREATE, CTAS and COPY refuse it through
+//! ThrowIfDeltaCannotCreateThenWrite.
 void ThrowIfVariantIsNested(const ColumnList &columns, const string &statement);
-
-//! Refuses a column with a LIST as a MAP key, at any depth, naming it. Delta map keys are not nullable, and INSERT
-//! refuses a table with a non-nullable list (DeltaTableEntry::ThrowOnUnsupportedFieldForInserting), so CREATE, CTAS
-//! and COPY refuse one too: a table DuckDB creates is one DuckDB can write.
-void ThrowIfMapKeyIsList(const ColumnList &columns, const string &statement);
 
 //! Whether a Delta table has been created at `path` yet, judged as kernel judges it: by the presence of
 //! `_delta_log`. A cheap existence probe rather than a snapshot build.

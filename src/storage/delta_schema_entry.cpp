@@ -63,24 +63,21 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	auto &delta_catalog = catalog.Cast<DeltaCatalog>();
 	auto &base = info.Base();
 
+	// DeltaCatalog::SupportsCreateTable ran this already when the call came through Catalog::CreateTable; again for a
+	// caller that calls this directly, as Unity Catalog does to write version 0
+	auto supports_create_table = delta_catalog.SupportsCreateTable(info);
+	if (supports_create_table.HasError()) {
+		supports_create_table.Throw();
+	}
 	auto request = BindDeltaCreateTable(context, delta_catalog, base);
 	// Schema only: version 0 adds no files
 	request.data_change = false;
-	// Only what DuckDB can then INSERT; tables other engines made with nested VARIANT still read
-	ThrowIfVariantIsNested(request.columns, "Delta CREATE TABLE");
 
-	// After the options are read, so that a bad option fails even where IF NOT EXISTS makes the
+	// After the columns and the options are checked, so that a bad one fails even where IF NOT EXISTS makes the
 	// statement a no-op: embedded SQL should not carry a typo until the day the table is gone.
 	if (!HandleCreateConflict(context, base, request.path)) {
 		return nullptr;
 	}
-
-	// After the conflict check, where the kernel call refused these before: CREATE TABLE AS IF NOT EXISTS on an
-	// existing table plans this CREATE with the query's types, and stays a no-op. Before the directory exists.
-	ThrowIfDeltaCannotStore(request.columns, "Delta CREATE TABLE",
-	                        "Declare the column as a type Delta can store, e.g. BIGINT or VARCHAR.");
-	// Only what DuckDB can then INSERT; tables other engines made with a LIST map key still read
-	ThrowIfMapKeyIsList(request.columns, "Delta CREATE TABLE");
 
 	auto created_directory = EnsureTableDirectory(context, request.path);
 

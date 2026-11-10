@@ -122,6 +122,16 @@ ErrorData DeltaCatalog::SupportsCreateTable(BoundCreateTableInfo &info) {
 		return ErrorData(ExceptionType::CATALOG,
 		                 StringUtil::Format("SORTED BY is not supported for tables in a %s catalog", GetCatalogType()));
 	}
+	// DuckDB runs this before the schema's CreateTable, and also for a CREATE TABLE AS on a table it found, which it
+	// may settle without that call. CREATE TABLE AS on an existing table plans a CREATE with the query's types, and
+	// cannot be told apart from one here.
+	try {
+		ThrowIfDeltaCannotCreateTable(base, "Delta CREATE TABLE",
+		                              "Declare the column as a type Delta can store, e.g. BIGINT or VARCHAR (in "
+		                              "CREATE TABLE AS, cast it in the query, e.g. ::BIGINT).");
+	} catch (std::exception &ex) {
+		return ErrorData(ex);
+	}
 	return ErrorData();
 }
 
@@ -179,6 +189,10 @@ PhysicalOperator &DeltaCatalog::PlanCreateTableAs(ClientContext &context, Physic
 		                              "its parent catalog: create the table, then INSERT into it");
 	}
 	auto &base = op.info->Base();
+	// What SupportsCreateTable refuses for a CREATE, before the options are bound and before any directory exists
+	ThrowIfDeltaCannotCreateTable(
+	    base, "Delta CREATE TABLE AS",
+	    "Cast the column in the query to a type Delta can store, e.g. ::BIGINT or ::VARCHAR.");
 	auto request = BindDeltaCreateTable(context, *this, base);
 	// The planner reaches here only when no table was found; IF NOT EXISTS on an existing one plans a plain CREATE,
 	// which skips the query
