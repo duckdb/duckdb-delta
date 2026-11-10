@@ -1146,7 +1146,8 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 
 PhysicalOperator &DeltaInsert::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                  PhysicalOperator &child, DeltaCreateTableRequest request,
-                                                 const string &statement, idx_t estimated_cardinality) {
+                                                 const string &statement, idx_t estimated_cardinality,
+                                                 const DeltaCreateTableTransaction::CommitterFactory &committer) {
 	// The callers refused the columns already (ThrowIfDeltaCannotCreateThenWrite); nothing exists on disk yet
 	if (DeltaTableExistsAt(context, request.path)) {
 		throw CatalogException("%s creates a new Delta table, but '%s' already holds one: choose another path",
@@ -1163,7 +1164,7 @@ PhysicalOperator &DeltaInsert::PlanCreateTableAs(ClientContext &context, Physica
 	DeltaCreateTableAsCleanup::Register(context, state);
 	state->created_directory = EnsureTableDirectory(context, request.path);
 	request.data_change = true;
-	state->transaction = make_uniq<DeltaCreateTableTransaction>(context, request);
+	state->transaction = make_uniq<DeltaCreateTableTransaction>(context, request, committer);
 
 	DeltaWriteTarget target;
 	target.path = Path::Normalize(request.path);

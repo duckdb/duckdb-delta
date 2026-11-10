@@ -17,11 +17,11 @@
 #include "duckdb/common/optional.hpp"
 #include "delta_utils.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "storage/delta_create_table.hpp"
 
 namespace duckdb {
 
 struct DeltaCreateTableAsState;
-struct DeltaCreateTableRequest;
 
 class DeltaInsert : public PhysicalOperator {
 public:
@@ -41,10 +41,12 @@ public:
 	physical_index_vector_t<idx_t> column_index_map;
 
 	//! Plans a write of `child`'s rows as version 0 of a new table: CREATE TABLE AS and COPY TO. `statement` names the
-	//! statement in errors.
-	static PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
-	                                           PhysicalOperator &child, DeltaCreateTableRequest request,
-	                                           const string &statement, idx_t estimated_cardinality);
+	//! statement in errors. Version 0 commits through `committer` when given (a catalog-managed table), else through
+	//! the filesystem committer.
+	static PhysicalOperator &
+	PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner, PhysicalOperator &child,
+	                  DeltaCreateTableRequest request, const string &statement, idx_t estimated_cardinality,
+	                  const DeltaCreateTableTransaction::CommitterFactory &committer = nullptr);
 
 public:
 	// // Source interface

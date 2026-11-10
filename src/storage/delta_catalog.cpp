@@ -182,22 +182,29 @@ DatabaseSize DeltaCatalog::GetDatabaseSize(ClientContext &context) {
 PhysicalOperator &DeltaCatalog::PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
                                                   LogicalCreateTable &op, PhysicalOperator &plan) {
 	// A catalog attached in child-catalog mode plans CTAS as a path table does: the parent (Unity Catalog) registers
-	// the table after this statement's commit. One that commits through its parent (a catalog-managed table) would need
-	// the create transaction on the parent's committer, which is not built yet.
-	if (parent_commit) {
-		throw NotImplementedException("CREATE TABLE AS is not supported yet for a Delta table that commits through "
-		                              "its parent catalog: create the table, then INSERT into it");
-	}
+	// the table after this statement's commit. One that commits through its parent (a catalog-managed table) builds
+	// the create transaction on the parent's committer, as CREATE does; kernel writes version 0 itself and the parent
+	// registers the table.
 	auto &base = op.info->Base();
 	// What SupportsCreateTable refuses for a CREATE, before the options are bound and before any directory exists
 	ThrowIfDeltaCannotCreateTable(
 	    base, "Delta CREATE TABLE AS",
 	    "Cast the column in the query to a type Delta can store, e.g. ::BIGINT or ::VARCHAR.");
 	auto request = BindDeltaCreateTable(context, *this, base);
+	DeltaCreateTableTransaction::CommitterFactory committer;
+	if (parent_commit) {
+		// Version 0 never calls back into the transaction: kernel's catalog committer writes it straight to the
+		// published path, so the commit client's context is only held, not used
+		auto &delta_transaction = DeltaTransaction::Get(context, *this);
+		auto path = request.path;
+		committer = [&delta_transaction, path]() {
+			return delta_transaction.CreateCatalogCommitter(path);
+		};
+	}
 	// The planner reaches here only when no table was found; IF NOT EXISTS on an existing one plans a plain CREATE,
 	// which skips the query
 	return DeltaInsert::PlanCreateTableAs(context, planner, plan, std::move(request), "Delta CREATE TABLE AS",
-	                                      op.estimated_cardinality);
+	                                      op.estimated_cardinality, committer);
 }
 PhysicalOperator &DeltaCatalog::PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner, LogicalDelete &op,
                                            PhysicalOperator &plan) {
