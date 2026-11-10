@@ -1308,19 +1308,22 @@ void DeltaMultiFileList::ReportFilterPushdown(ClientContext &context, DeltaMulti
 	}
 }
 
-//! True if `filter` is the one already pushed down for its column.
-//! ExpressionFilter::Equals compares the bound functions of the expressions by their callback pointers. A comparison
-//! built in this extension (by the FilterCombiner of the constant pushdown) points at this extension's copy of the
-//! comparison callbacks; the same comparison handed over by the scan for the dynamic pushdown points at the host's
-//! copy, so the two never compare equal. Fall back to the rendered expression: a false match only skips a
-//! redundant file-pruning pass and never changes the rows the scan returns.
+//! True if the dynamic pushdown can skip `filter` because it matches the one already pushed down for its column.
+//! This is a pruning-only heuristic, a workaround for a core limitation.
+//! ExpressionFilter::Equals ends in ScalarFunctionCallbacks::operator==, which compares callback pointers. The
+//! comparisons that this extension's FilterCombiner builds in the constant pushdown point at this extension's copy of
+//! the comparison callbacks, while the scan hands over the same filters with the host's copy, so Equals is false for
+//! identical filters. Fall back to the rendered filter: ExpressionFilter::DebugToString also prints the child of an
+//! optional filter, which the plain expression rendering hides in bind data. The rendering could still collide for
+//! filters that differ only in data it does not print; then this pass misses some file pruning, but the scan keeps
+//! its row filters, so the rows returned do not change.
 static bool IsSamePushedDownFilter(const ExpressionFilter &filter, const ExpressionFilter &pushed_down) {
 	if (filter.Equals(pushed_down)) {
 		return true;
 	}
 	return filter.column_indexes == pushed_down.column_indexes &&
 	       filter.expr->GetReturnType() == pushed_down.expr->GetReturnType() &&
-	       filter.expr->ToString() == pushed_down.expr->ToString();
+	       filter.DebugToString() == pushed_down.DebugToString();
 }
 
 unique_ptr<MultiFileList>
