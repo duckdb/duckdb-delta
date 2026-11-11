@@ -183,8 +183,7 @@ PhysicalOperator &DeltaCatalog::PlanCreateTableAs(ClientContext &context, Physic
                                                   LogicalCreateTable &op, PhysicalOperator &plan) {
 	// A catalog attached in child-catalog mode plans CTAS as a path table does: the parent (Unity Catalog) registers
 	// the table after this statement's commit. One that commits through its parent (a catalog-managed table) builds
-	// the create transaction on the parent's committer, as CREATE does; kernel writes version 0 itself and the parent
-	// registers the table.
+	// the create transaction on the parent's committer, as CREATE does.
 	auto &base = op.info->Base();
 	// What SupportsCreateTable refuses for a CREATE, before the options are bound and before any directory exists
 	ThrowIfDeltaCannotCreateTable(
@@ -194,11 +193,11 @@ PhysicalOperator &DeltaCatalog::PlanCreateTableAs(ClientContext &context, Physic
 	DeltaCreateTableTransaction::CommitterFactory committer;
 	if (parent_commit) {
 		// Version 0 never calls back into the transaction: kernel's catalog committer writes it straight to the
-		// published path, so the commit client's context is only held, not used
+		// published path, so the committer is made without a callback context
 		auto &delta_transaction = DeltaTransaction::Get(context, *this);
 		auto path = request.path;
 		committer = [&delta_transaction, path]() {
-			return delta_transaction.CreateCatalogCommitter(path);
+			return delta_transaction.CreateCatalogCommitter(path, true);
 		};
 	}
 	// The planner reaches here only when no table was found; IF NOT EXISTS on an existing one plans a plain CREATE,

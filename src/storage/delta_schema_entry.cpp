@@ -87,7 +87,7 @@ optional_ptr<CatalogEntry> DeltaSchemaEntry::CreateTable(CatalogTransaction tran
 	if (delta_catalog.parent_commit) {
 		auto &delta_transaction = GetDeltaTransaction(transaction);
 		committer = [&]() {
-			return delta_transaction.CreateCatalogCommitter(request.path);
+			return delta_transaction.CreateCatalogCommitter(request.path, true);
 		};
 	}
 	unique_ptr<DeltaCreateTableTransaction> create_transaction;

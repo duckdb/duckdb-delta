@@ -87,7 +87,7 @@ void TryRemoveEmptyDirectory(FileSystem &fs, const string &directory);
 class DeltaCreateTableTransaction {
 public:
 	//! Makes a committer that commits version 0 through a catalog. Called once, right before the build consumes
-	//! it: kernel has no free for a committer handle.
+	//! it, so that no error path before the build has a committer handle to free.
 	using CommitterFactory = std::function<ffi::MutableCommitter *()>;
 
 	//! Builds the transaction, through the filesystem committer unless `committer` is given
