@@ -84,10 +84,10 @@ TableFunction DeltaTableEntry::GetScanFunctionInternal(ClientContext &context, u
 	// Propagate settings
 	param_map.insert({"pushdown_partition_info", delta_catalog.pushdown_partition_info});
 	param_map.insert({"pushdown_filters", DeltaEnumUtils::ToString(delta_catalog.filter_pushdown_mode)});
-	idx_t param_version = version != DConstants::INVALID_INDEX ? version : delta_catalog.use_specific_version;
-	if (param_version != DConstants::INVALID_INDEX) {
-		param_map.insert({"version", Value::UBIGINT(param_version)});
-	}
+	// The scan reads the snapshot of this entry through function_info. Also pass its version, so a scan that is
+	// bound again from its parameters alone (e.g. after serialization) reads the version this transaction pinned
+	// instead of the latest one.
+	param_map.insert({"version", Value::UBIGINT(snapshot->GetVersion())});
 
 	BoundTableFunction bound_scan_function(delta_scan_function);
 	TableFunctionBindInput bind_input(inputs, param_map, return_types, names, nullptr, nullptr, bound_scan_function,
