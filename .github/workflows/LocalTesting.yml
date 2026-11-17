@@ -123,6 +123,13 @@ jobs:
       - *checkout
       - *ninja
       - *python
+      # pyspark 4.0 / Hadoop need JDK 17 or 21: on JDK 23+ (ubuntu-latest = ubuntu-26.04 defaults to 25)
+      # throws in Subject.getSubject and `make generate-data` dies with JAVA_GATEWAY_EXITED
+      - &java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
       - *sccache
       - *vcpkg
       - *rust
@@ -143,6 +150,7 @@ jobs:
       - *checkout
       - *ninja
       - *python
+      - *java
       - *sccache
       - *vcpkg
       - *rust
