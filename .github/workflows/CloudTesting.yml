@@ -4,8 +4,34 @@ on:
     branches: [main, "v[12].[0-9]+-[a-zA-Z]*", "features/**"]
   repository_dispatch:
   workflow_dispatch:
+    # Manual PR gate: set `pr` to run this suite against a pull request, fork PRs included.
+    # A pull_request run from a fork never gets secrets, so this is how a fork PR gets cloud tests.
+    # SECURITY: this runs the PR's code with this repo's cloud secrets. Review the PR at the sha you
+    # mean to test first, build files and scripts included (things it fetches by a moving ref are
+    # not pinned). The PR jobs wait in the `cloud` environment (required reviewer; "Resolve PR"
+    # refuses to start without one) before any PR code runs; approve only after checking the sha
+    # in the "Resolve PR" summary.
+    inputs:
+      pr:
+        description: "PR number to test (empty: test the branch this is dispatched on)"
+        required: false
+        default: ""
+      sha:
+        description: "Expected PR head sha (optional, full 40 chars): fail if the PR has moved"
+        required: false
+        default: ""
+      merge:
+        description: "Test refs/pull/<pr>/merge (the PR merged into its base) instead of its head"
+        type: boolean
+        default: false
+
+# The PR's code sees GITHUB_TOKEN; keep it read-only. Jobs that post the commit status widen it.
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
+  # PR runs: one group per PR, so a new dispatch for a PR cancels its older run.
+  group: ${{ github.workflow }}-${{ inputs.pr && format('pr{0}', inputs.pr) || format('{0}-{1}-{2}-{3}', github.ref, github.head_ref || '', github.base_ref || '', github.ref != 'refs/heads/main' || github.sha) }}
   cancel-in-progress: true
 defaults:
   run:
@@ -25,8 +51,97 @@ env:
   CARGO_INCREMENTAL: 0 # sccache cannot cache incremental compilation
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # PR gate, resolve (no secrets, runs no PR code): refuse unless `cloud` has required
+  # reviewers, pin the sha to test, show it, and mark the PR head pending.
+  # ---------------------------------------------------------------------------
+  pr-resolve:
+    name: Resolve PR
+    if: github.event_name == 'workflow_dispatch' && inputs.pr != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      head: ${{ steps.resolve.outputs.head }}
+      desc: ${{ steps.resolve.outputs.desc }}
+    steps:
+      - name: Resolve PR head (or merge ref) to a sha
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          EXPECT_SHA: ${{ inputs.sha }}
+          MERGE: ${{ inputs.merge }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "::error::input pr must be a PR number (no leading zeros)"; exit 1; }
+          EXPECT_SHA=${EXPECT_SHA,,}
+          [[ -z "$EXPECT_SHA" || "$EXPECT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::input sha must be a full 40-char sha"; exit 1; }
+          # Fail closed: without a required reviewer on `cloud`, nothing would stop PR code below.
+          if ! gh api "repos/$REPO/environments/cloud" \
+               --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length > 0' | grep -qx true; then
+            echo "::error::environment 'cloud' is missing or has no required reviewers; set them up first"
+            exit 1
+          fi
+          pr_json=$(gh api "repos/$REPO/pulls/$PR")
+          state=$(jq -r .state <<<"$pr_json")
+          head=$(jq -r .head.sha <<<"$pr_json")
+          head_repo=$(jq -r .head.repo.full_name <<<"$pr_json") # owner/name: [A-Za-z0-9._-] only
+          [[ "$state" == open ]] || { echo "::error::PR #$PR is $state"; exit 1; }
+          if [[ -n "$EXPECT_SHA" && "$head" != "$EXPECT_SHA" ]]; then
+            echo "::error::PR #$PR head is $head, not $EXPECT_SHA: it moved; review and dispatch again"
+            exit 1
+          fi
+          sha=$head
+          desc="head ${head:0:10}"
+          if [[ "$MERGE" == true ]]; then
+            # GitHub computes the test merge commit in the background; poll for it.
+            for _ in 1 2 3 4 5 6; do
+              mergeable=$(jq -r .mergeable <<<"$pr_json")
+              [[ "$mergeable" != null ]] && break
+              sleep 10
+              pr_json=$(gh api "repos/$REPO/pulls/$PR")
+            done
+            mergeable=$(jq -r .mergeable <<<"$pr_json")
+            [[ "$(jq -r .head.sha <<<"$pr_json")" == "$head" ]] || { echo "::error::PR #$PR moved while resolving"; exit 1; }
+            [[ "$mergeable" == true ]] || { echo "::error::PR #$PR has no merge ref (mergeable=$mergeable)"; exit 1; }
+            sha=$(jq -r .merge_commit_sha <<<"$pr_json")
+            parent=$(gh api "repos/$REPO/commits/$sha" --jq '.parents[1].sha')
+            [[ "$parent" == "$head" ]] || { echo "::error::merge ref $sha is not on head $head; retry"; exit 1; }
+            desc="merge ${sha:0:10} of head ${head:0:10}"
+          fi
+          {
+            echo "sha=$sha"
+            echo "head=$head"
+            echo "desc=$desc"
+          } >> "$GITHUB_OUTPUT"
+          # Only trusted or charset-limited fields here: the reviewer approves from this summary.
+          {
+            echo "### Cloud PR gate: PR #$PR"
+            echo
+            echo "- testing: \`$sha\` ($([[ "$MERGE" == true ]] && echo "merge ref" || echo "PR head"))"
+            echo "- head: \`$head\`${EXPECT_SHA:+ (matches the sha input)}"
+            echo "- from: \`$head_repo\`"
+            echo
+            echo "Approve the \`cloud\` deployment only if this is the sha you reviewed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$REPO/statuses/$head" -f state=pending -f context=cloud-pr-gate \
+            -f target_url="$RUN_URL" -f description="waiting for approval: $desc" > /dev/null
+
   azure-tests-linux:
     name: Azure tests (Linux)
+    needs: pr-resolve
+    # PR gate, test: without `pr` the resolve job is skipped and this runs as before; with `pr` it
+    # waits here for the `cloud` environment's reviewer, then tests the pinned sha.
+    if: ${{ !cancelled() && needs.pr-resolve.result != 'failure' }}
+    environment: ${{ needs.pr-resolve.outputs.sha != '' && 'cloud' || '' }}
     runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-x64' || 'ubuntu-latest' }}
     env:
       VCPKG_TARGET_TRIPLET: x64-linux
@@ -54,8 +169,21 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.pr-resolve.outputs.sha }}
           fetch-depth: 0
           submodules: true
+          persist-credentials: ${{ needs.pr-resolve.outputs.sha == '' }}
+
+      - name: PR under test
+        if: needs.pr-resolve.outputs.sha != ''
+        env:
+          PR: ${{ inputs.pr }}
+          SHA: ${{ needs.pr-resolve.outputs.sha }}
+        run: |
+          echo "Testing PR #$PR at $SHA"
+          test "$(git rev-parse HEAD)" = "$SHA"
+          # PR runs do not write the build caches: sccache read-only (vcpkg's cache is read-only anyway).
+          echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -106,3 +234,41 @@ jobs:
 
       # TODO: no public/unauthenticated step for now -- unauthenticated.test does not run; it will
       # be moved to azurite tests instead.
+
+  # ---------------------------------------------------------------------------
+  # PR gate, report: post the result on the PR head sha (a rejected approval shows as failure).
+  # ---------------------------------------------------------------------------
+  pr-status:
+    name: Report PR status
+    needs: [pr-resolve, azure-tests-linux]
+    if: ${{ always() && needs.pr-resolve.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Post commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ needs.pr-resolve.outputs.head }}
+          DESC: ${{ needs.pr-resolve.outputs.desc }}
+          TEST_RESULT: ${{ needs.azure-tests-linux.result }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          result=$TEST_RESULT
+          detail="test job $TEST_RESULT (a rejected approval also fails it)"
+          case "$result" in success) state=success ;; failure) state=failure ;; *) state=error ;; esac
+          # A newer run (higher run id) that has posted owns the status: do not overwrite it.
+          latest=$(gh api "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" \
+            --jq '[.statuses[] | select(.context == "cloud-pr-gate")][0].target_url // ""')
+          latest_id=${latest##*/runs/}
+          if [[ "$latest_id" =~ ^[0-9]+$ ]] && (( latest_id > RUN_ID )); then
+            echo "run $latest_id owns cloud-pr-gate; not posting $state"
+            exit 0
+          fi
+          description="$detail: $DESC"
+          gh api "repos/$REPO/statuses/$HEAD_SHA" -f state="$state" -f context=cloud-pr-gate \
+            -f target_url="$RUN_URL" -f description="${description:0:140}" > /dev/null
