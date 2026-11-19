@@ -4,6 +4,9 @@
 #include "delta_functions.hpp"
 #include "delta_log_types.hpp"
 #include "delta_macros.hpp"
+#include "delta_interval.hpp"
+#include "duckdb/planner/planner_extension.hpp"
+#include "duckdb/planner/bound_statement.hpp"
 #include "storage/delta_catalog.hpp"
 #include "storage/delta_transaction_manager.hpp"
 
@@ -129,6 +132,17 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// COPY ... TO ... (FORMAT delta)
 	loader.RegisterFunction(DeltaCopyFunction::Create());
+
+	// INTERVAL_YEAR_MONTH / INTERVAL_DAY_TIME, what Delta interval columns read as
+	DeltaInterval::Register(loader);
+	PlannerExtension interval_planner;
+	interval_planner.post_bind_function = [](PlannerExtensionInput &input, BoundStatement &statement) {
+		if (statement.plan) {
+			DeltaInterval::RejectOutsideDelta(input.context, *statement.plan);
+			DeltaInterval::CheckWindowRanges(input.context, *statement.plan);
+		}
+	};
+	PlannerExtension::Register(DBConfig::GetConfig(loader.GetDatabaseInstance()), std::move(interval_planner));
 
 	// Register the "single table" delta catalog (to ATTACH a single delta table)
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());

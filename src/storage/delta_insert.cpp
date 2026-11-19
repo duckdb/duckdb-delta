@@ -1,4 +1,5 @@
 #include "storage/delta_insert.hpp"
+#include "duckdb/common/type_visitor.hpp"
 
 #include "duckdb/common/sorting/hashed_sort.hpp"
 #include "duckdb/common/path.hpp"
@@ -850,6 +851,18 @@ static PhysicalOperator &PlanInsertProjection(ClientContext &context, PhysicalPl
 	return projection;
 }
 
+//! DuckDB's parquet writer stores INTERVAL as a 12-byte FIXED_LEN_BYTE_ARRAY, which Spark cannot read; Spark stores a
+//! year-month value as INT32 months and a day-time value as INT64 micros. Until the insert writes those, refuse it.
+static void ThrowIfIntervalIsWritten(const ColumnList &columns) {
+	for (auto &column : columns.Physical()) {
+		if (TypeVisitor::Contains(column.Type(), LogicalTypeId::INTERVAL)) {
+			throw NotImplementedException("Delta INSERT does not support column \"%s\" of type %s yet: writing Delta "
+			                              "intervals is not implemented",
+			                              column.Name().GetIdentifierName(), column.Type().ToString());
+		}
+	}
+}
+
 //! The parquet writer reads a struct field named FIELD_ID_KEY in `field_ids` as its parent's id, matching
 //! case-insensitively, so a field written under that name would lose its id and give the parent the wrong one. Renaming
 //! it, or writing it without an id, would contradict the log, so the write is refused.
@@ -1096,6 +1109,7 @@ PhysicalOperator &DeltaCatalog::PlanInsert(ClientContext &context, PhysicalPlanG
 
 	auto &columns = table_entry->GetColumns();
 	ThrowIfVariantIsNested(columns, "Delta INSERT");
+	ThrowIfIntervalIsWritten(columns);
 
 	DeltaWriteTarget target;
 	target.path = Path::Normalize(table_entry->snapshot->GetPath());

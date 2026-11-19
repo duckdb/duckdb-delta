@@ -639,6 +639,9 @@ private:
 	                             ffi::FfiNullableStringMap annotation);
 	//! Records the first error of a visit; it is raised once the visit is over
 	void RecordError(ExceptionType type, const string &message);
+	//! Appends a column of a type with no visitor of its own
+	void VisitTyped(uintptr_t sibling_list_id, ffi::KernelStringSlice name, bool is_nullable,
+	                const ffi::CMetadataMap *metadata, const LogicalType &type);
 	//! Records that a column has a type DuckDB cannot read yet, unless an error is recorded already
 	void RefuseType(uintptr_t sibling_list_id, ffi::KernelStringSlice name, const string &type_name);
 	//! Prepends a container's name to the refused field's path when the refusal is among its children

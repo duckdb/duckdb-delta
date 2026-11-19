@@ -218,8 +218,11 @@ static void ThrowIfDeltaCannotStore(const ColumnDefinition &column, const string
 		return;
 	}
 	auto nested = unstorable.get() == &type ? string() : StringUtil::Format(" (it holds a %s)", unstorable->ToString());
-	throw NotImplementedException("%s does not support column '%s' of type %s%s: Delta has no such type. %s", statement,
-	                              column.Name().GetIdentifierName(), type.ToString(), nested, hint);
+	// Spark's interval columns read as INTERVAL_YEAR_MONTH / INTERVAL_DAY_TIME, but writing them is not implemented
+	auto reason = unstorable->id() == LogicalTypeId::INTERVAL ? "writing Delta intervals is not supported yet"
+	                                                          : "Delta has no such type";
+	throw NotImplementedException("%s does not support column '%s' of type %s%s: %s. %s", statement,
+	                              column.Name().GetIdentifierName(), type.ToString(), nested, reason, hint);
 }
 
 static void ThrowIfColumnHoldsNestedVariant(const ColumnDefinition &column, const string &statement) {

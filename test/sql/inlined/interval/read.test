@@ -1,0 +1,181 @@
+# name: test/sql/inlined/interval/read.test
+# description: Delta year-month and day-time intervals read as INTERVAL_YEAR_MONTH / INTERVAL_DAY_TIME, nested too
+# group: [interval]
+
+require parquet
+
+require delta
+
+require icu
+
+# Written by Spark 4.2 / delta-spark 4.4.1 (scripts/data_generator/generate_interval_data.py): INT32 months and INT64
+# micros in parquet, with Spark's sub-kinds (`interval year`, `interval hour`), negatives, NULLs and both range ends.
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM delta_scan('data/inlined/interval/spark_interval'));
+----
+id	INTEGER
+ym	INTERVAL_YEAR_MONTH
+dt	INTERVAL_DAY_TIME
+y	INTERVAL_YEAR_MONTH
+h	INTERVAL_DAY_TIME
+s	STRUCT(n INTERVAL_YEAR_MONTH, gap INTERVAL_DAY_TIME)
+l	INTERVAL_YEAR_MONTH[]
+m	MAP(VARCHAR, INTERVAL_DAY_TIME)
+
+# A year-month value is months only; a day-time value is micros only, as DuckDB imports a duration (Arrow duration,
+# to_microseconds), so 3 days 04:05:06.789123 prints as 76:05:06.789123
+query IIIII
+SELECT id, ym, dt, y, h FROM delta_scan('data/inlined/interval/spark_interval') ORDER BY id;
+----
+1	1 year 2 months	76:05:06.789123	2 years	25:00:00
+2	-1 month	-00:00:00.000001	-1 year	-01:00:00
+3	NULL	NULL	NULL	NULL
+4	00:00:00	24:00:00	00:00:00	24:00:00
+5	178956970 years 7 months	2562047788:00:54.775807	NULL	NULL
+6	-178956970 years -8 months	-2562047788:00:54.775808	NULL	NULL
+
+query IIIII
+SELECT id, s.n, s.gap, l, m FROM delta_scan('data/inlined/interval/spark_interval') ORDER BY id;
+----
+1	1 month	24:00:00	[1 month, -2 months, NULL]	{a='36:00:00'}
+2	-1 year	NULL	[]	{b='-24:00:00'}
+3	NULL	NULL	NULL	NULL
+4	00:00:00	24:00:00	[1 year]	{}
+5	NULL	NULL	NULL	NULL
+6	NULL	NULL	NULL	NULL
+
+# Within one kind, comparison, ordering, grouping, min and max are DuckDB's and agree with Spark's
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval') WHERE ym > INTERVAL '1 month' ORDER BY id;
+----
+1
+5
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval') WHERE dt = INTERVAL '1 day';
+----
+4
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval') WHERE h = INTERVAL '25 hours';
+----
+1
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval') WHERE l[1] = INTERVAL '1 month' OR s.gap < INTERVAL '0 seconds' ORDER BY id;
+----
+1
+
+# A struct holding an interval is read whole: an extracted field would reach the filter as the file's raw INT32 months
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval') WHERE s.n::VARCHAR = '1 month';
+----
+1
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval') WHERE s.gap = INTERVAL '24 hours' ORDER BY id;
+----
+1
+4
+
+query II
+SELECT ym, count(*) FROM delta_scan('data/inlined/interval/spark_interval') WHERE id IN (1, 2, 4) GROUP BY ym ORDER BY ym;
+----
+-1 month	1
+00:00:00	1
+1 year 2 months	1
+
+query II
+SELECT min(ym), max(dt) FROM delta_scan('data/inlined/interval/spark_interval');
+----
+-178956970 years -8 months	2562047788:00:54.775807
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval') WHERE ym IS NOT NULL ORDER BY ym, id;
+----
+6
+2
+4
+1
+5
+
+# Calendar arithmetic is the same in both engines
+query I
+SELECT TIMESTAMP '2024-01-31' + ym FROM delta_scan('data/inlined/interval/spark_interval') WHERE id = 1;
+----
+2025-03-31 00:00:00
+
+query I
+SELECT TIMESTAMP '2024-01-31' + dt FROM delta_scan('data/inlined/interval/spark_interval') WHERE id = 4;
+----
+2024-02-01 00:00:00
+
+# Column mapping (name mode), with names that need it
+query III
+SELECT id, "y m", s."g ap" FROM delta_scan('data/inlined/interval/spark_interval_colmap');
+----
+1	1 year 2 months	24:00:00
+
+# The same through ATTACH
+
+statement ok
+ATTACH 'data/inlined/interval/spark_interval' AS iv (TYPE delta);
+
+query II
+SELECT id, ym FROM iv WHERE dt < INTERVAL '0 seconds' ORDER BY id;
+----
+2	-1 month
+6	-178956970 years -8 months
+
+# Deeper shapes with data: an interval as a map key, in a list of lists, in a list of structs, and next to Spark's INT96
+# timestamp in one struct (both are converted on read)
+
+statement ok
+SET TimeZone = 'America/Los_Angeles';
+
+query IIIII
+SELECT id, mk, ll, ls, st FROM delta_scan('data/inlined/interval/spark_interval_deep') ORDER BY id;
+----
+1	{1 year 2 months=a}	[['24:00:00', NULL], []]	[{'gap': '-01:00:00'}]	{'ts': '2023-12-31 16:00:00-08', 'ym': 1 month}
+2	NULL	NULL	NULL	{'ts': NULL, 'ym': -2 months}
+
+query IIIII
+SELECT id, mk[INTERVAL '14 months'], ll[1][1], epoch_us(st.ts), st.ym FROM delta_scan('data/inlined/interval/spark_interval_deep') ORDER BY id;
+----
+1	a	24:00:00	1704067200000000	1 month
+2	NULL	NULL	NULL	-2 months
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval_deep') WHERE st.ym < INTERVAL '0 months';
+----
+2
+
+# -----------------------------------------------------------------------------
+# Schema only (hand-written logs, no data files): every place a type can nest
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM delta_scan('data/inlined/interval/schema_only/interval_in_list_of_lists')) WHERE column_name = 'v';
+----
+v	INTERVAL_DAY_TIME[][]
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM delta_scan('data/inlined/interval/schema_only/interval_in_list_of_structs')) WHERE column_name = 'v';
+----
+v	STRUCT(gap INTERVAL_DAY_TIME)[]
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM delta_scan('data/inlined/interval/schema_only/interval_in_map_key')) WHERE column_name = 'v';
+----
+v	MAP(INTERVAL_YEAR_MONTH, VARCHAR)
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE FROM delta_scan('data/inlined/interval/schema_only/map_both_interval'));
+----
+v	MAP(INTERVAL_YEAR_MONTH, INTERVAL_DAY_TIME)
+
+query I
+SELECT count(*) FROM delta_scan('data/inlined/interval/schema_only/both_kinds');
+----
+0

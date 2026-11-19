@@ -1,0 +1,93 @@
+# name: test/sql/inlined/interval/storage.test
+# description: the interval kind types cannot be stored outside Delta tables: without delta loaded they would not compare, sort or cast
+# group: [interval]
+
+require parquet
+
+require delta
+
+statement ok
+CREATE VIEW t AS FROM delta_scan('data/inlined/interval/spark_interval');
+
+statement error
+CREATE TABLE copy AS SELECT ym FROM t;
+----
+Cannot store column 'ym' of type INTERVAL_YEAR_MONTH outside a Delta table: the type exists only while the delta extension is loaded. Cast it to INTERVAL to store it in a DuckDB table.
+
+statement error
+CREATE TEMP TABLE copy AS SELECT s FROM t;
+----
+Cannot store column 's' of type STRUCT(n INTERVAL_YEAR_MONTH, gap INTERVAL_DAY_TIME) outside a Delta table
+
+statement error
+CREATE TABLE declared (x INTERVAL_DAY_TIME);
+----
+Cannot store column 'x' of type INTERVAL_DAY_TIME outside a Delta table
+
+statement error
+CREATE TABLE nested (x MAP(VARCHAR, INTERVAL_DAY_TIME[]));
+----
+Cannot store column 'x' of type MAP(VARCHAR, INTERVAL_DAY_TIME[]) outside a Delta table
+
+statement error
+CREATE TYPE months AS INTERVAL_YEAR_MONTH;
+----
+Cannot store type 'months' of type INTERVAL_YEAR_MONTH outside a Delta table
+
+statement ok
+CREATE TABLE plain (id INTEGER, x INTERVAL);
+
+statement error
+ALTER TABLE plain ADD COLUMN y INTERVAL_YEAR_MONTH;
+----
+Cannot store column 'y' of type INTERVAL_YEAR_MONTH outside a Delta table
+
+statement error
+ALTER TABLE plain ALTER x TYPE INTERVAL_DAY_TIME;
+----
+Cannot store column 'x' of type INTERVAL_DAY_TIME outside a Delta table
+
+# The same in an attached database file, including a struct field (ALTER ... ADD COLUMN s.f)
+
+statement ok
+ATTACH '__TEST_DIR__/interval_storage.duckdb' AS file_db;
+
+statement ok
+CREATE TABLE file_db.nested (id INTEGER, s STRUCT(a INTEGER), l STRUCT(a INTEGER)[]);
+
+statement error
+ALTER TABLE file_db.nested ADD COLUMN s.f INTERVAL_DAY_TIME;
+----
+Cannot store field 'f' of type INTERVAL_DAY_TIME outside a Delta table
+
+statement error
+ALTER TABLE file_db.nested ADD COLUMN l.element.f INTERVAL_YEAR_MONTH[];
+----
+Cannot store field 'f' of type INTERVAL_YEAR_MONTH[] outside a Delta table
+
+statement error
+CREATE TABLE file_db.copy AS SELECT ym FROM t;
+----
+Cannot store column 'ym' of type INTERVAL_YEAR_MONTH outside a Delta table
+
+statement error
+EXPLAIN ANALYZE CREATE TABLE copy AS SELECT dt FROM t;
+----
+Cannot store column 'dt' of type INTERVAL_DAY_TIME outside a Delta table
+
+# A cast to INTERVAL is the way to store the values; inserting a kind into an INTERVAL column takes the implicit cast
+
+statement ok
+CREATE TABLE copy AS SELECT id, ym::INTERVAL AS ym FROM t;
+
+statement ok
+INSERT INTO plain SELECT id, dt FROM t;
+
+query II
+SELECT (SELECT ym FROM copy WHERE id = 1), (SELECT x FROM plain WHERE id = 1);
+----
+1 year 2 months	76:05:06.789123
+
+# A view stores no data and may use the types
+statement ok
+CREATE VIEW kinds AS SELECT ym, dt FROM t;
