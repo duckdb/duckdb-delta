@@ -114,7 +114,53 @@ regular parquet scanning logic:
 - all primitive types
 - structs
 - VARIANT type support
+- reading Delta intervals (see [Intervals](#intervals)); writing them is not supported yet
 - Cloud storage (AWS, Azure, GCP) support with secrets
+
+## Intervals
+
+Spark has two interval types, `interval year to month` (a number of months) and `interval day to
+second` (an exact duration in microseconds), and writes them to Delta tables when its type check
+is off. The Delta protocol itself defines no interval type. DuckDB has a single `INTERVAL` that
+holds months, days and microseconds at once, and compares or converts a month as 30 days. A
+Delta interval column reads as `INTERVAL_YEAR_MONTH` or `INTERVAL_DAY_TIME`: DuckDB `INTERVAL`
+values that keep their kind, in a struct, list or map too.
+
+```sql
+SELECT ym, dt FROM delta_scan('file:///some/path');
+-- 1 year 2 months    76:05:06.789123
+```
+
+- A year-month value holds months only, a day-time value microseconds only (`3 days 04:05:06`
+  shows as `76:05:06`, and `date_part('day', dt)` is 0), as DuckDB imports any duration.
+- Within one kind, comparison, ordering, grouping, `min` and `max` agree with Spark, as does
+  calendar arithmetic such as `ts + ym`. `+`, `-` (also `add`, `subtract`) and unary minus keep
+  the kind.
+- A plain `INTERVAL` compared or combined with a Delta interval, or added to it, takes the
+  column's kind and is refused when it does not fit: `ym = INTERVAL '30 days'` and
+  `dt > INTERVAL '1 month'` fail instead of treating a month as 30 days. The two kinds do not
+  compare, combine or add (`ym = dt`, `UNION`, `CASE`, `ym + dt`), as in Spark. A number is not
+  an interval: `ym = 14` fails, as `INTERVAL '14 months' = 14` does.
+- Casting to `INTERVAL` (`ym::INTERVAL`) opts into DuckDB's own `INTERVAL` semantics. Other
+  functions that take an `INTERVAL` accept either kind and apply DuckDB's rules: `epoch_us`
+  counts a year as 360 days and returns a `BIGINT`; multiplication and `avg` return a plain
+  `INTERVAL` and can introduce days into a year-month value (`INTERVAL '1 month' * 1.5` is
+  `1 month 15 days`). A `TIMESTAMPTZ + dt` across a daylight-saving change adds
+  elapsed time, where Spark adds wall-clock time.
+- `ym IN (SELECT ...)` and `ym = ANY (SELECT ...)` with a plain `INTERVAL` subquery fail with
+  `Unimplemented type for cast`: DuckDB plans the subquery side with its built-in casts only.
+  Cast one side (`ym::INTERVAL`, or the subquery's column to `INTERVAL_YEAR_MONTH`).
+- The two types exist only while delta is loaded, so they cannot be stored in a DuckDB table:
+  cast to `INTERVAL` first (`CREATE TABLE t AS SELECT ym::INTERVAL AS ym FROM ...`). DuckDB's own
+  parquet writer stores `INTERVAL` at millisecond precision and refuses negative values.
+- A window `RANGE` frame over an interval `ORDER BY` key takes a plain `INTERVAL` constant (or a
+  string) as offset, and it must fit the key's kind (`ORDER BY ym RANGE BETWEEN INTERVAL '1 month'
+  PRECEDING`); `INTERVAL '30 days'` there is refused, and so are a NULL offset, an offset typed as
+  a kind, a column and a typed parameter. A key computed from an interval (`ts + dt`) follows its own type.
+  For DuckDB's rules, cast the key to `INTERVAL` in a subquery and order by that column; a cast in
+  the window's own `ORDER BY` is not enough.
+- A filter on an interval partition column returns the right rows, but opens every file.
+- Writing to a table with an interval column, and creating one, are refused for now.
 
 ## Building
 

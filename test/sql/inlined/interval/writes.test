@@ -1,0 +1,50 @@
+# name: test/sql/inlined/interval/writes.test
+# description: writing Delta intervals is refused, at INSERT, CREATE TABLE, CREATE TABLE AS and COPY TO
+# group: [interval]
+
+require parquet
+
+require delta
+
+# DuckDB's parquet writer stores INTERVAL as FIXED_LEN_BYTE_ARRAY(12), which Spark cannot read; Spark stores INT32
+# months and INT64 micros
+
+statement ok
+ATTACH 'data/inlined/interval/spark_interval' AS iv (TYPE delta, READ_ONLY false);
+
+statement error
+INSERT INTO iv (id) VALUES (7);
+----
+Delta INSERT does not support column "ym" of type INTERVAL_YEAR_MONTH yet: writing Delta intervals is not implemented
+
+statement ok
+ATTACH '__TEST_DIR__/interval_create' AS created (TYPE delta);
+
+statement error
+CREATE TABLE created.created (x INTERVAL_DAY_TIME);
+----
+does not support column 'x' of type INTERVAL_DAY_TIME: writing Delta intervals is not supported yet
+
+statement error
+CREATE TABLE created.created (x INTERVAL);
+----
+does not support column 'x' of type INTERVAL: writing Delta intervals is not supported yet
+
+statement error
+CREATE TABLE created.created AS SELECT ym FROM iv;
+----
+does not support column 'ym' of type INTERVAL_YEAR_MONTH: writing Delta intervals is not supported yet
+
+statement error
+COPY (SELECT s FROM iv) TO '__TEST_DIR__/interval_copy' (FORMAT delta);
+----
+does not support column 's' of type STRUCT(n INTERVAL_YEAR_MONTH, gap INTERVAL_DAY_TIME) (it holds a INTERVAL_YEAR_MONTH): writing Delta intervals is not supported yet
+
+# A cast to a type Delta stores is the way out
+statement ok
+CREATE TABLE created.created AS SELECT id, ym::VARCHAR AS ym FROM iv;
+
+query II
+SELECT id, ym FROM created.created WHERE id = 1;
+----
+1	1 year 2 months

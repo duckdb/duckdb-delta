@@ -1,0 +1,523 @@
+# name: test/sql/inlined/interval/kinds.test
+# description: year-month and day-time values stay apart, as in Spark; a value of the other kind is refused, not converted at 30 days
+# group: [interval]
+
+require parquet
+
+require delta
+
+statement ok
+CREATE VIEW t AS FROM delta_scan('data/inlined/interval/spark_interval');
+
+# A plain INTERVAL (literal, string, parameter) takes the column's kind when it fits it
+
+query I
+SELECT id FROM t WHERE ym = INTERVAL '14 months';
+----
+1
+
+query I
+SELECT id FROM t WHERE ym = '1 year 2 months';
+----
+1
+
+query I
+SELECT id FROM t WHERE dt = INTERVAL '24 hours' OR dt = INTERVAL '1 day' ORDER BY id;
+----
+4
+
+query I
+SELECT id FROM t WHERE ym IN (INTERVAL '-1 month', INTERVAL '14 months') ORDER BY id;
+----
+1
+2
+
+statement ok
+PREPARE p AS SELECT id FROM t WHERE ym = ?;
+
+query I
+EXECUTE p(INTERVAL '14 months');
+----
+1
+
+statement error
+EXECUTE p(INTERVAL '30 days');
+----
+Cannot cast INTERVAL '30 days' to INTERVAL_YEAR_MONTH
+
+# A number is not an interval of either kind (Spark and DuckDB refuse INTERVAL = 14 too), whatever the storage unit
+
+statement error
+SELECT id FROM t WHERE ym = 14;
+----
+Cannot cast INTERVAL_YEAR_MONTH to INTEGER: a Delta interval is not a number
+
+statement error
+SELECT id FROM t WHERE dt = 86400000000;
+----
+Cannot cast INTERVAL_DAY_TIME to BIGINT: a Delta interval is not a number
+
+statement error
+SELECT id FROM t WHERE dt > 2000000000;
+----
+a Delta interval is not a number
+
+statement error
+SELECT id FROM t WHERE ym IN (14, -1);
+----
+a Delta interval is not a number
+
+statement error
+SELECT coalesce(ym, 0) FROM t;
+----
+a Delta interval is not a number
+
+statement error
+SELECT ym::INTEGER FROM t;
+----
+a Delta interval is not a number
+
+statement error
+SELECT ym FROM t UNION ALL SELECT 14;
+----
+a Delta interval is not a number
+
+statement error
+SELECT CASE WHEN id = 1 THEN ym ELSE 3 END FROM t;
+----
+a Delta interval is not a number
+
+statement ok
+PREPARE num AS SELECT id FROM t WHERE dt = ?;
+
+statement error
+EXECUTE num(86400000000);
+----
+a Delta interval is not a number
+
+# ... and is refused when it does not: DuckDB would compare a month as 30 days, Spark refuses the comparison
+
+statement error
+SELECT id FROM t WHERE ym = INTERVAL '30 days';
+----
+Cannot cast INTERVAL '30 days' to INTERVAL_YEAR_MONTH: a Delta year-month interval holds whole months only
+
+statement error
+SELECT id FROM t WHERE ym = '1 day';
+----
+Cannot cast INTERVAL '1 day' to INTERVAL_YEAR_MONTH
+
+statement error
+SELECT id FROM t WHERE dt > INTERVAL '1 month';
+----
+Cannot cast INTERVAL '1 month' to INTERVAL_DAY_TIME: a Delta day-time interval holds no months
+
+statement error
+SELECT id FROM t WHERE ym IN (INTERVAL '1 month', INTERVAL '30 days');
+----
+Cannot cast INTERVAL '30 days' to INTERVAL_YEAR_MONTH
+
+statement error
+SELECT coalesce(ym, INTERVAL '3 days') FROM t;
+----
+Cannot cast INTERVAL '3 days' to INTERVAL_YEAR_MONTH
+
+statement error
+SELECT l[1] = INTERVAL '1 hour' FROM t;
+----
+Cannot cast INTERVAL '01:00:00' to INTERVAL_YEAR_MONTH
+
+# The two kinds do not compare or combine
+
+statement error
+SELECT id FROM t WHERE ym = dt;
+----
+Cannot cast INTERVAL_DAY_TIME to INTERVAL_YEAR_MONTH: Delta keeps year-month and day-time intervals apart
+
+statement error
+SELECT ym FROM t UNION ALL SELECT dt FROM t;
+----
+Delta keeps year-month and day-time intervals apart
+
+statement error
+SELECT CASE WHEN id = 1 THEN ym ELSE dt END FROM t;
+----
+Cannot mix values of type INTERVAL_DAY_TIME and INTERVAL_YEAR_MONTH
+
+statement error
+SELECT ym::INTERVAL_DAY_TIME FROM t;
+----
+Cannot cast INTERVAL_YEAR_MONTH to INTERVAL_DAY_TIME
+
+# Casting to INTERVAL opts into DuckDB's INTERVAL semantics, where a month compares as 30 days
+
+query I
+SELECT id FROM t WHERE s.n::INTERVAL = INTERVAL '30 days';
+----
+1
+
+query I
+SELECT count(*) FROM (SELECT ym::INTERVAL AS v FROM t UNION ALL SELECT dt::INTERVAL FROM t) WHERE v IS NOT NULL;
+----
+10
+
+# + and - keep the kind: with the same kind, or with a plain INTERVAL that fits it
+
+query II
+SELECT ym + ym, typeof(ym + ym) FROM t WHERE id = 1;
+----
+2 years 4 months	INTERVAL_YEAR_MONTH
+
+query II
+SELECT dt - INTERVAL '1 hour', typeof(INTERVAL '1 day' + dt) FROM t WHERE id = 1;
+----
+75:05:06.789123	INTERVAL_DAY_TIME
+
+query I
+SELECT ym - INTERVAL '1 month' FROM t WHERE id = 1;
+----
+1 year 1 month
+
+# ... and refuse the other kind, or a plain INTERVAL that does not fit
+
+statement error
+SELECT ym + dt FROM t;
+----
+Cannot apply "+" to INTERVAL_YEAR_MONTH and INTERVAL_DAY_TIME: Delta keeps year-month and day-time intervals apart
+
+statement error
+SELECT dt - ym FROM t;
+----
+Cannot apply "-" to INTERVAL_DAY_TIME and INTERVAL_YEAR_MONTH
+
+statement error
+SELECT ym + INTERVAL '1 day' FROM t WHERE id = 1;
+----
+Cannot cast INTERVAL '1 day' to INTERVAL_YEAR_MONTH
+
+statement error
+SELECT INTERVAL '1 month' + dt FROM t WHERE id = 1;
+----
+Cannot cast INTERVAL '1 month' to INTERVAL_DAY_TIME
+
+query I
+SELECT s.n::INTERVAL - s.gap::INTERVAL = INTERVAL '29 days' FROM t WHERE id = 1;
+----
+true
+
+# Calendar arithmetic on dates and timestamps gives Spark's values (`DATE - ym` is a TIMESTAMP here, a DATE in Spark)
+query II
+SELECT TIMESTAMP '2024-01-31' + ym, DATE '2024-03-31' - s.n FROM t WHERE id = 1;
+----
+2025-03-31 00:00:00	2024-02-29 00:00:00
+
+# add() and subtract() are the same functions as + and -; unary minus keeps the kind
+
+statement error
+SELECT add(ym, dt) FROM t;
+----
+Cannot apply "add" to INTERVAL_YEAR_MONTH and INTERVAL_DAY_TIME
+
+statement error
+SELECT subtract(dt, ym) FROM t;
+----
+Cannot apply "subtract" to INTERVAL_DAY_TIME and INTERVAL_YEAR_MONTH
+
+query II
+SELECT add(ym, ym), -ym FROM t WHERE id = 1;
+----
+2 years 4 months	-1 year -2 months
+
+query I
+SELECT typeof(-dt) FROM t WHERE id = 1;
+----
+INTERVAL_DAY_TIME
+
+statement error
+SELECT -ym = INTERVAL '-420 days' FROM t;
+----
+Cannot cast INTERVAL '-420 days' to INTERVAL_YEAR_MONTH
+
+# A NULL of the other kind is refused like a value; an untyped NULL or a string takes the kind
+
+statement error
+SELECT ym + NULL::INTERVAL_DAY_TIME FROM t;
+----
+Cannot apply "+" to INTERVAL_YEAR_MONTH and INTERVAL_DAY_TIME
+
+statement error
+SELECT NULL::INTERVAL_YEAR_MONTH - dt FROM t;
+----
+Cannot apply "-" to INTERVAL_YEAR_MONTH and INTERVAL_DAY_TIME
+
+query III
+SELECT ym + NULL, ym - '1 month', typeof(ym - '1 month') FROM t WHERE id = 1;
+----
+NULL	1 year 1 month	INTERVAL_YEAR_MONTH
+
+statement error
+SELECT ym + '1 day' FROM t WHERE id = 1;
+----
+Cannot cast INTERVAL '1 day' to INTERVAL_YEAR_MONTH
+
+# Plain INTERVAL arithmetic is DuckDB's, with or without delta loaded
+query IIII
+SELECT INTERVAL '1 day' - NULL, INTERVAL '1 day' - '1 hour', -INTERVAL '1 month', add(INTERVAL '1 month', INTERVAL '1 day');
+----
+NULL	1 day -01:00:00	-1 month	1 month 1 day
+
+# A subquery result in IN / ANY is not combined with the kind (DuckDB plans it with the built-in casts only); cast one
+# side explicitly
+
+statement error
+SELECT id FROM t WHERE ym IN (SELECT INTERVAL '14 months');
+----
+Unimplemented type for cast (INTERVAL -> INTERVAL_YEAR_MONTH)
+
+query I
+SELECT id FROM t WHERE ym IN (SELECT INTERVAL '14 months'::INTERVAL_YEAR_MONTH);
+----
+1
+
+# A window RANGE offset over a kind key must be a constant that fits the kind (core would otherwise frame the key with
+# DuckDB's INTERVAL arithmetic, a month counting as 30 days)
+
+statement error
+SELECT id, count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW) FROM t;
+----
+Window RANGE offset over an ORDER BY key of type INTERVAL_YEAR_MONTH: Cannot cast INTERVAL '30 days' to INTERVAL_YEAR_MONTH
+
+statement error
+SELECT count(*) OVER (ORDER BY dt RANGE BETWEEN CURRENT ROW AND INTERVAL '1 month' FOLLOWING) FROM t;
+----
+Cannot cast INTERVAL '1 month' to INTERVAL_DAY_TIME
+
+# A typed offset (of either kind) is refused: give it as a plain INTERVAL or a string, which is checked
+
+statement error
+SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL_DAY_TIME '1 day' PRECEDING AND CURRENT ROW) FROM t;
+----
+the offset has type INTERVAL_DAY_TIME; give it as a plain INTERVAL constant or a string
+
+statement error
+SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL_YEAR_MONTH '1 month' PRECEDING AND CURRENT ROW) FROM t;
+----
+the offset has type INTERVAL_YEAR_MONTH
+
+statement error
+SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL '1 month' PRECEDING AND INTERVAL_YEAR_MONTH '0 months' FOLLOWING) FROM t;
+----
+the offset has type INTERVAL_YEAR_MONTH
+
+# A NULL offset is refused, typed or not (core would frame peers only, or fail on a day-time key)
+
+statement error
+SELECT count(*) OVER (ORDER BY dt RANGE BETWEEN NULL::INTERVAL_DAY_TIME PRECEDING AND CURRENT ROW) FROM t;
+----
+Window RANGE offset over an ORDER BY key of type INTERVAL_DAY_TIME: the offset must not be NULL
+
+statement error
+SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN NULL::INTERVAL_YEAR_MONTH PRECEDING AND CURRENT ROW) FROM t;
+----
+the offset must not be NULL
+
+statement error
+SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN CURRENT ROW AND NULL::INTERVAL FOLLOWING) FROM t;
+----
+the offset must not be NULL
+
+query I
+SELECT count(*) OVER (ORDER BY x RANGE BETWEEN NULL::INTERVAL PRECEDING AND CURRENT ROW) FROM (VALUES (INTERVAL '1 day')) v(x);
+----
+1
+
+# A column or a typed parameter as the offset is refused; an untyped parameter is checked at EXECUTE
+
+statement error
+SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN s.n::INTERVAL PRECEDING AND CURRENT ROW) FROM t;
+----
+the offset must be a constant (not a column or a parameter)
+
+statement error
+PREPARE typed AS SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN ?::INTERVAL PRECEDING AND CURRENT ROW) FROM t;
+----
+the offset must be a constant
+
+statement ok
+PREPARE untyped AS SELECT id, count(*) OVER (ORDER BY ym RANGE BETWEEN ? PRECEDING AND CURRENT ROW) c FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+
+query II
+EXECUTE untyped(INTERVAL '1 month');
+----
+1	1
+2	1
+4	2
+
+statement error
+EXECUTE untyped(INTERVAL '30 days');
+----
+Cannot cast INTERVAL '30 days' to INTERVAL_YEAR_MONTH
+
+# A string offset, and FOLLOWING bounds, are checked the same way
+query II
+SELECT id, count(*) OVER (ORDER BY ym RANGE BETWEEN '1 month' PRECEDING AND CURRENT ROW)
+FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	1
+2	1
+4	2
+
+query II
+SELECT id, count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL '1 month' FOLLOWING AND INTERVAL '20 years' FOLLOWING)
+FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	0
+2	2
+4	1
+
+statement error
+SELECT count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL '1 day' FOLLOWING AND INTERVAL '2 days' FOLLOWING) FROM t;
+----
+Cannot cast INTERVAL '1 day' to INTERVAL_YEAR_MONTH
+
+# A day-time key of 30 days or more (collated into months by core) with a plain offset
+query II
+SELECT id, count(*) OVER (ORDER BY dt RANGE BETWEEN INTERVAL '40 days' PRECEDING AND CURRENT ROW)
+FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	3
+2	1
+4	2
+
+# A key computed from a kind is not a kind, and is framed by its own type's rules
+query II
+SELECT id, count(*) OVER (ORDER BY TIMESTAMP '2024-01-01' + dt RANGE BETWEEN INTERVAL '1 month' PRECEDING AND CURRENT ROW)
+FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	3
+2	1
+4	2
+
+query II
+SELECT id, count(*) OVER (ORDER BY DATE '2024-01-01' + ym RANGE BETWEEN INTERVAL '3 days' PRECEDING AND CURRENT ROW)
+FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	1
+2	1
+4	1
+
+query II
+SELECT id, count(*) OVER (ORDER BY ym * 1.5 RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW)
+FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	1
+2	1
+4	1
+
+# A cast in the window's own ORDER BY is the same plan as the key's collation, so it is checked too
+statement error
+SELECT count(*) OVER (ORDER BY ym::INTERVAL RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW) FROM t;
+----
+Window RANGE offset over an ORDER BY key of type INTERVAL_YEAR_MONTH
+
+statement error
+SELECT id FROM (SELECT id, count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW) c FROM t) WHERE c > 0;
+----
+Window RANGE offset over an ORDER BY key of type INTERVAL_YEAR_MONTH
+
+statement error
+SELECT id FROM t QUALIFY count(*) OVER (ORDER BY ym RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW) > 1;
+----
+Window RANGE offset over an ORDER BY key of type INTERVAL_YEAR_MONTH
+
+query II
+SELECT id, count(*) OVER (ORDER BY ym DESC RANGE BETWEEN INTERVAL '1' MONTH * 2 PRECEDING AND CURRENT ROW)
+FROM t WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	1
+2	2
+4	1
+
+query II
+SELECT id, count(*) OVER (ORDER BY dt RANGE BETWEEN INTERVAL '1 day' PRECEDING AND CURRENT ROW)
+FROM t WHERE id IN (1, 4) ORDER BY id;
+----
+1	1
+4	1
+
+# DuckDB's rules: cast the key in a subquery (the window then orders a plain INTERVAL column)
+query II
+WITH c AS (SELECT id, ym::INTERVAL AS i FROM t)
+SELECT id, count(*) OVER (ORDER BY i RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW)
+FROM c WHERE id IN (1, 2, 4) ORDER BY id;
+----
+1	1
+2	1
+4	2
+
+query I
+SELECT count(*) OVER (ORDER BY x RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW) FROM (VALUES (INTERVAL '1 month')) v(x);
+----
+1
+
+# Other functions over INTERVAL take either kind and use DuckDB's rules: a DuckDB-only conversion of months to time
+# counts a year as 360 days in epoch_us, multiplication spills months into days, and the result is a plain INTERVAL
+
+query I
+SELECT epoch_us(y) FROM t WHERE id = 1;
+----
+62208000000000
+
+query II
+SELECT ym * 2, typeof(ym * 2) FROM t WHERE id = 1;
+----
+2 years 4 months	INTERVAL
+
+query I
+SELECT s.n * 1.5 FROM t WHERE id = 1;
+----
+1 month 15 days
+
+query I
+SELECT avg(ym) FROM t WHERE id IN (1, 2);
+----
+6 months 15 days
+
+# Plain INTERVAL keeps DuckDB's semantics with the extension loaded
+query I
+SELECT INTERVAL '1 month' = INTERVAL '30 days';
+----
+true
+
+# The type names cast like any type
+
+query III
+SELECT '1 year'::INTERVAL_YEAR_MONTH, '25 hours'::INTERVAL_DAY_TIME, INTERVAL '1 day'::INTERVAL_DAY_TIME;
+----
+1 year	25:00:00	24:00:00
+
+statement error
+SELECT '1 year 1 day'::INTERVAL_YEAR_MONTH;
+----
+Cannot cast INTERVAL '1 year 1 day' to INTERVAL_YEAR_MONTH
+
+query I
+SELECT TRY_CAST(INTERVAL '1 day' AS INTERVAL_YEAR_MONTH);
+----
+NULL
+
+# Only the total of a day-time value has to fit, not each field
+query I
+SELECT CAST(INTERVAL '106751992 days -24 hours' AS INTERVAL_DAY_TIME) = INTERVAL '106751991 days';
+----
+true
+
+query I
+SELECT CAST(INTERVAL '-106751992 days 24 hours' AS INTERVAL_DAY_TIME) = INTERVAL '-106751991 days';
+----
+true
+
+statement error
+SELECT CAST(INTERVAL '106751992 days' AS INTERVAL_DAY_TIME);
+----
+out of range for a Delta day-time interval

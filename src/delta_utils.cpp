@@ -1,4 +1,5 @@
 #include "delta_utils.hpp"
+#include "delta_interval.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/planner/filter/struct_filter.hpp"
 
@@ -455,14 +456,19 @@ void KernelExpressionVisitor::VisitColumnExpression(void *state, uintptr_t sibli
 	visitor->AppendToList(sibling_list_id, std::move(expression));
 }
 
+// Kernel hands interval literals (e.g. partition values) as the kind's storage value, months or micros. A parsed
+// INTERVAL constant would become a to_months(...) + ... function tree, so the literal is kept as a cast of the storage
+// value, which TryGetLiteralValue folds.
 void KernelExpressionVisitor::VisitIntervalYearMonthLiteral(void *state, uintptr_t sibling_list_id, int32_t months) {
-	static_cast<KernelExpressionVisitor *>(state)->error =
-	    ErrorData(ExceptionType::NOT_IMPLEMENTED, "Delta interval literals are not supported");
+	auto expression =
+	    make_uniq<CastExpression>(DeltaInterval::YearMonth(), ConstantExpression::FromValue(Value::INTEGER(months)));
+	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitIntervalDayTimeLiteral(void *state, uintptr_t sibling_list_id, int64_t micros) {
-	static_cast<KernelExpressionVisitor *>(state)->error =
-	    ErrorData(ExceptionType::NOT_IMPLEMENTED, "Delta interval literals are not supported");
+	auto expression =
+	    make_uniq<CastExpression>(DeltaInterval::DayTime(), ConstantExpression::FromValue(Value::BIGINT(micros)));
+	static_cast<KernelExpressionVisitor *>(state)->AppendToList(sibling_list_id, std::move(expression));
 }
 
 void KernelExpressionVisitor::VisitStructExpression(void *state, uintptr_t sibling_list_id, uintptr_t child_list_id) {
@@ -826,9 +832,10 @@ void KernelSchemaVisitor::RecordError(ExceptionType type, const string &message)
 	}
 }
 
-// A refused child (e.g. an interval element) records an error and appends nothing, so its list or map arrives
-// short. Skip the container and let the recorded refusal surface after visit_schema returns: this runs inside
-// kernel's `extern "C"` callback, where a throw (a failed D_ASSERT included) aborts the process.
+// A refused child records an error and appends nothing, so its list or map arrives short. Skip the container and let
+// the recorded refusal surface after visit_schema returns: this runs inside kernel's `extern "C"` callback, where a
+// throw (a failed D_ASSERT included) aborts the process. No type reaches this today (kernel refuses geometry, geography
+// and UDT schemas while their cargo features are off), so it is untested; it is the guard for when kernel parses one.
 bool KernelSchemaVisitor::HasChildren(ffi::KernelStringSlice name,
                                       const vector<DeltaMultiFileColumnDefinition> &children, idx_t expected) {
 	if (children.size() == expected) {
@@ -881,13 +888,21 @@ void KernelSchemaVisitor::SetRefusalError() {
 void KernelSchemaVisitor::VisitIntervalYearMonth(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                                  ffi::KernelStringSlice name, bool is_nullable,
                                                  const ffi::CMetadataMap *metadata) {
-	state->RefuseType(sibling_list_id, name, "interval year to month");
+	state->VisitTyped(sibling_list_id, name, is_nullable, metadata, DeltaInterval::YearMonth());
 }
 
 void KernelSchemaVisitor::VisitIntervalDayTime(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                                ffi::KernelStringSlice name, bool is_nullable,
                                                const ffi::CMetadataMap *metadata) {
-	state->RefuseType(sibling_list_id, name, "interval day to second");
+	state->VisitTyped(sibling_list_id, name, is_nullable, metadata, DeltaInterval::DayTime());
+}
+
+void KernelSchemaVisitor::VisitTyped(uintptr_t sibling_list_id, ffi::KernelStringSlice name, bool is_nullable,
+                                     const ffi::CMetadataMap *metadata, const LogicalType &type) {
+	DeltaMultiFileColumnDefinition col_def(KernelUtils::FromDeltaString(name), type, is_nullable);
+	col_def.default_expression = ConstantExpression::FromValue(Value(type));
+	ApplyDeltaColumnMapping(this, metadata, col_def);
+	AppendToList(sibling_list_id, name, std::move(col_def));
 }
 
 void KernelSchemaVisitor::VisitGeometry(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
@@ -1076,7 +1091,18 @@ bool KernelUtils::TryGetLiteralValue(const ParsedExpression &expr, Value &result
 		return false;
 	}
 	auto &cast = expr.Cast<CastExpression>();
-	if (cast.IsTryCast() || cast.Child().GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+	if (cast.IsTryCast()) {
+		return false;
+	}
+	// The Delta interval types are the extension's, which a default bind does not know. The storage value may itself
+	// be a cast, e.g. a negative BIGINT.
+	auto delta_interval = DeltaInterval::FromName(cast.TargetType().GetTypeName().GetIdentifierName());
+	if (delta_interval.id() != LogicalTypeId::INVALID) {
+		Value storage;
+		return TryGetLiteralValue(cast.Child(), storage) &&
+		       DeltaInterval::TryFromStorage(storage, delta_interval, result);
+	}
+	if (cast.Child().GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
 		return false;
 	}
 	auto target_type = UnboundType::TryDefaultBind(cast.TargetType());

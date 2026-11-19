@@ -83,14 +83,17 @@ static unique_ptr<FunctionData> DeltaScanDeserialize(Deserializer &deserializer,
 }
 
 // An extracted field is converted to its table type inside the parquet reader, out of reach of the rewrite that reads
-// a naive (e.g. INT96) timestamp as UTC, so a column with a timestamptz anywhere in it is read whole.
+// a naive (e.g. INT96) timestamp as UTC, and of the extension's casts that read a Delta interval's INT32 months or
+// INT64 micros (a filter on `s.gap` then fails or compares the raw number). So a column with a timestamptz or a
+// Delta interval anywhere in it is read whole.
 static bool DeltaScanSupportsPushdownExtract(const FunctionData &bind_data_p, const LogicalIndex &col_idx) {
 	auto &bind_data = bind_data_p.Cast<MultiFileBindData>();
 	auto &type = bind_data.columns[col_idx.index].type;
 	if (!StructType::IsStruct(type) && type.id() != LogicalTypeId::VARIANT) {
 		return false;
 	}
-	return !TypeVisitor::Contains(type, LogicalTypeId::TIMESTAMP_TZ);
+	return !TypeVisitor::Contains(type, LogicalTypeId::TIMESTAMP_TZ) &&
+	       !TypeVisitor::Contains(type, LogicalTypeId::INTERVAL);
 }
 
 TableFunctionSet DeltaFunctions::GetDeltaScanFunction(ExtensionLoader &loader) {

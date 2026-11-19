@@ -1,0 +1,53 @@
+# name: test/sql/inlined/interval/partitions.test
+# description: interval partition values come from the Delta log, typed by kind; a filter on them opens every file
+# group: [interval]
+
+require parquet
+
+require delta
+
+# Spark names the directories `ym=INTERVAL %271-2%27 YEAR TO MONTH`, a text DuckDB cannot parse, so the value is read
+# from the log's partitionValues only (kernel parses Spark's text)
+
+query II
+SELECT id, ym FROM delta_scan('data/inlined/interval/spark_interval_part_ym') ORDER BY id;
+----
+1	1 year 2 months
+2	-3 months
+3	NULL
+4	1 year 2 months
+
+query II
+SELECT id, dt FROM delta_scan('data/inlined/interval/spark_interval_part_dt') ORDER BY id;
+----
+1	26:03:04.5
+2	-00:00:00.000001
+3	NULL
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval_part_ym') WHERE ym = INTERVAL '14 months' ORDER BY id;
+----
+1
+4
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval_part_ym') WHERE ym IS NULL;
+----
+3
+
+query I
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval_part_dt') WHERE dt < INTERVAL '0 seconds';
+----
+2
+
+statement error
+SELECT id FROM delta_scan('data/inlined/interval/spark_interval_part_ym') WHERE ym = INTERVAL '-90 days';
+----
+Cannot cast INTERVAL '-90 days' to INTERVAL_YEAR_MONTH
+
+# Kernel does no data skipping on intervals and is handed no interval predicate, so every file is opened (each one's
+# row groups are still skipped on the footer's stats). Pinned so that pruning, when it comes, shows up here.
+query II
+EXPLAIN ANALYZE SELECT id FROM delta_scan('data/inlined/interval/spark_interval_part_ym') WHERE ym = INTERVAL '-3 months';
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 4.*

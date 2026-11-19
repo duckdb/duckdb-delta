@@ -1,6 +1,7 @@
 #include "functions/delta_scan/delta_multi_file_list.hpp"
 #include "functions/delta_scan/delta_multi_file_reader.hpp"
 #include "functions/delta_scan/delta_scan.hpp"
+#include "delta_interval.hpp"
 
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/type_visitor.hpp"
@@ -159,7 +160,8 @@ bool DeltaMultiFileReader::Bind(MultiFileOptions &options, MultiFileList &files,
 static constexpr const char *UNRESOLVABLE_PARTITION_KEY_PREFIX = "delta/";
 
 static bool ResolvePartitionFromPath(const LogicalType &type) {
-	return type.id() != LogicalTypeId::TIMESTAMP_TZ;
+	// An interval's directory name is Spark's text (`INTERVAL '1-2' YEAR TO MONTH`), which DuckDB cannot parse
+	return type.id() != LogicalTypeId::TIMESTAMP_TZ && type.id() != LogicalTypeId::INTERVAL;
 }
 
 void DeltaMultiFileReader::BindOptions(MultiFileOptions &options, MultiFileList &files,
@@ -226,19 +228,26 @@ static bool IsNaiveTimestamp(const LogicalType &type) {
 
 // A Delta `timestamp` is a UTC instant whatever its parquet type (Delta's PROTOCOL.md, Primitive Types), so a value
 // without the UTC flag, such as Spark's INT96, is reinterpreted, never converted through the session time zone. Inside
-// a struct, list or map the whole nested value takes the built-in casts.
-static void CastNaiveTimestampsAsUtc(unique_ptr<Expression> &expr) {
+// a struct, list or map the whole nested value takes the built-in casts, except interval kinds (see below).
+static void CastNaiveTimestampsAsUtc(ClientContext &context, unique_ptr<Expression> &expr) {
 	if (BoundCastExpression::IsCast(*expr)) {
 		auto &cast = expr->Cast<BoundFunctionExpression>();
 		auto target = BoundCastExpression::TargetType(cast);
 		if (TypeVisitor::Contains(BoundCastExpression::SourceType(cast), IsNaiveTimestamp) &&
 		    TypeVisitor::Contains(target, LogicalTypeId::TIMESTAMP_TZ)) {
-			expr = BoundCastExpression::AddDefaultCastToType(std::move(BoundCastExpression::ChildMutable(cast)), target,
-			                                                 BoundCastExpression::IsTryCast(cast));
+			// The default casts do not know the extension's storage -> interval kind casts, so a container that also
+			// holds an interval kind goes through the kind's storage type first, then the registered casts
+			auto storage = DeltaInterval::ToStorageType(target);
+			auto try_cast = BoundCastExpression::IsTryCast(cast);
+			expr = BoundCastExpression::AddDefaultCastToType(std::move(BoundCastExpression::ChildMutable(cast)),
+			                                                 storage, try_cast);
+			if (storage != target) {
+				expr = BoundCastExpression::AddCastToType(context, std::move(expr), target, try_cast);
+			}
 		}
 	}
-	ExpressionIterator::EnumerateChildren(*expr,
-	                                      [](unique_ptr<Expression> &child) { CastNaiveTimestampsAsUtc(child); });
+	ExpressionIterator::EnumerateChildren(
+	    *expr, [&](unique_ptr<Expression> &child) { CastNaiveTimestampsAsUtc(context, child); });
 }
 
 enum class DeltaColumnMappingPolicy { STRICT, LENIENT };
@@ -352,10 +361,10 @@ ReaderInitializeType DeltaMultiFileReader::InitializeReader(MultiFileReaderData 
 	auto result = CreateMapping(context, reader_data, overridden_global_columns, column_ids, table_filters,
 	                            gstate.file_list, bind_data.reader_bind, bind_data.virtual_columns, mapping_mode);
 	for (auto &expr : reader_data.expressions) {
-		CastNaiveTimestampsAsUtc(expr);
+		CastNaiveTimestampsAsUtc(context, expr);
 	}
 	for (auto &entry : reader_data.reader->expression_map) {
-		CastNaiveTimestampsAsUtc(entry.second.expression);
+		CastNaiveTimestampsAsUtc(context, entry.second.expression);
 	}
 	return result;
 }
