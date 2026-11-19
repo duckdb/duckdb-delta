@@ -13,6 +13,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true
 
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
 jobs:
   prepare:
     runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-slim' || 'ubuntu-slim' }}
@@ -24,44 +29,35 @@ jobs:
         id: runners
         uses: duckdb/duckdb-ci/detect-runners@main
 
-  # TODO: switch extension-ci-tools to v2.0 when ready
-  duckdb-stable-build:
-    name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+  build:
+    name: Build extension
     needs: prepare
-    secrets: inherit # required for writing to vcpkg binary cache
+    uses: duckdb/extension-ci-tools/.github/workflows/build.yml@main
     with:
-      # Main config
-      extension_name: &ext_name delta
-      ci_tools_version: &ci_tools_ref main
+      groups: |
+        main:
+          config: extension_config.cmake
+          toolchain: rust
       runners: ${{ needs.prepare.outputs.runners }}
-      enable_rust: true
-      exclude_archs: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl'
 
-      # Config to write vcpkg binary cache
-      extra_toolchains: ${{ github.event_name != 'pull_request' && ';downgraded_aws_cli;python3;' || 'python3' }}
-      save_cache: ${{ github.event_name != 'pull_request' }}
-      vcpkg_binary_sources: ${{ github.event_name != 'pull_request' && vars.VCPKG_BINARY_SOURCES || '' }}
-      reduced_ci_mode: ${{ github.event_name == 'pull_request' && 'enabled' || 'disabled'}}
-
-  duckdb-stable-deploy:
-    name: Deploy extension binaries
-    needs: duckdb-stable-build
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@main
+  deploy:
+    name: Deploy extension
+    needs: build
+    uses: duckdb/extension-ci-tools/.github/workflows/deploy.yml@main
     secrets: inherit
     with:
-      extension_name: *ext_name
-      ci_tools_version: *ci_tools_ref
-      exclude_archs: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw;linux_amd64_musl"
+      duckdb_version: ${{ needs.build.outputs.duckdb_version }}
+      duckdb_commit: ${{ needs.build.outputs.duckdb_commit }}
+      deploy_extensions: delta
       deploy_latest: ${{ startsWith(github.ref, 'refs/heads/v') || github.ref == 'refs/heads/main' }}
       deploy_versioned: ${{ startsWith(github.ref, 'refs/heads/v') || github.ref == 'refs/heads/main' }}
-      reduced_ci_mode: ${{ github.event_name == 'pull_request' && 'enabled' || 'disabled'}}
 
   code-quality-check:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
     with:
-      extension_name: *ext_name
-      ci_tools_version: *ci_tools_ref
+      extension_name: delta
+      ci_tools_version: main
       format_checks: format
       extra_toolchains: "python3"

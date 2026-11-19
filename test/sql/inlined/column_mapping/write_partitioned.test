@@ -64,7 +64,7 @@ WHERE name LIKE 'col-%' AND field_id IS NOT NULL;
 
 # Each partition gets a directory of its own, named part- and 16 hex digits, never after the column
 query II
-SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/duckdb_[^/]*\.parquet$', 1))
+SELECT count(*), count(DISTINCT regexp_extract(replace(file, chr(92), '/'), '/(part-[0-9a-f]{16})/duckdb_[^/]*\.parquet$', 1))
 FROM glob('{TEMP_DIR}/cm_part_${mode}/**/*.parquet');
 ----
 4	4
@@ -74,7 +74,7 @@ statement ok
 INSERT INTO part.part VALUES (5, 'a', 50);
 
 query II
-SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/', 1))
+SELECT count(*), count(DISTINCT regexp_extract(replace(file, chr(92), '/'), '/(part-[0-9a-f]{16})/', 1))
 FROM glob('{TEMP_DIR}/cm_part_${mode}/**/*.parquet');
 ----
 5	4
@@ -233,7 +233,7 @@ SELECT count(*) > 3 FROM glob('{TEMP_DIR}/cm_part_many/**/*.parquet');
 true
 
 query I
-SELECT count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/', 1)) FROM glob('{TEMP_DIR}/cm_part_many/**/*.parquet');
+SELECT count(DISTINCT regexp_extract(replace(file, chr(92), '/'), '/(part-[0-9a-f]{16})/', 1)) FROM glob('{TEMP_DIR}/cm_part_many/**/*.parquet');
 ----
 3
 
