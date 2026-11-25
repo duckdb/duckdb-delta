@@ -29,6 +29,14 @@ public:
 	//! VisitField checks before it lowers a type and CTAS checks before it writes anything
 	static optional_ptr<const LogicalType> FindUnsupportedType(const LogicalType &type);
 
+	//! The most digits a Delta decimal can have. The protocol's limit, and kernel's: its DecimalType takes the
+	//! precision as a u8 and refuses more than 38. DuckDB's own DECIMAL can be wider than that.
+	static constexpr idx_t MAX_DECIMAL_PRECISION = 38;
+
+	//! The precision of DECIMAL `type` as kernel takes it. Throws for a decimal wider than Delta has, so that a
+	//! precision is never narrowed into a different, valid one on its way into kernel's u8.
+	static uint8_t DecimalPrecision(const LogicalType &type);
+
 	//! Errors are stashed rather than thrown, since Build() is invoked by kernel across the FFI
 	//! boundary. The caller must check this after the consuming FFI call returns.
 	const ErrorData &GetError() const {

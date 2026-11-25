@@ -1360,10 +1360,16 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const vector<string> &col_path, 
 		break;
 	}
 	case LogicalTypeId::DECIMAL: {
-		auto precision = DecimalType::GetWidth(value.type());
 		auto scale = DecimalType::GetScale(value.type());
 		uint64_t value_hi, value_lo;
 		auto phys = value.type().InternalType();
+		// Kernel takes a decimal literal as a 128-bit integer with a u8 precision of at most 38 digits. A DuckDB
+		// decimal can be wider than that, and is then not stored as an integer at all. No Delta column has such a
+		// type, so there is nothing to prune on: the filter is not pushed down and DuckDB evaluates it.
+		if (DecimalType::GetWidth(value.type()) > Decimal::MAX_WIDTH_DECIMAL) {
+			return ~0;
+		}
+		auto precision = UnsafeNumericCast<uint8_t>(DecimalType::GetWidth(value.type()));
 		if (phys == PhysicalType::INT128) {
 			auto h = value.GetValueUnsafe<hugeint_t>();
 			value_hi = (uint64_t)h.upper;
@@ -1374,8 +1380,10 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const vector<string> &col_path, 
 				v = value.GetValueUnsafe<int16_t>();
 			} else if (phys == PhysicalType::INT32) {
 				v = value.GetValueUnsafe<int32_t>();
-			} else {
+			} else if (phys == PhysicalType::INT64) {
 				v = value.GetValueUnsafe<int64_t>();
+			} else {
+				return ~0;
 			}
 			value_hi = v < 0 ? UINT64_MAX : 0ULL;
 			value_lo = (uint64_t)v;

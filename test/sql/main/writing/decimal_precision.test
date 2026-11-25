@@ -1,0 +1,121 @@
+# name: test/sql/main/writing/decimal_precision.test
+# description: Delta decimals end at 38 digits of precision: the widest one round-trips, and a value that does not fit is refused
+# group: [writing]
+
+require parquet
+
+require delta
+
+require notwindows
+
+statement ok
+ATTACH '{TEMP_DIR}/decimal_precision_widest' AS widest (TYPE delta);
+
+statement ok
+ATTACH '{TEMP_DIR}/decimal_precision_huge' AS huge (TYPE delta);
+
+# -----------------------------------------------------------------------------
+# The widest decimal Delta has, with the largest and smallest value it holds
+#
+
+statement ok
+CREATE TABLE widest.widest (id INTEGER, d DECIMAL(38, 0), s DECIMAL(38, 10));
+
+statement ok
+INSERT INTO widest.widest VALUES
+    (1, 99999999999999999999999999999999999999, 9999999999999999999999999999.9999999999),
+    (2, -99999999999999999999999999999999999999, -9999999999999999999999999999.9999999999),
+    (3, 0, 0);
+
+query III
+SELECT id, d, s FROM widest.widest ORDER BY id;
+----
+1	99999999999999999999999999999999999999	9999999999999999999999999999.9999999999
+2	-99999999999999999999999999999999999999	-9999999999999999999999999999.9999999999
+3	0	0.0000000000
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'widest' ORDER BY column_index;
+----
+id	INTEGER
+d	DECIMAL(38,0)
+s	DECIMAL(38,10)
+
+# A filter on the widest decimal, with a 38 digit constant, is pushed to kernel as a 128-bit literal
+query I
+SELECT id FROM widest.widest WHERE d = 99999999999999999999999999999999999999;
+----
+1
+
+query I
+SELECT id FROM widest.widest WHERE d < -99999999999999999999999999999999999998;
+----
+2
+
+query I
+SELECT id FROM widest.widest WHERE s >= 9999999999999999999999999999.9999999999;
+----
+1
+
+# -----------------------------------------------------------------------------
+# HUGEINT and UHUGEINT hold more than 38 digits, so Delta has no type for them: the cast to the widest decimal is
+# the user's, and a value that does not fit it is an error, not a wrapped or truncated decimal
+#
+
+statement error
+CREATE TABLE huge.huge (h HUGEINT);
+----
+does not support column 'h' of type HUGEINT
+
+statement error
+CREATE TABLE huge.huge AS SELECT 1::HUGEINT AS h;
+----
+does not support column 'h' of type HUGEINT: Delta has no such type. Cast the column in the query
+
+# 10^38 has 39 digits. The values come from a scan, so the casts run with the insert rather than being folded.
+statement error
+INSERT INTO widest.widest SELECT 4, 100000000000000000000000000000000000000::HUGEINT + range, 0 FROM range(1);
+----
+Could not cast value 100000000000000000000000000000000000000 to DECIMAL(38,0)
+
+statement error
+INSERT INTO widest.widest SELECT 4, -100000000000000000000000000000000000000::HUGEINT - range, 0 FROM range(1);
+----
+Could not cast value -100000000000000000000000000000000000000 to DECIMAL(38,0)
+
+statement error
+INSERT INTO widest.widest SELECT 4, 340282366920938463463374607431768211455::UHUGEINT - range::UHUGEINT, 0 FROM range(1);
+----
+Could not cast value 340282366920938463463374607431768211455 to DECIMAL(38,0)
+
+# One value out of range among many refuses the whole insert
+statement error
+INSERT INTO widest.widest SELECT 4, 99999999999999999999999999999999999990::HUGEINT + range, 0 FROM range(20);
+----
+Could not cast value 100000000000000000000000000000000000000 to DECIMAL(38,0)
+
+statement error
+CREATE TABLE huge.huge AS SELECT 170141183460469231731687303715884105727::HUGEINT::DECIMAL(38, 0) AS h;
+----
+Conversion Error
+
+# A value with more integer digits than the scale leaves room for
+statement error
+INSERT INTO widest.widest SELECT 4, 0, 99999999999999999999999999999::DECIMAL(38, 0) + range FROM range(1);
+----
+Conversion Error
+
+# Nothing of the refused inserts was committed
+query I
+SELECT count(*) FROM widest.widest;
+----
+3
+
+# The largest HUGEINT that does fit
+statement ok
+INSERT INTO widest.widest SELECT 4, 99999999999999999999999999999999999999::HUGEINT - range, 0 FROM range(1);
+
+query II
+SELECT id, d FROM widest.widest WHERE id = 4;
+----
+4	99999999999999999999999999999999999999
