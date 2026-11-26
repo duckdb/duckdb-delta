@@ -62,7 +62,7 @@ FROM parquet_schema('{TEMP_DIR}/ctas_part_${mode}/*/*.parquet');
 
 # Each partition gets a directory of its own, named part- and 16 hex digits, never after the column
 query II
-SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/duckdb_[^/]*\.parquet$', 1))
+SELECT count(*), count(DISTINCT regexp_extract(replace(file, chr(92), '/'), '/(part-[0-9a-f]{16})/duckdb_[^/]*\.parquet$', 1))
 FROM glob('{TEMP_DIR}/ctas_part_${mode}/**/*.parquet');
 ----
 4	4
@@ -72,7 +72,7 @@ statement ok
 INSERT INTO part.part VALUES (5, 'a', 50);
 
 query II
-SELECT count(*), count(DISTINCT regexp_extract(file, '/(part-[0-9a-f]{16})/', 1))
+SELECT count(*), count(DISTINCT regexp_extract(replace(file, chr(92), '/'), '/(part-[0-9a-f]{16})/', 1))
 FROM glob('{TEMP_DIR}/ctas_part_${mode}/**/*.parquet');
 ----
 5	4

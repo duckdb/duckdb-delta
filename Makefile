@@ -42,6 +42,15 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 # Include the Makefile from the benchmark directory
 include benchmark/benchmark.Makefile
 
+ifneq ($(CI_EXTENSION_ARTIFACT_DIR),)
+# Artifact tests restore binaries, so fetch the kernel fixtures without rebuilding Rust.
+test_release: prepare_ci_test_data
+
+.PHONY: prepare_ci_test_data
+prepare_ci_test_data:
+	python3 scripts/prepare_ci_test_data.py
+endif
+
 # Generate some test data to test with
 # Note: make sure the JAVA_HOME var is set correctly and a venv is configured, e.g:
 #   python3 -m venv venv
