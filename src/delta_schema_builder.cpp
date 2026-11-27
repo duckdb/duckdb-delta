@@ -37,9 +37,10 @@ optional_ptr<const LogicalType> DeltaSchemaBuilder::FindUnsupportedType(const Lo
 	case LogicalTypeId::DATE:
 	case LogicalTypeId::TIMESTAMP_TZ:
 	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::DECIMAL:
 	case LogicalTypeId::VARIANT:
 		return nullptr;
+	case LogicalTypeId::DECIMAL:
+		return DeltaDecimal::IsSupported(type) ? nullptr : &type;
 	case LogicalTypeId::STRUCT:
 		for (auto &child : StructType::GetChildTypes(type)) {
 			auto result = FindUnsupportedType(child.second);
@@ -70,8 +71,9 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 	if (unsupported) {
 		auto nested =
 		    unsupported.get() == &type ? string() : StringUtil::Format(" (it holds a %s)", unsupported->ToString());
-		throw NotImplementedException("Delta CREATE TABLE does not support column '%s' of type %s%s", name,
-		                              type.ToString(), nested);
+		auto reason = unsupported->id() == LogicalTypeId::DECIMAL ? ": " + DeltaDecimal::LimitMessage() : string();
+		throw NotImplementedException("Delta CREATE TABLE does not support column '%s' of type %s%s%s", name,
+		                              type.ToString(), nested, reason);
 	}
 
 	// Mirrors SchemaVisitor's kernel->DuckDB mapping, so a create/read round trip is lossless.
@@ -101,7 +103,7 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 	case LogicalTypeId::TIMESTAMP:
 		return Unpack(ffi::visit_field_timestamp_ntz(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::DECIMAL:
-		return Unpack(ffi::visit_field_decimal(state, name_slice, DecimalType::GetWidth(type),
+		return Unpack(ffi::visit_field_decimal(state, name_slice, DeltaDecimal::Precision(type),
 		                                       DecimalType::GetScale(type), nullable, nullptr, allocate_error));
 	case LogicalTypeId::VARIANT: {
 		// Delta declares a variant by its unshredded physical struct (metadata, value) no matter how files

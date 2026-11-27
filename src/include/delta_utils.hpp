@@ -55,6 +55,22 @@ struct DeltaLogPathArray {
 //   NONE -> resolve by display (logical) name
 enum class DeltaColumnMappingMode { NONE, ID, NAME };
 
+//! Delta decimals have at most 38 digits of precision (PROTOCOL.md, "Primitive Types": "The precision and scale can
+//! be up to 38"). Kernel enforces that limit and takes precision and scale as a u8; DuckDB's DECIMAL can be wider.
+struct DeltaDecimal {
+	static constexpr idx_t MAX_PRECISION = 38;
+
+	//! Whether DECIMAL `type` fits a Delta decimal
+	static bool IsSupported(const LogicalType &type);
+	//! Whether a precision and scale that kernel hands over form a Delta decimal
+	static bool IsSupported(idx_t precision, idx_t scale);
+	//! The precision of DECIMAL `type` as kernel takes it. Throws for a decimal Delta cannot have, so that a precision
+	//! is never narrowed into a different, valid one on its way into kernel's u8.
+	static uint8_t Precision(const LogicalType &type);
+	//! The reason a decimal Delta cannot have is refused, without a trailing period
+	static string LimitMessage();
+};
+
 struct KernelUtils {
 	// LogicalType of the delta_scan `log_tail` parameter: the catalog's ratified-but-unbackfilled commits.
 	static LogicalType GetLogPathType();
@@ -454,6 +470,9 @@ private:
 	ErrorData error;
 	//! The refused type, its path from the top-level column down, and the field list its outermost part is in
 	string refused_type;
+	//! Why it is refused, and as which error
+	string refused_reason;
+	ExceptionType refused_exception = ExceptionType::NOT_IMPLEMENTED;
 	vector<string> refused_path;
 	uintptr_t refused_list_id = 0;
 
@@ -642,8 +661,11 @@ private:
 	//! Appends a column of a type with no visitor of its own
 	void VisitTyped(uintptr_t sibling_list_id, ffi::KernelStringSlice name, bool is_nullable,
 	                const ffi::CMetadataMap *metadata, const LogicalType &type);
-	//! Records that a column has a type DuckDB cannot read yet, unless an error is recorded already
-	void RefuseType(uintptr_t sibling_list_id, ffi::KernelStringSlice name, const string &type_name);
+	//! Records that a column has a type DuckDB cannot read yet, or the given reason and error type, unless an error is
+	//! recorded already
+	void RefuseType(uintptr_t sibling_list_id, ffi::KernelStringSlice name, const string &type_name,
+	                const string &reason = "which DuckDB cannot read yet",
+	                ExceptionType exception = ExceptionType::NOT_IMPLEMENTED);
 	//! Prepends a container's name to the refused field's path when the refusal is among its children
 	void ExtendRefusedPath(uintptr_t child_list_id, uintptr_t sibling_list_id, ffi::KernelStringSlice name,
 	                       bool list_or_map);
