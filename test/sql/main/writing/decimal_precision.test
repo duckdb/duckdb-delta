@@ -1,5 +1,5 @@
 # name: test/sql/main/writing/decimal_precision.test
-# description: Delta decimals end at 38 digits of precision: the widest one round-trips, and a value that does not fit is refused
+# description: Delta decimals end at 38 digits of precision: the widest one round-trips, filters and partitions, a value that does not fit is refused, and a wider type is never created
 # group: [writing]
 
 require parquet
@@ -21,11 +21,15 @@ ATTACH '{TEMP_DIR}/decimal_precision_huge' AS huge (TYPE delta);
 statement ok
 CREATE TABLE widest.widest (id INTEGER, d DECIMAL(38, 0), s DECIMAL(38, 10));
 
+# One file per row, so the plans below show whether a filter reached kernel's file skipping
 statement ok
-INSERT INTO widest.widest VALUES
-    (1, 99999999999999999999999999999999999999, 9999999999999999999999999999.9999999999),
-    (2, -99999999999999999999999999999999999999, -9999999999999999999999999999.9999999999),
-    (3, 0, 0);
+INSERT INTO widest.widest VALUES (1, 99999999999999999999999999999999999999, 9999999999999999999999999999.9999999999);
+
+statement ok
+INSERT INTO widest.widest VALUES (2, -99999999999999999999999999999999999999, -9999999999999999999999999999.9999999999);
+
+statement ok
+INSERT INTO widest.widest VALUES (3, 0, 0);
 
 query III
 SELECT id, d, s FROM widest.widest ORDER BY id;
@@ -41,21 +45,36 @@ id	INTEGER
 d	DECIMAL(38,0)
 s	DECIMAL(38,10)
 
-# A filter on the widest decimal, with a 38 digit constant, is pushed to kernel as a 128-bit literal
+# A 38 digit constant reaches kernel as a 128-bit literal and skips the files that cannot match
 query I
 SELECT id FROM widest.widest WHERE d = 99999999999999999999999999999999999999;
 ----
 1
+
+query II
+EXPLAIN ANALYZE SELECT id FROM widest.widest WHERE d = 99999999999999999999999999999999999999;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/3.*
 
 query I
 SELECT id FROM widest.widest WHERE d < -99999999999999999999999999999999999998;
 ----
 2
 
+query II
+EXPLAIN ANALYZE SELECT id FROM widest.widest WHERE d < -99999999999999999999999999999999999998;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/3.*
+
 query I
 SELECT id FROM widest.widest WHERE s >= 9999999999999999999999999999.9999999999;
 ----
 1
+
+query II
+EXPLAIN ANALYZE SELECT id FROM widest.widest WHERE s >= 9999999999999999999999999999.9999999999;
+----
+analyzed_plan	<REGEX>:.*Scanning Files: 1/3.*
 
 # -----------------------------------------------------------------------------
 # HUGEINT and UHUGEINT hold more than 38 digits, so Delta has no type for them: the cast to the widest decimal is
@@ -66,6 +85,11 @@ statement error
 CREATE TABLE huge.huge (h HUGEINT);
 ----
 does not support column 'h' of type HUGEINT
+
+statement error
+CREATE TABLE huge.huge (u UHUGEINT);
+----
+does not support column 'u' of type UHUGEINT
 
 statement error
 CREATE TABLE huge.huge AS SELECT 1::HUGEINT AS h;
@@ -119,3 +143,147 @@ query II
 SELECT id, d FROM widest.widest WHERE id = 4;
 ----
 4	99999999999999999999999999999999999999
+
+# -----------------------------------------------------------------------------
+# Decimal partition columns, the widest and one of 18 digits (kernel hands those back as 64-bit literals). CREATE
+# and INSERT write and read the partition values; CREATE TABLE AS and COPY TO also declare the partition values of
+# the new table, as typed NULLs, and with column mapping as markers.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/decimal_precision_part' AS part (TYPE delta);
+
+statement ok
+CREATE TABLE part.part (id INTEGER, p DECIMAL(38, 10), q DECIMAL(18, 4)) PARTITIONED BY (p, q)
+WITH ('delta.columnMapping.mode' = 'name');
+
+statement ok
+INSERT INTO part.part VALUES
+    (1, 9999999999999999999999999999.9999999999, 99999999999999.9999),
+    (2, -9999999999999999999999999999.9999999999, -99999999999999.9999),
+    (3, NULL, NULL);
+
+query III
+SELECT id, p, q FROM part.part ORDER BY id;
+----
+1	9999999999999999999999999999.9999999999	99999999999999.9999
+2	-9999999999999999999999999999.9999999999	-99999999999999.9999
+3	NULL	NULL
+
+query I
+SELECT id FROM part.part WHERE p < 0;
+----
+2
+
+statement ok
+ATTACH '{TEMP_DIR}/decimal_precision_part_ctas' AS part_ctas (TYPE delta);
+
+statement ok
+CREATE TABLE part_ctas.part_ctas PARTITIONED BY (p, q) AS
+SELECT 1 AS id, 12345678901234567890123456789012345678::DECIMAL(38, 0) AS p, -99999999999999.9999::DECIMAL(18, 4) AS q
+UNION ALL SELECT 2, NULL, NULL;
+
+query III
+SELECT id, p, q FROM part_ctas.part_ctas ORDER BY id;
+----
+1	12345678901234567890123456789012345678	-99999999999999.9999
+2	NULL	NULL
+
+statement ok
+ATTACH '{TEMP_DIR}/decimal_precision_part_ctas_mapped' AS part_ctas_mapped (TYPE delta);
+
+statement ok
+CREATE TABLE part_ctas_mapped.part_ctas_mapped PARTITIONED BY (p, q) WITH ('delta.columnMapping.mode' = 'name') AS
+SELECT 1 AS id, 12345678901234567890123456789012345678::DECIMAL(38, 0) AS p, -99999999999999.9999::DECIMAL(18, 4) AS q
+UNION ALL SELECT 2, NULL, NULL;
+
+query III
+SELECT id, p, q FROM part_ctas_mapped.part_ctas_mapped ORDER BY id;
+----
+1	12345678901234567890123456789012345678	-99999999999999.9999
+2	NULL	NULL
+
+statement ok
+COPY (SELECT 1 AS id, 9999999999999999999999999999.9999999999::DECIMAL(38, 10) AS p)
+TO '{TEMP_DIR}/decimal_precision_copy' (FORMAT delta, PARTITION_BY (p), WITH_PROPERTIES {'delta.columnMapping.mode': 'name'});
+
+query II
+SELECT id, p FROM delta_scan('{TEMP_DIR}/decimal_precision_copy');
+----
+1	9999999999999999999999999999.9999999999
+
+# -----------------------------------------------------------------------------
+# The widest decimal below the top level
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/decimal_precision_nested' AS nested (TYPE delta);
+
+statement ok
+CREATE TABLE nested.nested (s STRUCT(d DECIMAL(38, 10)), l DECIMAL(38, 0)[], m MAP(DECIMAL(38, 0), DECIMAL(38, 10)));
+
+statement ok
+INSERT INTO nested.nested VALUES ({'d': -9999999999999999999999999999.9999999999}, [99999999999999999999999999999999999999],
+    MAP {-99999999999999999999999999999999999999: 9999999999999999999999999999.9999999999});
+
+query III
+SELECT s, l, m FROM nested.nested;
+----
+{'d': -9999999999999999999999999999.9999999999}	[99999999999999999999999999999999999999]	{-99999999999999999999999999999999999999=9999999999999999999999999999.9999999999}
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'nested' ORDER BY column_index;
+----
+s	STRUCT(d DECIMAL(38,10))
+l	DECIMAL(38,0)[]
+m	MAP(DECIMAL(38,0), DECIMAL(38,10))
+
+# -----------------------------------------------------------------------------
+# A decimal wider than 38 digits never becomes a Delta column, at any depth, and nothing is written. A DuckDB with
+# decimals of 38 digits at most refuses the type when it binds it; a DuckDB with wider decimals binds it, and Delta
+# refuses it. Both errors are accepted until the DuckDB this extension is built with has wide decimals.
+#
+
+statement ok
+ATTACH '{TEMP_DIR}/decimal_precision_wide' AS wide (TYPE delta);
+
+statement error
+CREATE TABLE wide.wide (d DECIMAL(39, 2));
+----
+<REGEX>:.*(DECIMAL type width must be between 1 and 38|Delta decimals support at most 38 digits of precision).*
+
+# 266 is 10 modulo 256: without the check, kernel would take the precision as 10
+statement error
+CREATE TABLE wide.wide (d DECIMAL(266, 2));
+----
+<REGEX>:.*(does not accept type parameters|Delta decimals support at most 38 digits of precision).*
+
+statement error
+CREATE TABLE wide.wide (s STRUCT(d DECIMAL(39, 2)), m MAP(VARCHAR, DECIMAL(39, 0)[]));
+----
+<REGEX>:.*(DECIMAL type width must be between 1 and 38|Delta decimals support at most 38 digits of precision).*
+
+statement error
+CREATE TABLE wide.wide (id INTEGER, p DECIMAL(39, 2)) PARTITIONED BY (p);
+----
+<REGEX>:.*(DECIMAL type width must be between 1 and 38|Delta decimals support at most 38 digits of precision).*
+
+statement error
+CREATE TABLE wide.wide AS SELECT 1::DECIMAL(39, 2) AS d;
+----
+<REGEX>:.*(DECIMAL type width must be between 1 and 38|Delta decimals support at most 38 digits of precision).*
+
+statement error
+COPY (SELECT 1::DECIMAL(39, 2) AS d) TO '{TEMP_DIR}/decimal_precision_wide_copy' (FORMAT delta);
+----
+<REGEX>:.*(DECIMAL type width must be between 1 and 38|Delta decimals support at most 38 digits of precision).*
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/decimal_precision_wide/**');
+----
+0
+
+query I
+SELECT count(*) FROM glob('{TEMP_DIR}/decimal_precision_wide_copy/**');
+----
+0

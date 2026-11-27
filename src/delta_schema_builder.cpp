@@ -40,8 +40,7 @@ optional_ptr<const LogicalType> DeltaSchemaBuilder::FindUnsupportedType(const Lo
 	case LogicalTypeId::VARIANT:
 		return nullptr;
 	case LogicalTypeId::DECIMAL:
-		// Delta decimals end at 38 digits; DuckDB's can be wider
-		return DecimalType::GetWidth(type) > MAX_DECIMAL_PRECISION ? &type : nullptr;
+		return DeltaDecimal::IsSupported(type) ? nullptr : &type;
 	case LogicalTypeId::STRUCT:
 		for (auto &child : StructType::GetChildTypes(type)) {
 			auto result = FindUnsupportedType(child.second);
@@ -61,17 +60,6 @@ optional_ptr<const LogicalType> DeltaSchemaBuilder::FindUnsupportedType(const Lo
 	}
 }
 
-constexpr idx_t DeltaSchemaBuilder::MAX_DECIMAL_PRECISION;
-
-uint8_t DeltaSchemaBuilder::DecimalPrecision(const LogicalType &type) {
-	D_ASSERT(type.id() == LogicalTypeId::DECIMAL);
-	if (DecimalType::GetWidth(type) > MAX_DECIMAL_PRECISION) {
-		throw InvalidInputException("Delta decimals support at most %llu digits of precision, got %s",
-		                            MAX_DECIMAL_PRECISION, type.ToString());
-	}
-	return UnsafeNumericCast<uint8_t>(DecimalType::GetWidth(type));
-}
-
 uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, const string &name,
                                          const LogicalType &type, bool nullable) {
 	auto name_slice = KernelUtils::ToDeltaString(name);
@@ -81,14 +69,11 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 	// FindUnsupportedType is the one list of the types Delta can store; every type it accepts has a case below
 	auto unsupported = FindUnsupportedType(type);
 	if (unsupported) {
-		if (unsupported->id() == LogicalTypeId::DECIMAL) {
-			// Throws: the only decimals FindUnsupportedType refuses are the ones wider than Delta has
-			DecimalPrecision(*unsupported);
-		}
 		auto nested =
 		    unsupported.get() == &type ? string() : StringUtil::Format(" (it holds a %s)", unsupported->ToString());
-		throw NotImplementedException("Delta CREATE TABLE does not support column '%s' of type %s%s", name,
-		                              type.ToString(), nested);
+		auto reason = unsupported->id() == LogicalTypeId::DECIMAL ? ": " + DeltaDecimal::LimitMessage() : string();
+		throw NotImplementedException("Delta CREATE TABLE does not support column '%s' of type %s%s%s", name,
+		                              type.ToString(), nested, reason);
 	}
 
 	// Mirrors SchemaVisitor's kernel->DuckDB mapping, so a create/read round trip is lossless.
@@ -118,8 +103,8 @@ uintptr_t DeltaSchemaBuilder::VisitField(ffi::KernelSchemaVisitorState *state, c
 	case LogicalTypeId::TIMESTAMP:
 		return Unpack(ffi::visit_field_timestamp_ntz(state, name_slice, nullable, nullptr, allocate_error));
 	case LogicalTypeId::DECIMAL:
-		return Unpack(ffi::visit_field_decimal(state, name_slice, DecimalPrecision(type), DecimalType::GetScale(type),
-		                                       nullable, nullptr, allocate_error));
+		return Unpack(ffi::visit_field_decimal(state, name_slice, DeltaDecimal::Precision(type),
+		                                       DecimalType::GetScale(type), nullable, nullptr, allocate_error));
 	case LogicalTypeId::VARIANT: {
 		// Delta declares a variant by its unshredded physical struct (metadata, value) no matter how files
 		// are shredded later; shredding is a per-file parquet layout, allowed only when

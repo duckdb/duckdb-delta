@@ -224,13 +224,19 @@ static void ThrowIfDeltaCannotStore(const ColumnDefinition &column, const string
 	if (unstorable->id() == LogicalTypeId::INTERVAL) {
 		reason = "writing Delta intervals is not supported yet";
 	} else if (unstorable->id() == LogicalTypeId::DECIMAL) {
-		// The only decimals FindUnsupportedType refuses: DuckDB's can be wider than the 38 digits Delta's end at.
-		// The way out is a narrower decimal, not the other type the statement's hint suggests.
-		auto max_precision = DeltaSchemaBuilder::MAX_DECIMAL_PRECISION;
-		auto scale = MinValue<idx_t>(DecimalType::GetScale(*unstorable), max_precision);
-		reason = StringUtil::Format("Delta decimals support at most %llu digits of precision", max_precision);
-		advice = StringUtil::Format("Use a decimal of at most %llu digits instead, e.g. DECIMAL(%llu,%llu).",
-		                            max_precision, max_precision, scale);
+		// The way out is a narrower decimal, not the other type the statement's hint suggests. In CREATE TABLE AS and
+		// COPY TO the column is often decimal arithmetic, which DuckDB widens past 38 digits unless max_decimal_width
+		// keeps it within them. The example keeps an integer digit: DECIMAL(50,45) suggests DECIMAL(38,37).
+		auto max_precision = DeltaDecimal::MAX_PRECISION;
+		auto width = DecimalType::GetWidth(*unstorable);
+		auto scale = DecimalType::GetScale(*unstorable);
+		auto example_scale = MinValue<idx_t>(scale, width > scale ? max_precision - 1 : max_precision);
+		reason = DeltaDecimal::LimitMessage();
+		advice = StringUtil::Format(
+		    "Declare or cast it as a decimal of at most %llu digits, e.g. DECIMAL(%llu,%llu) or "
+		    "::DECIMAL(%llu,%llu); SET max_decimal_width = %llu keeps decimal arithmetic within "
+		    "%llu digits.",
+		    max_precision, max_precision, example_scale, max_precision, example_scale, max_precision, max_precision);
 	}
 	throw NotImplementedException("%s does not support column '%s' of type %s%s: %s. %s", statement,
 	                              column.Name().GetIdentifierName(), type.ToString(), nested, reason, advice);
@@ -526,7 +532,7 @@ ffi::ExternResult<bool> InsertMarkerValue(ffi::ExclusivePartitionValueMap *map, 
 	case LogicalTypeId::TIMESTAMP:
 		return ffi::partition_value_map_insert_timestamp_ntz(map, slice, 0, engine);
 	case LogicalTypeId::DECIMAL:
-		return ffi::partition_value_map_insert_decimal(map, slice, 0, 0, DeltaSchemaBuilder::DecimalPrecision(type),
+		return ffi::partition_value_map_insert_decimal(map, slice, 0, 0, DeltaDecimal::Precision(type),
 		                                               DecimalType::GetScale(type), engine);
 	default:
 		throw NotImplementedException("Delta partition column of type %s is not supported", type.ToString());
@@ -568,7 +574,7 @@ vector<DeltaMultiFileColumnDefinition> DeltaCreateTableTransaction::GetWriteColu
 				        ? InsertMarkerValue(map, partition_columns[i], type, engine.get())
 				        : ffi::partition_value_map_insert_null(
 				              map, KernelUtils::ToDeltaString(partition_columns[i]), NullTypeTag(type),
-				              type.id() == LogicalTypeId::DECIMAL ? DeltaSchemaBuilder::DecimalPrecision(type) : 0,
+				              type.id() == LogicalTypeId::DECIMAL ? DeltaDecimal::Precision(type) : 0,
 				              type.id() == LogicalTypeId::DECIMAL ? DecimalType::GetScale(type) : 0, engine.get());
 				res = KernelUtils::TryUnpackResult(insert, inserted);
 			}

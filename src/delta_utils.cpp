@@ -426,8 +426,13 @@ void KernelExpressionVisitor::VisitParseJsonExpression(void *data, uintptr_t sib
 void KernelExpressionVisitor::VisitDecimalLiteral(void *state, uintptr_t sibling_list_id, int64_t value_ms,
                                                   uint64_t value_ls, uint8_t precision, uint8_t scale) {
 	try {
+		// Kernel builds decimal literals of at most 38 digits; checked here too, as Value::DECIMAL only asserts it
+		if (!DeltaDecimal::IsSupported(precision, scale)) {
+			throw InvalidInputException("Delta decimal literal has precision %d and scale %d: %s", int32_t(precision),
+			                            int32_t(scale), DeltaDecimal::LimitMessage());
+		}
 		Value decimal_value;
-		if (precision < Decimal::MAX_WIDTH_INT64) {
+		if (precision <= Decimal::MAX_WIDTH_INT64) {
 			auto cast = Value::HUGEINT({value_ms, value_ls}).DefaultCastAs(LogicalType::BIGINT);
 			decimal_value = Value::DECIMAL(cast.GetValue<int64_t>(), precision, scale);
 		} else {
@@ -725,6 +730,14 @@ KernelSchemaVisitor::ToColumnDefinitions(ffi::Handle<ffi::SharedExternEngine> en
 void KernelSchemaVisitor::VisitDecimal(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
                                        ffi::KernelStringSlice name, bool is_nullable, const ffi::CMetadataMap *metadata,
                                        uint8_t precision, uint8_t scale) {
+	// Kernel refuses a schema with a wider decimal when it parses it. Checked here as well, so that a table that breaks
+	// the protocol fails with a clear error and never binds as a DuckDB decimal Delta does not have.
+	if (!DeltaDecimal::IsSupported(precision, scale)) {
+		state->RefuseType(sibling_list_id, name,
+		                  StringUtil::Format("decimal(%d,%d)", int32_t(precision), int32_t(scale)),
+		                  "but " + DeltaDecimal::LimitMessage(), ExceptionType::INVALID_INPUT);
+		return;
+	}
 	auto decimal_type = LogicalType::DECIMAL(precision, scale);
 	DeltaMultiFileColumnDefinition decimal_def(KernelUtils::FromDeltaString(name), decimal_type, is_nullable);
 	decimal_def.default_expression = ConstantExpression::FromValue(Value(decimal_type));
@@ -847,11 +860,14 @@ bool KernelSchemaVisitor::HasChildren(ffi::KernelStringSlice name,
 	return false;
 }
 
-void KernelSchemaVisitor::RefuseType(uintptr_t sibling_list_id, ffi::KernelStringSlice name, const string &type_name) {
+void KernelSchemaVisitor::RefuseType(uintptr_t sibling_list_id, ffi::KernelStringSlice name, const string &type_name,
+                                     const string &reason, ExceptionType exception) {
 	if (error.HasError()) {
 		return;
 	}
 	refused_type = type_name;
+	refused_reason = reason;
+	refused_exception = exception;
 	refused_path = {KernelUtils::FromDeltaString(name)};
 	refused_list_id = sibling_list_id;
 	SetRefusalError();
@@ -880,9 +896,9 @@ void KernelSchemaVisitor::ExtendRefusedPath(uintptr_t child_list_id, uintptr_t s
 }
 
 void KernelSchemaVisitor::SetRefusalError() {
-	error = ErrorData(ExceptionType::NOT_IMPLEMENTED,
-	                  StringUtil::Format("Column '%s' has the Delta type %s, which DuckDB cannot read yet",
-	                                     StringUtil::Join(refused_path, "."), refused_type));
+	error = ErrorData(refused_exception,
+	                  StringUtil::Format("Column '%s' has the Delta type %s, %s", StringUtil::Join(refused_path, "."),
+	                                     refused_type, refused_reason));
 }
 
 void KernelSchemaVisitor::VisitIntervalYearMonth(KernelSchemaVisitor *state, uintptr_t sibling_list_id,
@@ -1070,6 +1086,28 @@ DeltaLogPathArray::DeltaLogPathArray(Value log_path) {
 
 ffi::LogPathArray DeltaLogPathArray::GetFFIPtr() {
 	return {log_entries.data(), log_entries.size()};
+}
+
+constexpr idx_t DeltaDecimal::MAX_PRECISION;
+
+bool DeltaDecimal::IsSupported(const LogicalType &type) {
+	D_ASSERT(type.id() == LogicalTypeId::DECIMAL);
+	return IsSupported(DecimalType::GetWidth(type), DecimalType::GetScale(type));
+}
+
+bool DeltaDecimal::IsSupported(idx_t precision, idx_t scale) {
+	return precision >= 1 && precision <= MAX_PRECISION && scale <= precision;
+}
+
+uint8_t DeltaDecimal::Precision(const LogicalType &type) {
+	if (!IsSupported(type)) {
+		throw NotImplementedException("%s, got %s", LimitMessage(), type.ToString());
+	}
+	return UnsafeNumericCast<uint8_t>(DecimalType::GetWidth(type));
+}
+
+string DeltaDecimal::LimitMessage() {
+	return StringUtil::Format("Delta decimals support at most %llu digits of precision", MAX_PRECISION);
 }
 
 LogicalType KernelUtils::GetLogPathType() {
@@ -1363,13 +1401,13 @@ uintptr_t PredicateVisitor::VisitConstantFilter(const vector<string> &col_path, 
 		auto scale = DecimalType::GetScale(value.type());
 		uint64_t value_hi, value_lo;
 		auto phys = value.type().InternalType();
-		// Kernel takes a decimal literal as a 128-bit integer with a u8 precision of at most 38 digits. A DuckDB
-		// decimal can be wider than that, and is then not stored as an integer at all. No Delta column has such a
-		// type, so there is nothing to prune on: the filter is not pushed down and DuckDB evaluates it.
-		if (DecimalType::GetWidth(value.type()) > Decimal::MAX_WIDTH_DECIMAL) {
+		// Kernel's decimal literal is a 128-bit integer of at most 38 digits, so a wider DuckDB decimal (a BIGNUM, not
+		// an integer) cannot be expressed: the comparison is not pushed down, and DuckDB evaluates it. Kernel drops a
+		// child that is not pushed, which is safe only inside an AND; dropping an OR's child would skip matching files.
+		if (!DeltaDecimal::IsSupported(value.type())) {
 			return ~0;
 		}
-		auto precision = UnsafeNumericCast<uint8_t>(DecimalType::GetWidth(value.type()));
+		auto precision = DeltaDecimal::Precision(value.type());
 		if (phys == PhysicalType::INT128) {
 			auto h = value.GetValueUnsafe<hugeint_t>();
 			value_hi = (uint64_t)h.upper;
